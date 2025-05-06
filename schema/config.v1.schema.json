@@ -129,7 +129,7 @@
                       },
                      "additionalProperties": false
                   }
-                  // Add schemas for docker-desktop, orbstack if needed
+
               },
               "additionalProperties": false
            }

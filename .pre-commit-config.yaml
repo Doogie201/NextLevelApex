@@ -1,21 +1,70 @@
-# See https://pre-commit.com for more information
-# See https://pre-commit.com/hooks.html for more hooks
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
+minimum_pre_commit_version: "3.6.0"
+default_language_version:
+  python: python3.11
+ci:
+  autofix: true
+default_stages: [pre-commit, pre-push]
+fail_fast: true
+
+# ---------------------------------------------------------------------------
+# Repositories & hooks
+# ---------------------------------------------------------------------------
 repos:
-- repo: https://github.com/astral-sh/ruff-pre-commit
-  # Find the latest Ruff version at
-  # https://github.com/astral-sh/ruff-pre-commit/releases
-  rev: v0.4.4 # Use a recent stable ruff version
-  hooks:
-    # Run the linter (isort, flake8, pyupgrade, etc.)
-    - id: ruff
-      args: [--fix, --exit-non-zero-on-fix]
-    # Run the formatter (replaces Black)
-    - id: ruff-format
-# Uncomment and configure MyPy if/when ready for stricter type checking
-#- repo: https://github.com/pre-commit/mirrors-mypy
-#  # Find the latest MyPy version
-#  rev: v1.9.0
-#  hooks:
-#    - id: mypy
-#      # Adjust additional_dependencies if your project needs specific typeshed stubs
-#      # additional_dependencies: [ "types-requests" ]
+  # House‑keeping hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: debug-statements
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb", "500"]
+      - id: check-json                 # JSON syntax validator
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        files: "\\.(ya?ml)$"
+        args: ["-d", "{extends: default, rules: {line-length: {max: 120}}}"]
+
+  # Python – Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.8                      # bundles Ruff 0.11.8
+    hooks:
+      # 1) Formatter
+      - id: ruff-format
+        exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
+        stages: [pre-commit]
+
+      # 2) Linter with auto‑fix on commit
+      - id: ruff
+        name: ruff-lint-fix
+        args:
+          [
+            "--fix",
+            "--exit-non-zero-on-fix",
+            "--show-fixes",
+            "--unsafe-fixes",
+          ]
+        stages: [pre-commit]
+
+      # 3) Strict linter (no fixes) on push/CI
+      - id: ruff
+        name: ruff-lint-ci
+        args: ["--show-source"]
+        stages: [pre-push]
+
+# ---------------------------------------------------------------------------
+# (Optional) MyPy – enable when ready
+# ---------------------------------------------------------------------------
+# - repo: https://github.com/pre-commit/mirrors-mypy
+#   rev: v1.10.0
+#   hooks:
+#     - id: mypy
+#       additional_dependencies: ["types-requests"]
+#       args: ["--strict"]
