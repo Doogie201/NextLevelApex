@@ -1,156 +1,171 @@
 #!/usr/bin/env python3
+# ~/Projects/NextLevelApex/nextlevelapex/main.py
+# (Showing relevant parts to add/modify)
 
-import typer
-import json
-import subprocess
 import sys
-import os
+
+# ... other imports ...
 import logging
 from pathlib import Path
 from typing_extensions import Annotated
 
+import typer
+
+# Import task modules
+from nextlevelapex.tasks import brew as brew_tasks
+# from nextlevelapex.tasks import mise as mise_tasks # etc.
+
+# Import core modules if needed directly here
+# from nextlevelapex.core import state as state_manager # Assuming you build this
+
+
 # --- Basic Logging Setup ---
+# (Keep this near the top)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)-8s] %(message)s",  # Slightly improved format
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+log = logging.getLogger(__name__)  # Use this for logging within main
 
-# --- Configuration Placeholder ---
-# TODO: Implement proper loading from ~/.config/nextlevelapex/config.json
-DEFAULT_CONFIG = {
+# --- Configuration & State Placeholders ---
+# (Keep these for now, replace with real loading later)
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
+DEFAULT_STATE_PATH = Path.home() / ".local" / "state" / "nextlevelapex" / "state.json"
+DEFAULT_CONFIG = {  # Example subset
     "install_brew": True,
-    "brew_formulae": ["mise", "docker", "colima", "jq", "ollama"],
-    "brew_casks": ["warp", "raycast"],
-    "setup_networking": True,
-    "pihole_enabled": True,
-    "doh_method": "pihole_builtin", # Options: 'pihole_builtin', 'host_cloudflared', 'none'
-    "pihole_password": "changeme_in_config",
-    "ollama_models": ["mistral:7b"],
-    "force_ipv4_git": True, # Auto-configure git for IPv4 if networking setup might have issues
-    # ... many more options ...
+    "update_brew_on_run": True,
+    "brew_formulae": [
+        "mise",
+        "docker",
+        "colima",
+        "jq",
+        "ollama",
+        "eza",
+        "bat",
+        "fd",
+        "ripgrep",
+        "zoxide",
+        "git-delta",
+        "zellij",
+        "fzf",
+    ],
+    "brew_casks": ["warp", "raycast", "font-meslo-lg-nerd-font"],
+    # ... rest of config ...
 }
-
-# --- State Management Placeholder ---
-# TODO: Implement reading/writing state from ~/.config/nextlevelapex/state.json
 STATE = {"completed_sections": []}
-
-# --- Command Runner Placeholder ---
-# TODO: Implement robust command running with error handling, logging, dry-run
-def run_command(cmd_list: list[str], dry_run: bool = False, check: bool = True):
-    cmd_str = " ".join(cmd_list)
-    logging.info(f"Running: {cmd_str}")
-    if dry_run:
-        print(f"DRYRUN: Would execute: {cmd_str}")
-        return True # Assume success for dry run sequence
-
-    try:
-        # In a real version, capture stdout/stderr, handle timeouts etc.
-        process = subprocess.run(cmd_list, check=check, capture_output=True, text=True)
-        if process.stdout:
-            logging.debug(f"STDOUT: {process.stdout.strip()}")
-        if process.stderr:
-            logging.debug(f"STDERR: {process.stderr.strip()}")
-        return True
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Command failed with exit code {e.returncode}: {cmd_str}")
-        logging.error(f"STDERR: {e.stderr.strip()}")
-        return False
-    except FileNotFoundError:
-        logging.error(f"Command not found: {cmd_list[0]}")
-        return False
-
-# --- Task Module Placeholders ---
-# TODO: Create separate modules for tasks (brew_tasks.py, network_tasks.py etc.)
-def run_brew_tasks(config, state, dry_run, verbose):
-    logging.info("--- Starting Brew Tasks ---")
-    if not config.get("install_brew", False):
-        logging.info("Skipping Brew tasks per config.")
-        return True
-    # ... add brew bootstrap, install formulae/casks logic ...
-    # Use run_command([...], dry_run=dry_run)
-    logging.info("--- Finished Brew Tasks ---")
-    return True # Return True on success
-
-def run_network_tasks(config, state, dry_run, verbose):
-    logging.info("--- Starting Networking Tasks ---")
-    if not config.get("setup_networking", False):
-        logging.info("Skipping Networking tasks per config.")
-        return True
-    # ... Implement the complex logic here ...
-    #    - Detect services, IPs
-    #    - Configure DoH (based on config['doh_method'])
-    #    - Configure Pi-hole (if config['pihole_enabled'])
-    #        - Use docker SDK or run_command for docker
-    #        - Use run_command for docker exec pihole ...
-    #        - Set DNSMASQ_LISTENING=all
-    #    - Set system DNS
-    #    - Auto Git IPv4 config if needed
-    logging.info("--- Finished Networking Tasks ---")
-    return True # Return True on success
-
 
 # --- Main CLI App ---
 app = typer.Typer(help="Apex Level macOS Setup Orchestrator")
 
+
 @app.command()
 def run(
-    config_file: Annotated[Path, typer.Option(help="Path to JSON configuration file.")] = Path.home() / ".config" / "nextlevelapex" / "config.json",
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Print commands without executing.")] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output.")] = False,
-    resume: Annotated[bool, typer.Option(help="Attempt to resume from last failed step.")] = False,
-    force_section: Annotated[str, typer.Option(help="Force specific section(s) to run, comma-separated.")] = "",
+    # ... keep existing parameters: config_file, dry_run, verbose, resume, force_section ...
+    config_file: Annotated[
+        Path, typer.Option(help="Path to JSON configuration file.")
+    ] = DEFAULT_CONFIG_PATH,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", "-n", help="Print commands without executing.")
+    ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Enable verbose output.")
+    ] = False,
+    resume: Annotated[
+        bool,
+        typer.Option(help="Attempt to resume from last failed step (Not Implemented)."),
+    ] = False,
+    force_section: Annotated[
+        str,
+        typer.Option(
+            help="Force specific section(s) to run, comma-separated (Not Implemented)."
+        ),
+    ] = "",
 ):
     """
     Run the Apex Level setup process.
     """
     if verbose:
+        # Update root logger level if verbose flag is set
         logging.getLogger().setLevel(logging.DEBUG)
+        log.debug("Verbose logging enabled.")
 
-    logging.info("Starting Apex Level Setup...")
+    log.info("Starting Apex Level Setup...")
     if dry_run:
-        logging.info(">>> DRY RUN MODE ENABLED <<<")
+        log.info(">>> DRY RUN MODE ENABLED <<<")
 
-    # TODO: Load config properly from config_file
-    config = DEFAULT_CONFIG
-    logging.info(f"Using configuration (placeholder): {config_file}")
-
-    # TODO: Load state properly if resume is True
-    state = STATE
+    # --- TODO: Implement proper Config & State Loading ---
+    config = DEFAULT_CONFIG  # Use placeholder for now
+    # state = STATE  # Use placeholder for now
+    log.info(f"Using configuration (placeholder source): {config_file}")
+    # log.debug(f"Loaded config: {config}") # Requires proper loading first
+    # log.debug(f"Loaded state: {state}") # Requires proper loading first
 
     # --- Orchestration ---
-    # TODO: Implement proper section running with state checking/saving
-    # and dependency management.
-    sections = {
-        "Brew": run_brew_tasks,
-        "Networking": run_network_tasks,
-        # ... Add other sections/task functions ...
-    }
-
-    sections_to_run = force_section.split(',') if force_section else sections.keys()
-
     all_ok = True
-    for section_name in sections_to_run:
-      if section_name in sections:
-          logging.info(f"=== Running Section: {section_name} ===")
-          # TODO: Add check for previous success from state if not forced/resuming
-          if not sections[section_name](config, state, dry_run, verbose):
-              logging.error(f"Section '{section_name}' failed.")
-              all_ok = False
-              # TODO: Save state indicating failure
-              # TODO: Implement optional Ollama diagnostics here
-              # if not dry_run: run_ollama_diagnostics(section_name, failure_context)
-              break # Stop on first failure for now
-          # TODO: Save state indicating success
-      else:
-          logging.warning(f"Unknown section specified: {section_name}")
+    current_section = "Initialization"  # For error context
 
+    try:
+        # Section: Homebrew
+        current_section = "Homebrew"
+        if config.get("install_brew", True):  # Default to true if key missing
+            log.info(f"--- Running Section: {current_section} ---")
+            if not brew_tasks.is_brew_installed():
+                if not brew_tasks.install_brew(dry_run=dry_run):
+                    raise Exception(
+                        "Failed to install Homebrew."
+                    )  # Raise exception on critical failure
+            else:
+                log.info("Homebrew already installed.")
 
+            if not brew_tasks.ensure_brew_shellenv(dry_run=dry_run):
+                raise Exception("Failed to configure Homebrew shellenv.")
+
+            if config.get("update_brew_on_run", True):
+                if not brew_tasks.update_brew(dry_run=dry_run):
+                    # Non-fatal, just log warning from function
+                    pass
+
+            if not brew_tasks.install_formulae(
+                config.get("brew_formulae", []), dry_run=dry_run
+            ):
+                raise Exception("Failed during Homebrew formulae installation.")
+
+            if not brew_tasks.install_casks(
+                config.get("brew_casks", []), dry_run=dry_run
+            ):
+                raise Exception("Failed during Homebrew cask installation.")
+
+            # TODO: Update state - state_manager.mark_complete(current_section)
+            log.info(f"--- Section {current_section} Completed ---")
+        else:
+            log.info(f"--- Skipping Section: {current_section} (per config) ---")
+            # TODO: Update state - state_manager.mark_skipped(current_section)
+
+        # Section: Mise (Example)
+        # current_section = "Mise"
+        # log.info(f"--- Running Section: {current_section} ---")
+        # # ... Call mise_tasks functions, check results, raise exceptions ...
+        # log.info(f"--- Section {current_section} Completed ---")
+
+        # ... Add calls for other task modules ...
+
+    except Exception as e:
+        log.error(f"--- Section '{current_section}' FAILED ---")
+        log.error(f"Error: {e}", exc_info=verbose)  # Show traceback if verbose
+        # TODO: Implement diagnostics call here
+        # run_diagnostics(current_section, context...)
+        all_ok = False
+
+    # --- Final Summary ---
     if all_ok:
-        logging.info("=== Apex Level Setup Completed Successfully ===")
+        log.info("=== Apex Level Setup Completed Successfully ===")
         # TODO: Print final status dashboard
     else:
-        logging.error("=== Apex Level Setup FAILED ===")
+        log.error("=== Apex Level Setup FAILED ===")
+        sys.exit(1)  # Exit with non-zero code on failure
+
 
 if __name__ == "__main__":
     app()
