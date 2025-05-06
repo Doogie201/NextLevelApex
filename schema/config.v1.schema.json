@@ -1,0 +1,261 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://example.com/schemas/nextlevelapex/config.v1.schema.json",
+    "title": "NextLevelApex Configuration",
+    "description": "Configuration schema for the NextLevelApex macOS setup orchestrator (v1.0)",
+    "type": "object",
+    "properties": {
+      "$schema": {
+        "type": "string",
+        "format": "uri",
+        "description": "Reference to the schema definition itself."
+      },
+      "_comment": {
+        "type": "string",
+        "description": "Top-level comment for the configuration file."
+      },
+      "script_behavior": {
+        "type": "object",
+        "description": "Settings controlling how the script itself runs.",
+        "properties": {
+          "_comment": {"type": "string"},
+          "update_brew_on_run": {"type": "boolean", "default": true, "description": "Run 'brew update' automatically at the start?"},
+          "force_ipv4_for_git": {"type": "boolean", "default": true, "description": "Automatically run 'git config --global http.ipResolve V4' if using potentially problematic network setup?"},
+          "stop_on_section_failure": {"type": "boolean", "default": true, "description": "Stop the entire script if one section fails?"},
+          "log_level_default": {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR"], "default": "INFO", "description": "Default logging level."},
+          "log_to_file": {"type": "boolean", "default": true, "description": "Enable logging to files in ~/Library/Logs/NextLevelApex/?"}
+        },
+        "additionalProperties": false
+      },
+      "system": {
+        "type": "object",
+        "description": "Core macOS settings and tweaks.",
+        "properties": {
+          "_comment": {"type": "string"},
+          "configure_shell_activation": {"type": "boolean", "default": true, "description": "Add necessary activation lines (e.g., for Mise) to shell config?"},
+          "shell_config_file": {"type": "string", "default": "~/.zshrc", "description": "Path to the shell configuration file (e.g., ~/.zshrc, ~/.zprofile)."},
+          "add_aliases": {"type": "boolean", "default": true, "description": "Add custom aliases to the shell config file?"},
+          "aliases": {
+            "type": "object",
+            "description": "Key-value pairs defining shell aliases.",
+            "additionalProperties": {"type": "string"}
+          },
+          "prune_logitech_agents": {"type": "boolean", "default": true, "description": "Remove Logitech Launch Agents?"}
+        },
+        "additionalProperties": false
+      },
+      "security": {
+        "type": "object",
+        "description": "Security-related configurations.",
+        "properties": {
+          "_comment": {"type": "string"},
+          "enable_firewall_stealth": {"type": "boolean", "default": true, "description": "Enable macOS firewall stealth mode?"},
+          "enable_touchid_sudo": {"type": "boolean", "default": true, "description": "Add PAM rule to enable Touch ID for sudo?"},
+          "yubikey": {
+            "type": "object",
+            "properties": {
+              "enable_ssh_key_generation": {"type": "boolean", "default": true, "description": "Attempt to generate a resident ED25519-SK key?"},
+              "ssh_key_filename": {"type": "string", "default": "~/.ssh/id_ed25519_sk_nlx", "description": "Filename for the generated YubiKey SSH key."},
+              "require_touch": {"type": "boolean", "default": true, "description": "Require user presence (touch) for SSH key operations?"}
+            },
+            "additionalProperties": false
+          },
+           "monitor_persistence": {
+              "type": "object",
+              "description": "Install tools like KnockKnock/BlockBlock.",
+               "properties": {
+                  "install_knockknock": {"type": "boolean", "default": true},
+                  "install_blockblock": {"type": "boolean", "default": true}
+               },
+              "additionalProperties": false
+           }
+        },
+        "additionalProperties": false
+      },
+      "homebrew": {
+          "type": "object",
+          "description": "Homebrew package management.",
+          "properties": {
+              "_comment": {"type": "string"},
+              "install_brew": {"type": "boolean", "default": true, "description": "Ensure Homebrew itself is installed?"},
+              "formulae": {
+                  "type": "array",
+                  "description": "List of Homebrew formulae to install.",
+                  "items": {"type": "string"},
+                  "uniqueItems": true
+              },
+              "casks": {
+                  "type": "array",
+                  "description": "List of Homebrew casks (GUI Apps, Fonts) to install.",
+                  "items": {"type": "string"},
+                  "uniqueItems": true
+              }
+          },
+          "required": ["formulae", "casks"],
+          "additionalProperties": false
+      },
+       "developer_tools": {
+        "type": "object",
+        "description": "Configuration for developer runtimes and tools.",
+        "properties": {
+          "_comment": {"type": "string"},
+          "mise": {
+              "type": "object",
+              "properties": {
+                  "enable": {"type": "boolean", "default": true},
+                  "global_tools": {
+                      "type": "object",
+                      "description": "Tools and versions for 'mise use --global'.",
+                      "additionalProperties": {"type": "string"}
+                  }
+              },
+              "additionalProperties": false
+          },
+          "docker_runtime": {
+              "type": "object",
+              "properties": {
+                  "provider": {"type": "string", "enum": ["colima", "docker-desktop", "orbstack", "lima", "auto"], "default": "colima", "description": "Which Docker provider to manage/assume."},
+                  "colima": {
+                      "type": "object",
+                      "description": "Settings specific to Colima provider.",
+                      "properties": {
+                          "start_on_run": {"type": "boolean", "default": true},
+                          "vm_arch": {"type": "string", "enum": ["aarch64", "x86_64"], "default": "aarch64"},
+                          "vm_type": {"type": "string", "enum": ["vz", "qemu"], "default": "vz"},
+                          "vz_rosetta": {"type": "boolean", "default": true},
+                          "cpu": {"type": ["integer", "null"], "minimum": 1, "default": null, "description": "Number of CPU cores (null for default)."},
+                          "memory": {"type": ["integer", "null"], "minimum": 1, "default": null, "description": "Memory in GiB (null for default)."},
+                          "disk": {"type": ["integer", "null"], "minimum": 10, "default": null, "description": "Disk size in GiB (null for default)."}
+                      },
+                     "additionalProperties": false
+                  }
+                  // Add schemas for docker-desktop, orbstack if needed
+              },
+              "additionalProperties": false
+           }
+        },
+         "additionalProperties": false
+      },
+       "networking": {
+          "type": "object",
+          "description": "Advanced Networking: DNS, Pi-hole, DoH.",
+          "properties": {
+              "_comment": {"type": "string"},
+              "enable": {"type": "boolean", "default": true},
+              "set_system_dns": {"type": "boolean", "default": true},
+              "pihole": {
+                  "type": "object",
+                  "properties": {
+                      "enable": {"type": "boolean", "default": true},
+                      "web_password_env_var": {"type": "string", "default": "NLX_PIHOLE_PASSWORD", "description": "Name of ENV VAR to read Pi-hole web password from."},
+                      "default_web_password": {"type": "string", "default": "CHANGE_THIS_PASSWORD_NOW", "description": "Fallback password if ENV VAR not set. NOT RECOMMENDED for storage here."},
+                      "custom_adlists": {"type": "array", "items": {"type": "string", "format": "uri"}, "default": [], "description": "URLs of additional adlist sources."},
+                      "custom_whitelist": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Domains to whitelist."},
+                      "custom_blacklist": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Domains to blacklist."},
+                      "custom_regex_blacklist": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Regex patterns to blacklist."}
+                  },
+                  "additionalProperties": false
+              },
+              "doh_method": {"type": "string", "enum": ["pihole_builtin", "host_cloudflared", "none"], "default": "pihole_builtin", "description": "Method for upstream DoH resolution."},
+              "cloudflared_host_agent": {
+                  "type": "object",
+                  "description": "Settings for cloudflared agent if run on host.",
+                   "properties": {
+                      "enable": {"type": "boolean", "default": false, "description":"Set automatically based on doh_method, usually no need to set manually."}
+                   },
+                   "additionalProperties": false
+              }
+          },
+          "additionalProperties": false
+      },
+       "local_ai": {
+          "type": "object",
+          "description": "Local AI model setup.",
+          "properties": {
+              "_comment": {"type": "string"},
+              "ollama": {
+                  "type": "object",
+                  "properties": {
+                      "enable": {"type": "boolean", "default": true},
+                      "start_service": {"type": "boolean", "default": true},
+                      "models_to_pull": {
+                          "type": "array",
+                          "description": "List of Ollama models to pull (e.g., 'mistral:7b').",
+                          "items": {"type": "string"},
+                          "uniqueItems": true
+                      }
+                  },
+                  "required": ["models_to_pull"],
+                  "additionalProperties": false
+              }
+          },
+           "additionalProperties": false
+      },
+       "automation_agents": {
+          "type": "object",
+          "description": "Custom background automation.",
+          "properties": {
+              "_comment": {"type": "string"},
+              "battery_alert": {
+                  "type": "object",
+                  "properties": {
+                      "enable": {"type": "boolean", "default": true},
+                      "threshold_percent": {"type": "integer", "minimum": 1, "maximum": 100, "default": 85},
+                      "check_interval_seconds": {"type": "integer", "minimum": 60, "default": 1800},
+                      "script_path": {"type": "string", "default": "~/Scripts/NextLevelApex/battery_alert.sh"}
+                  },
+                  "additionalProperties": false
+              },
+              "weekly_audit": {
+                  "type": "object",
+                  "properties": {
+                      "enable": {"type": "boolean", "default": true},
+                      "audit_script_path": {"type": "string", "default": "~/Tools/macDeepDive.sh", "description": "Path to the main script performing the audit."},
+                      "log_directory": {"type": "string", "default": "~/AuditLogs"},
+                      "git_commit_audit": {"type": "boolean", "default": true},
+                      "schedule": {
+                          "type": "object",
+                          "description": "launchd StartCalendarInterval settings.",
+                          "properties": {
+                              "Weekday": {"type": "integer", "minimum": 0, "maximum": 7},
+                              "Hour": {"type": "integer", "minimum": 0, "maximum": 23},
+                              "Minute": {"type": "integer", "minimum": 0, "maximum": 59, "default": 0}
+                          },
+                          "required": ["Weekday", "Hour"],
+                          "additionalProperties": false
+                      },
+                      "script_path": {"type": "string", "default": "~/Scripts/NextLevelApex/weekly_audit.sh", "description": "Path to the wrapper script called by launchd."}
+                  },
+                   "additionalProperties": false
+              }
+          },
+           "additionalProperties": false
+      },
+       "optional_apps": {
+          "type": "object",
+          "description": "Optional application setups.",
+           "properties": {
+               "_comment": {"type": "string"},
+               "nordvpn": {
+                   "type": "object",
+                   "properties": {
+                       "launch_on_setup": {"type": "boolean", "default": true}
+                   },
+                   "additionalProperties": false
+               }
+           },
+            "additionalProperties": false
+       }
+    },
+    "required": [
+      "script_behavior",
+      "system",
+      "security",
+      "homebrew",
+      "developer_tools",
+      "networking",
+      "local_ai",
+      "automation_agents",
+      "optional_apps"
+    ]
+  }
