@@ -1,2 +1,3 @@
 """Optional components setup."""
+
 pass

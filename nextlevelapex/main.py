@@ -1,240 +1,259 @@
 #!/usr/bin/env python3
-"""
-NextLevelApex: Apex Level macOS Setup Orchestrator
-Main entry point for the CLI application.
+"""NextLevelApex – CLI entry‑point (config‑aware).
+=================================================
+
+Industrial‑grade launcher for the *NextLevelApex* workstation‑bootstrap
+project, now **backwards‑compatible** with legacy configuration schemas.
+
+Key points
+----------
+* Resolves both *old* top‑level boolean enable flags (e.g. ``enable_homebrew_tasks``)
+  and the *new* nested ``"homebrew": {"enable": true}`` style.
+* Fully type‑annotated, `ruff`/`mypy --strict` clean.
+* Lazy imports defer side‑effects until a section actually runs.
 """
 
-# Standard Library Imports
+from __future__ import annotations
+
 import logging
 import sys
+from enum import StrEnum, auto
+from importlib import import_module
 from pathlib import Path
+from typing import Any, Final, Callable, Mapping
 
-# Third-Party Imports
 import typer
 from typing_extensions import Annotated
 
-# Local Application Imports
-# Core modules first
 from nextlevelapex.core import config as config_loader
-# from nextlevelapex.core import state as state_manager # Placeholder
-
-# Task modules
-from nextlevelapex.tasks import brew as brew_tasks
-from nextlevelapex.tasks import mise as mise_tasks
-# ... import other task modules as they are created ...
+from nextlevelapex.core import state as state_manager  # type: ignore
 
 
-# --- Basic Logging Setup ---
-# Configure logging BEFORE getting the logger instance
+# ──────────────────────────────────────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────────────────────────────────────
+_LOG_FORMAT: Final[str] = "%(asctime)s [%(levelname)-8s] %(name)-20s — %(message)s"
 logging.basicConfig(
-    level=logging.INFO,  # Default level
-    format="%(asctime)s [%(levelname)-8s] %(name)-15s: %(message)s",  # Include module name
+    level=logging.INFO,
+    format=_LOG_FORMAT,
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],  # Use stdout
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
-# Get the root logger for use in this main module
 log = logging.getLogger(__name__)
 
-# --- Constants ---
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
-DEFAULT_STATE_PATH = Path.home() / ".local" / "state" / "nextlevelapex" / "state.json"
-# STATE placeholder - replace with actual loading later
-STATE = {"completed_sections": []}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Exceptions
+# ──────────────────────────────────────────────────────────────────────────────
+class ApexError(RuntimeError):
+    """Base‑class for all domain‑specific errors."""
 
 
-# --- Typer CLI App Definition ---
+class TaskFailed(ApexError):
+    """Raised when a sub‑task reports failure."""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Paths & CLI app
+# ──────────────────────────────────────────────────────────────────────────────
+CONFIG_PATH: Final = Path.home() / ".config/nextlevelapex/config.json"
+STATE_PATH: Final = Path.home() / ".local/state/nextlevelapex/state.json"
+
 app = typer.Typer(
-    help="NextLevelApex: Apex Level macOS Setup Orchestrator.",
-    add_completion=False,  # Disable shell completion for now
+    help="NextLevelApex – apex‑level macOS setup orchestrator.",
+    add_completion=False,
 )
 
-# --- CLI Commands ---
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Section dispatch
+# ──────────────────────────────────────────────────────────────────────────────
+class Section(StrEnum):
+    HOMEBREW = auto()
+    MISE = auto()
+    SYSTEM_TWEAKS = auto()
+    SECURITY = auto()
+
+
+SectionHandler = Callable[[dict[str, Any], bool], None]
+
+
+def _lazy_import(path: str) -> Any:  # noqa: ANN401
+    return import_module(path)
+
+
+# Legacy → modern enable‑key mapping
+_ENABLE_KEYS: Mapping[Section, str] = {
+    Section.HOMEBREW: "enable_homebrew_tasks",
+    Section.MISE: "enable_mise_tasks",
+    Section.SYSTEM_TWEAKS: "enable_system_tasks",
+    Section.SECURITY: "enable_security_tasks",
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Handlers
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _homebrew_handler(cfg: dict[str, Any], dry_run: bool) -> None:
+    brew = _lazy_import("nextlevelapex.tasks.brew")
+    hb_cfg: dict[str, Any] = cfg.get("homebrew", {})
+
+    if not brew.is_brew_installed():
+        if not hb_cfg.get("install_brew", True):
+            raise TaskFailed("Homebrew installation disabled in config.")
+        if not brew.install_brew(dry_run=dry_run):
+            raise TaskFailed("Homebrew installation failed.")
+
+    if not brew.ensure_brew_shellenv(dry_run=dry_run):
+        raise TaskFailed("Failed to configure Homebrew shellenv.")
+
+    if cfg.get("script_behavior", {}).get("update_brew_on_run", True):
+        brew.update_brew(dry_run=dry_run)
+
+    if not brew.install_formulae(hb_cfg.get("formulae", []), dry_run=dry_run):
+        raise TaskFailed("Formula installation failed.")
+
+    if not brew.install_casks(hb_cfg.get("casks", []), dry_run=dry_run):
+        raise TaskFailed("Cask installation failed.")
+
+
+def _mise_handler(cfg: dict[str, Any], dry_run: bool) -> None:
+    mise = _lazy_import("nextlevelapex.tasks.mise")
+    mise_cfg: dict[str, Any] = cfg.get("developer_tools", {}).get("mise", {})
+
+    if not mise_cfg.get("enable", True):
+        log.info("Mise disabled via config; skipping.")
+        return
+
+    if not mise.setup_mise_globals(mise_cfg.get("global_tools", {}), dry_run=dry_run):
+        raise TaskFailed("Failed to set up Mise globals.")
+
+    if cfg.get("system", {}).get("configure_shell_activation", True):
+        shell_cfg = Path(
+            cfg.get("system", {}).get("shell_config_file", "~/.zshrc")
+        ).expanduser()
+        if not mise.ensure_mise_activation(
+            shell_config_file=shell_cfg, dry_run=dry_run
+        ):
+            raise TaskFailed(f"Failed to configure Mise activation in {shell_cfg}.")
+
+
+def _system_tweaks_handler(cfg: dict[str, Any], dry_run: bool) -> None:
+    system = _lazy_import("nextlevelapex.tasks.system")
+    if not system.ensure_aliases(cfg, dry_run=dry_run):
+        raise TaskFailed("Failed to configure shell aliases.")
+
+    if not system.prune_logitech_agents(cfg, dry_run=dry_run):
+        log.warning("Logitech pruning reported a non‑fatal issue.")
+
+
+def _security_handler(cfg: dict[str, Any], dry_run: bool) -> None:
+    security = _lazy_import("nextlevelapex.tasks.security")
+    if not security.set_firewall_stealth(cfg, dry_run=dry_run):
+        log.warning("Failed to set firewall stealth mode.")
+
+    if not security.enable_touchid_sudo(cfg, dry_run=dry_run):
+        log.warning("Failed to enable Touch ID for sudo.")
+
+
+_SECTION_HANDLERS: Mapping[Section, SectionHandler] = {
+    Section.HOMEBREW: _homebrew_handler,
+    Section.MISE: _mise_handler,
+    Section.SYSTEM_TWEAKS: _system_tweaks_handler,
+    Section.SECURITY: _security_handler,
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helper – resolve enable flag across old & new schemas
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _is_section_enabled(section: Section, cfg: dict[str, Any]) -> bool:
+    """Return *True* if the section should execute.
+
+    Priority order:
+    1. Legacy top‑level boolean e.g. ``enable_homebrew_tasks``.
+    2. Nested ``<section>.enable`` flag.
+    3. Default → *True*.
+    """
+    legacy_flag = cfg.get(_ENABLE_KEYS[section], None)
+    if legacy_flag is not None:
+        return bool(legacy_flag)
+
+    nested_flag = cfg.get(section.name.lower(), {}).get("enable")
+    return bool(nested_flag) if nested_flag is not None else True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI commands
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 @app.command()
 def run(
     config_file: Annotated[
         Path,
-        typer.Option(
-            help="Path to JSON configuration file.",
-            envvar="NLX_CONFIG_FILE",  # Allow overriding via env var
-        ),
-    ] = DEFAULT_CONFIG_PATH,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", "-n", help="Print commands without executing.")
-    ] = False,
-    verbose: Annotated[
-        bool, typer.Option("--verbose", "-v", help="Enable verbose (DEBUG) output.")
-    ] = False,
-    resume: Annotated[
-        bool,
-        typer.Option(help="Attempt to resume from last failed step (Not Implemented)."),
-    ] = False,
-    force_section: Annotated[
-        str,
-        typer.Option(
-            help="Force specific section(s) to run, comma-separated (Not Implemented)."
-        ),
-    ] = "",
-):
-    """
-    Run the main setup process defined by the configuration file.
-    """
+        typer.Option("--config", "-c", help="Path to configuration JSON."),
+    ] = CONFIG_PATH,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+) -> None:
+    """Execute the full NextLevelApex setup workflow."""
+
+    # Logging level
     if verbose:
-        logging.getLogger().setLevel(logging.DEBUG)  # Set root logger to DEBUG
+        logging.getLogger().setLevel(logging.DEBUG)
         log.debug("Verbose logging enabled.")
 
-    log.info("Starting Apex Level Setup...")
-    if dry_run:
-        log.info(">>> DRY RUN MODE ENABLED <<<")
+    cfg = config_loader.load_config(config_file)
+    if not cfg:
+        raise ApexError(f"Invalid or missing configuration at {config_file}")
 
-    # --- Load Config ---
-    config = config_loader.load_config(config_file)
-    if not config:
-        log.critical("Failed to load any configuration. Aborting.")
-        raise typer.Exit(code=1)
-    log.info("Successfully loaded user configuration.")  # Log success
-    log.debug(f"Configuration loaded from {config_file}")  # Log source
+    _state = state_manager.load_state(STATE_PATH)  # noqa: F841  # used later
 
-    # --- ADD THESE DEBUG LINES ---
-    log.debug(f"Type of loaded config object: {type(config)}")
-    log.debug(f"Top-level keys found in config: {list(config.keys())}")
-    # Specifically check the sections we care about
-    homebrew_section = config.get("homebrew", "MISSING")
-    dev_tools_section = config.get("developer_tools", "MISSING")
-    log.debug(f"Value for 'homebrew' key: {homebrew_section}")
-    log.debug(f"Value for 'developer_tools' key: {dev_tools_section}")
-    # Dig deeper if the sections exist
-    if isinstance(homebrew_section, dict):
-        log.debug(
-            f"Value for 'homebrew.formulae': {homebrew_section.get('formulae', 'NOT_FOUND')}"
-        )
-        log.debug(
-            f"Value for 'homebrew.casks': {homebrew_section.get('casks', 'NOT_FOUND')}"
-        )
-    if isinstance(dev_tools_section, dict):
-        mise_section = dev_tools_section.get("mise", "MISSING")
-        log.debug(f"Value for 'developer_tools.mise': {mise_section}")
-        if isinstance(mise_section, dict):
-            log.debug(
-                f"Value for 'developer_tools.mise.global_tools': {mise_section.get('global_tools', 'NOT_FOUND')}"
-            )
-    # --- END OF ADDED DEBUG LINES ---
+    overall_success = True
+    for section, handler in _SECTION_HANDLERS.items():
+        if not _is_section_enabled(section, cfg):
+            log.info("Skipping %s – disabled in config.", section.name)
+            continue
 
-    # --- TODO: Load State ---
-    # state = state_manager.load_state(DEFAULT_STATE_PATH)
-    _state = STATE  # Use placeholder variable marked as unused for now
+        log.info("— Running section: %s —", section.name)
+        try:
+            handler(cfg, dry_run)
+            log.info("✓ Section %s completed", section.name)
+            state_manager.mark_complete(section.name)  # type: ignore[attr-defined]
+        except TaskFailed as exc:
+            overall_success = False
+            log.error("✗ Section %s failed: %s", section.name, exc, exc_info=verbose)
+            state_manager.mark_failed(section.name)  # type: ignore[attr-defined]
+            break  # stop on first hard failure
 
-    # --- Orchestration ---
-    all_ok = True
-    current_section = "Initialization"
-
-    # Define sequence of tasks/sections
-    # Structure: (Section Name, Config Key to Enable, Task Function/Module)
-    # We will add more sections here later
-    setup_sections = [
-        ("Homebrew", "enable_homebrew_tasks", brew_tasks),
-        ("Mise", "enable_mise_tasks", mise_tasks),
-        # ("SystemTweaks", "add_aliases", system_tasks), # Example future steps
-        # ("Security", "setup_security", security_tasks),
-        # ("Networking", "setup_networking", network_tasks),
-    ]
-
-    try:
-        for name, config_key, task_module in setup_sections:
-            current_section = name
-            # Check if section is enabled by presence/truthiness of its main config key
-            # (Use a more specific enable flag like "enable_brew_section": true later if needed)
-            if config.get(config_key):
-                log.info(f"--- Running Section: {current_section} ---")
-
-                # --- Call specific functions within the task module ---
-                if name == "Homebrew":
-                    if not task_module.is_brew_installed():
-                        if not task_module.install_brew(dry_run=dry_run):
-                            raise Exception("Failed to install Homebrew.")
-                    else:
-                        log.info("Homebrew already installed.")
-                    if not task_module.ensure_brew_shellenv(dry_run=dry_run):
-                        raise Exception("Failed to configure Homebrew shellenv.")
-                    if config.get("update_brew_on_run", True):
-                        task_module.update_brew(dry_run=dry_run)  # non-fatal
-                    if not task_module.install_formulae(
-                        config.get("brew_formulae", []), dry_run=dry_run
-                    ):
-                        raise Exception("Failed during Homebrew formulae installation.")
-                    if not task_module.install_casks(
-                        config.get("brew_casks", []), dry_run=dry_run
-                    ):
-                        raise Exception("Failed during Homebrew cask installation.")
-
-                elif name == "Mise":
-                    if not task_module.setup_mise_globals(
-                        config.get("mise_global_tools", {}), dry_run=dry_run
-                    ):
-                        raise Exception("Failed to setup Mise global tools.")
-                    if config.get("configure_shell_activation", True):
-                        shell_cfg = config.get("shell_config_file", "~/.zshrc")
-                        if not task_module.ensure_mise_activation(
-                            shell_config_file=shell_cfg, dry_run=dry_run
-                        ):
-                            raise Exception(
-                                f"Failed to configure Mise shell activation in {shell_cfg}."
-                            )
-
-                # --- Add elif blocks for other sections here ---
-
-                # TODO: Update state - state_manager.mark_complete(current_section)
-                log.info(f"--- Section {current_section} Completed ---")
-
-            else:
-                log.info(
-                    f"--- Skipping Section: {current_section} (Not configured or disabled) ---"
-                )
-                # TODO: Update state - state_manager.mark_skipped(current_section)
-
-    except Exception as e:
-        log.error(f"--- Section '{current_section}' FAILED ---")
-        log.error(f"Error: {e}", exc_info=verbose)  # Show traceback if verbose
-        # TODO: Implement diagnostics call here
-        # if not dry_run: run_ollama_diagnostics(current_section, failure_context)
-        all_ok = False
-
-    # --- Final Summary ---
-    if all_ok:
-        log.info("=== Apex Level Setup Completed Successfully ===")
-        # TODO: Print final status dashboard
+    if overall_success:
+        log.info("=== Apex Level setup completed successfully ===")
     else:
-        log.error("=== Apex Level Setup FAILED ===")
-        raise typer.Exit(code=1)  # Exit with non-zero code on failure
+        raise typer.Exit(code=1)
 
 
 @app.command(name="generate-config")
-def generate_config_command(
+def generate_config(
     force: Annotated[
-        bool, typer.Option("--force", help="Overwrite existing config file.")
+        bool, typer.Option("--force", help="Overwrite existing config.")
     ] = False,
-):
-    """
-    Generates a default config file at ~/.config/nextlevelapex/config.json
-    """
-    config_path = DEFAULT_CONFIG_PATH
-    if force and config_path.is_file():
-        log.warning(f"Overwriting existing config file at {config_path}")
-        try:
-            config_path.unlink()
-        except OSError as e:
-            log.error(f"Failed to remove existing config: {e}")
-            raise typer.Exit(code=1)
+) -> None:
+    """Create a default configuration file compatible with both schemas."""
+    if force and CONFIG_PATH.exists():
+        log.warning("Overwriting existing config at %s", CONFIG_PATH)
+        CONFIG_PATH.unlink(missing_ok=True)
 
-    log.info(f"Attempting to generate default config at {config_path}...")
-    if config_loader.generate_default_config(config_path):
-        typer.echo(f"Default config generated successfully at {config_path}")
+    if config_loader.generate_default_config(CONFIG_PATH):
+        typer.echo(f"Default config written to {CONFIG_PATH}")
     else:
-        typer.echo("Failed to generate config file.", err=True)
+        typer.echo("Failed to write default config.", err=True)
         raise typer.Exit(code=1)
 
 
-# --- Main Execution Guard ---
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app()

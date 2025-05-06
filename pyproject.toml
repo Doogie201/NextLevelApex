@@ -21,3 +21,6 @@ nlx = "nextlevelapex.main:app"
 pytest = "^7.0"
 # Add other dev dependencies
 
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11.8"
+

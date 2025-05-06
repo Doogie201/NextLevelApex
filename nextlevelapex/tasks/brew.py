@@ -140,8 +140,13 @@ def update_brew(dry_run: bool = False) -> bool:
     return True
 
 
+log = logging.getLogger(__name__)
+
+
 def install_formulae(formula_list: list[str], dry_run: bool = False) -> bool:
-    """Installs a list of Homebrew formulae."""
+    log.debug(
+        f"install_formulae received list: {formula_list} (Type: {type(formula_list)})"
+    )
     if not formula_list:
         log.info("No Homebrew formulae specified for installation.")
         return True
@@ -156,8 +161,11 @@ def install_formulae(formula_list: list[str], dry_run: bool = False) -> bool:
     return True
 
 
+log = logging.getLogger(__name__)
+
+
 def install_casks(cask_list: list[str], dry_run: bool = False) -> bool:
-    """Installs a list of Homebrew casks."""
+    log.debug(f"install_formulae received list: {cask_list} (Type: {type(cask_list)})")
     if not cask_list:
         log.info("No Homebrew casks specified for installation.")
         return True

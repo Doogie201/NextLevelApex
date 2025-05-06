@@ -21,6 +21,7 @@ def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
     Returns:
         True if successful or dry run, False otherwise.
     """
+    log.debug(f"setup_mise_globals received dict: {tools} (Type: {type(tools)})")
     if not tools:
         log.info("No Mise global tools specified in config.")
         return True

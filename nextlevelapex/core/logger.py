@@ -1,2 +1,3 @@
 """Logging setup."""
+
 pass
