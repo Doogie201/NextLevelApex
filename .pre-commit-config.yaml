@@ -1,66 +1,95 @@
+---             # ← document start required by yamllint
 # ---------------------------------------------------------------------------
-# Global settings
+# Global pre‑commit settings
 # ---------------------------------------------------------------------------
 minimum_pre_commit_version: "3.6.0"
+
 default_language_version:
-  python: python3.11
+  python: python3.13        # project’s baseline interpreter
+
 ci:
-  autofix: true
-default_stages: [pre-commit, pre-push]
+  autofix: true             # rewrite files, then fail so diff is visible
 fail_fast: true
+default_stages: [pre-commit, pre-push]
 
 # ---------------------------------------------------------------------------
 # Repositories & hooks
 # ---------------------------------------------------------------------------
 repos:
-  # House‑keeping hooks
+  # ---------------------------------------------------- House‑keeping hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+      - id: check-merge-conflict
       - id: debug-statements
       - id: detect-private-key
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
       - id: check-added-large-files
         args: ["--maxkb", "500"]
-      - id: check-json                 # JSON syntax validator
 
+  # ----------------------------------------------------------- YAML linter
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.1
     hooks:
       - id: yamllint
         files: "\\.(ya?ml)$"
-        args: ["-d", "{extends: default, rules: {line-length: {max: 120}}}"]
+        args:
+          - "-d"
+          - "{extends: default, rules: {line-length: {max: 120}}}"
 
-  # Python – Ruff
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8                      # bundles Ruff 0.11.8
+  # ------------------------------------------- Shell formatting & linting
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.11.0-1
     hooks:
-      # 1) Formatter
-      - id: ruff-format
-        exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
-        stages: [pre-commit]
+      - id: shfmt
+        args: ["-i", "2", "-sr", "-ci"]
 
-      # 2) Linter with auto‑fix on commit
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        args: ["--severity", "warning"]
+
+  # ----------------------------------- Python formatters & linters stack
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+        language_version: python3.13
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+        args: ["--profile", "black"]
+        language_version: python3.13
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.8           # bundles Ruff 0.11.8 binary
+    hooks:
+      # 1 Formatter (runs first)
+      - id: ruff-format
+        stages: [pre-commit]
+        exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
+
+      # 2 Linter + auto‑fix on commit
       - id: ruff
         name: ruff-lint-fix
-        args:
-          [
-            "--fix",
-            "--exit-non-zero-on-fix",
-            "--show-fixes",
-            "--unsafe-fixes",
-          ]
+        args: ["--fix", "--exit-non-zero-on-fix", "--show-fixes", "--unsafe-fixes"]
         stages: [pre-commit]
 
-      # 3) Strict linter (no fixes) on push/CI
+      # 3 Strict linter on push/CI (no fixes)
       - id: ruff
         name: ruff-lint-ci
         args: ["--show-source"]
         stages: [pre-push]
 
 # ---------------------------------------------------------------------------
-# (Optional) MyPy – enable when ready
+# Optional – MyPy strict typing (uncomment when ready)
 # ---------------------------------------------------------------------------
 # - repo: https://github.com/pre-commit/mirrors-mypy
 #   rev: v1.10.0

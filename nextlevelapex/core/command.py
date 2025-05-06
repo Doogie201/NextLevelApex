@@ -1,8 +1,8 @@
 # ~/Projects/NextLevelApex/nextlevelapex/core/command.py
 
-import subprocess
 import logging
 import shlex
+import subprocess
 from typing import Optional
 
 # Get logger instance (assuming basic config in main.py for now)
