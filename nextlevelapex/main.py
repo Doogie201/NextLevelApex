@@ -93,7 +93,33 @@ def run(
     if not config:
         log.critical("Failed to load any configuration. Aborting.")
         raise typer.Exit(code=1)
-    log.debug(f"Configuration loaded from {config_file}")
+    log.info("Successfully loaded user configuration.")  # Log success
+    log.debug(f"Configuration loaded from {config_file}")  # Log source
+
+    # --- ADD THESE DEBUG LINES ---
+    log.debug(f"Type of loaded config object: {type(config)}")
+    log.debug(f"Top-level keys found in config: {list(config.keys())}")
+    # Specifically check the sections we care about
+    homebrew_section = config.get("homebrew", "MISSING")
+    dev_tools_section = config.get("developer_tools", "MISSING")
+    log.debug(f"Value for 'homebrew' key: {homebrew_section}")
+    log.debug(f"Value for 'developer_tools' key: {dev_tools_section}")
+    # Dig deeper if the sections exist
+    if isinstance(homebrew_section, dict):
+        log.debug(
+            f"Value for 'homebrew.formulae': {homebrew_section.get('formulae', 'NOT_FOUND')}"
+        )
+        log.debug(
+            f"Value for 'homebrew.casks': {homebrew_section.get('casks', 'NOT_FOUND')}"
+        )
+    if isinstance(dev_tools_section, dict):
+        mise_section = dev_tools_section.get("mise", "MISSING")
+        log.debug(f"Value for 'developer_tools.mise': {mise_section}")
+        if isinstance(mise_section, dict):
+            log.debug(
+                f"Value for 'developer_tools.mise.global_tools': {mise_section.get('global_tools', 'NOT_FOUND')}"
+            )
+    # --- END OF ADDED DEBUG LINES ---
 
     # --- TODO: Load State ---
     # state = state_manager.load_state(DEFAULT_STATE_PATH)
@@ -107,8 +133,8 @@ def run(
     # Structure: (Section Name, Config Key to Enable, Task Function/Module)
     # We will add more sections here later
     setup_sections = [
-        ("Homebrew", "install_brew", brew_tasks),
-        ("Mise", "mise_global_tools", mise_tasks),
+        ("Homebrew", "enable_homebrew_tasks", brew_tasks),
+        ("Mise", "enable_mise_tasks", mise_tasks),
         # ("SystemTweaks", "add_aliases", system_tasks), # Example future steps
         # ("Security", "setup_security", security_tasks),
         # ("Networking", "setup_networking", network_tasks),
