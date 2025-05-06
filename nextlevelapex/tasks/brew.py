@@ -1,2 +1,3 @@
-"""Homebrew related tasks."""
+"""Tasks related to Homebrew package management."""
+
 pass
