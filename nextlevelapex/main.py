@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List
 
@@ -27,6 +26,9 @@ from typing_extensions import Annotated, TypedDict
 # ── Local imports (keep absolute to avoid sys.path surprises) ───────────────
 from nextlevelapex.core import config as config_loader
 from nextlevelapex.core.command import run_command  # noqa: F401  (exported for tasks)
+
+# ── Core task model for unified results ────────────────────────────────────
+from nextlevelapex.core.task import TaskResult
 
 # Discover built‑in task modules so they can self‑register via @task
 
@@ -53,16 +55,6 @@ class TaskContext(TypedDict):
     config: Dict
     dry_run: bool
     verbose: bool
-
-
-@dataclass
-class TaskResult:
-    """Normalised result each task should return."""
-
-    name: str
-    success: bool
-    changed: bool = False
-    message: str | None = None
 
 
 TaskFunc = Callable[[TaskContext], TaskResult]
@@ -136,34 +128,47 @@ def run(
         log.debug("Verbose logging enabled")
 
     # Load configuration -----------------------------------------------------
-    config: Dict = config_loader.load_config(config_file)
+    config = config_loader.load_config(config_file)
     if not config:
         log.critical("Failed to load configuration – aborting.")
         raise typer.Exit(code=1)
     log.debug("Configuration loaded: %s", json.dumps(config, indent=2))
 
     # Build common context
-    ctx: TaskContext = {"config": config, "dry_run": dry_run, "verbose": verbose}
-
+    ctx: TaskContext = {
+        "config": config,
+        "dry_run": dry_run,
+        "verbose": verbose,
+    }
     # Run tasks --------------------------------------------------------------
     overall_success = True
     summary: List[TaskResult] = []
-
-    for task_name, fn in _TASK_REGISTRY.items():
+    for task_name, handler in _TASK_REGISTRY.items():
         log.info("─── Running task: %s ───", task_name)
         try:
-            result = fn(ctx)
+            result: TaskResult = handler(ctx)
         except KeyboardInterrupt:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("Task %s crashed: %s", task_name, exc)
-            result = TaskResult(name=task_name, success=False, message=str(exc))
+            result = TaskResult(
+                name=task_name, success=False, changed=False, message=str(exc)
+            )
+
+        # Emit every message from the task
+        if hasattr(result, "messages"):
+            for lvl, msg in result.messages:
+                getattr(log, lvl.value)(f"{result.name}: {msg}")
 
         summary.append(result)
+
         if not result.success:
-            overall_success = False
             log.error("Task %s FAILED – aborting further execution.", task_name)
+            overall_success = False
             break
+
+        if result.changed:
+            log.info("Task %s made changes", task_name)
 
     # Summary ---------------------------------------------------------------
     _print_summary(summary, overall_success)
