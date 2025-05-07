@@ -1,28 +1,54 @@
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires    = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "nextlevelapex"
-version = "0.1.0"
-description = "Apex Level macOS Setup Orchestrator"
-authors = ["Your Name <you@example.com>"]
-license = "MIT"
+name         = "nextlevelapex"
+version      = "0.1.0"
+description  = "Apex-level macOS setup orchestrator"
+readme       = "README.md"
+authors      = ["Marcus Smith <marcus@youremail.com>"]
+license      = "MIT"
+homepage     = "https://github.com/Doogie201/NextLevelApex"
+repository   = "https://github.com/Doogie201/NextLevelApex.git"
+documentation= "https://github.com/Doogie201/NextLevelApex#readme"
+keywords     = ["macos", "automation", "setup", "cli", "orchestration"]
+classifiers  = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Operating System :: MacOS :: MacOS X",
+  "License :: OSI Approved :: MIT License"
+]
+
+# ensure Poetry picks up your Python package & the JSON schema files
+packages = [
+  { include = "nextlevelapex" }
+]
+include = [
+  "nextlevelapex/schema/*.json"
+]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-typer = {extras = ["all"], version = "^0.9.0"}
-# Add other dependencies like: docker, jinja2, jsonschema
-jsonschema = "^4.23.0"
+python     = ">=3.10,<4.0"
+typer       = { version = "^0.9.0", extras = ["all"] }
+jsonschema  = "^4.23.0"
+
+[tool.poetry.extras]
+# if you ever want to install just the CLI bits
+cli = ["typer[all]"]
 
 [tool.poetry.scripts]
 nlx = "nextlevelapex.main:app"
 
-[tool.poetry.dev-dependencies]
-# Add other dev dependencies
+[tool.poetry.group.dev]
+optional = false
 
 [tool.poetry.group.dev.dependencies]
-ruff = "0.11.8"
-mypy = "^1.15.0"
-types-requests = "^2.32.0.20250328"
-pytest = "^8.3"
+ruff            = "0.11.8"
+mypy            = "^1.15.0"
+types-requests  = "^2.32.0"
+pytest          = "^8.3.0"
+black           = "^23.9.1"
+isort           = "^5.12.0"
+pre-commit      = "^2.20.0"
