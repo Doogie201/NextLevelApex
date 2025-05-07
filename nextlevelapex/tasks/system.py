@@ -1,8 +1,13 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/system.py
 
+import fnmatch
 import logging
+import shutil
+import subprocess
 from pathlib import Path
-from typing import Dict
+from tempfile import NamedTemporaryFile
+
+from nextlevelapex.core.task import Severity, TaskResult
 
 log = logging.getLogger(__name__)
 
@@ -45,74 +50,89 @@ def _write_shell_config(config_path: Path, lines: list[str], dry_run: bool) -> b
         return False
 
 
-def ensure_aliases(
-    config: Dict,  # The loaded config dictionary
-    dry_run: bool = False,
-) -> bool:
-    """
-    Ensures aliases defined in the config are present in the shell config file.
-    Manages aliases within a specific marked block to avoid duplicates on re-runs.
-    """
-    system_config = config.get("system", {})
-    if not system_config.get("add_aliases", False):
-        log.info("Skipping alias configuration as per config.")
-        return True
+def ensure_aliases(config: dict, dry_run: bool = False) -> TaskResult:
+    """Idempotently install your aliases inside a marked block."""
+    result = TaskResult("system.aliases", success=True, changed=False, messages=[])
+    sys_cfg = config.get("system", {})
 
-    aliases_to_add = system_config.get("aliases", {})
-    if not aliases_to_add:
-        log.info("No aliases defined in configuration.")
-        return True
+    if not sys_cfg.get("add_aliases", False):
+        result.messages.append((Severity.INFO, "Aliases disabled in config"))
+        return result
 
-    shell_config_file = system_config.get("shell_config_file", "~/.zshrc")
-    config_path = Path(shell_config_file).expanduser().resolve()
+    shellrc = Path(sys_cfg.get("shell_config_file", "~/.zshrc")).expanduser()
+    lines = _read_shell_config(shellrc)
 
-    log.info(f"Ensuring aliases are configured in: {config_path}")
-
-    current_lines = _read_shell_config(config_path)
+    # Build new_lines exactly like before…
     new_lines = []
-    in_apex_block = False
-    _apex_block_exists = True  # noqa: F841  # future use
-
-    # Process existing lines, removing the old Apex block if found
-    for line in current_lines:
+    in_block = False
+    for line in lines:
         if APEX_BLOCK_START_MARKER in line:
-            in_apex_block = True
-            _apex_block_exists = True  # noqa: F841  # future use
-            continue  # Skip start marker
+            in_block = True
+            continue
         if APEX_BLOCK_END_MARKER in line:
-            in_apex_block = False
-            continue  # Skip end marker
-        if not in_apex_block:
-            new_lines.append(line)  # Keep lines outside the block
+            in_block = False
+            continue
+        if not in_block:
+            new_lines.append(line)
 
-    # Ensure trailing newline if file wasn't empty
+    # Ensure trailing newline
     if new_lines and not new_lines[-1].endswith("\n"):
         new_lines[-1] += "\n"
 
-    # Add the new Apex block with current aliases
-    log.debug(f"Adding/Updating Apex alias block with {len(aliases_to_add)} aliases.")
+    # Append fresh block
     new_lines.append(f"\n{APEX_BLOCK_START_MARKER}\n")
-    for name, command in aliases_to_add.items():
-        # Basic validation/escaping might be needed for complex commands
-        alias_line = f"alias {name}='{command}'\n"
-        new_lines.append(alias_line)
+    for name, cmd in sys_cfg.get("aliases", {}).items():
+        new_lines.append(f"alias {name}='{cmd}'\n")
     new_lines.append(f"{APEX_BLOCK_END_MARKER}\n")
 
-    return _write_shell_config(config_path, new_lines, dry_run)
+    # Detect no-op
+    if lines == new_lines:
+        result.messages.append((Severity.INFO, "No alias changes needed"))
+        return result
+
+    result.changed = True
+    if dry_run:
+        result.messages.append((Severity.INFO, f"[dry-run] would rewrite {shellrc}"))
+        return result
+
+    # Atomic write via temp file
+    with NamedTemporaryFile("w", dir=shellrc.parent, delete=False) as tmp:
+        tmp.writelines(new_lines)
+    shutil.move(tmp.name, shellrc)
+    result.messages.append((Severity.INFO, f"Wrote aliases to {shellrc}"))
+    return result
 
 
 # --- TODO: Add function for prune_logitech_agents ---
-def prune_logitech_agents(config: Dict, dry_run: bool = False) -> bool:
-    system_config = config.get("system", {})
-    if not system_config.get("prune_logitech_agents", False):
-        log.info("Skipping Logitech agent pruning as per config.")
-        return True
+def prune_logitech_agents(cfg: dict, dry_run: bool = False) -> TaskResult:
+    result = TaskResult("system.prune_logitech", True, False, [])
+    if not cfg.get("prune_logitech_agents", False):
+        result.messages.append((Severity.INFO, "Logitech pruning disabled"))
+        return result
 
-    log.warning("Logitech agent pruning is not yet implemented in system.py")
-    # Placeholder implementation:
-    # 1. Find files matching /Library/LaunchAgents/com.logi.*
-    # 2. For each file:
-    #    - Run `sudo launchctl bootout system "<path>"` via CommandRunner (needs sudo handling)
-    #    - Run `sudo rm -f "<path>"` via CommandRunner (needs sudo handling)
-    # Need robust error handling and sudo capability in CommandRunner
-    return True  # Return True for now
+    paths = []
+    for p in Path("/Library/LaunchAgents").iterdir():
+        if fnmatch.fnmatch(p.name, "com.logi.*"):
+            paths.append(p)
+
+    if not paths:
+        result.messages.append((Severity.INFO, "No Logitech agents found"))
+        return result
+
+    for agent in paths:
+        cmd_boot = ["sudo", "launchctl", "bootout", "system", str(agent)]
+        cmd_rm = ["sudo", "rm", "-f", str(agent)]
+        for cmd in (cmd_boot, cmd_rm):
+            if dry_run:
+                result.messages.append((Severity.INFO, f"[dry-run] {' '.join(cmd)}"))
+            else:
+                try:
+                    subprocess.run(cmd, check=True, text=True, capture_output=True)
+                    result.messages.append((Severity.INFO, f"Ran: {' '.join(cmd)}"))
+                except subprocess.CalledProcessError as e:
+                    result.success = False
+                    result.messages.append(
+                        (Severity.ERROR, f"Failed {cmd}: {e.stderr}")
+                    )
+    result.changed = True
+    return result
