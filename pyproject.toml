@@ -13,6 +13,7 @@ license = "MIT"
 python = "^3.10"
 typer = {extras = ["all"], version = "^0.9.0"}
 # Add other dependencies like: docker, jinja2, jsonschema
+jsonschema = "^4.23.0"
 
 [tool.poetry.scripts]
 nlx = "nextlevelapex.main:app"

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -13,4 +13,4 @@ class TaskResult:
     name: str
     success: bool
     changed: bool = False
-    messages: list[tuple[Severity, str]] = None
+    messages: list[tuple[Severity, str]] = field(default_factory=list)
