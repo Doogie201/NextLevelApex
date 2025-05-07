@@ -1,0 +1,7 @@
+{
+  "enable_security_tasks": true,
+  "security": {
+    "enable_firewall_stealth": true,
+    "enable_touchid_sudo": true
+  }
+}
