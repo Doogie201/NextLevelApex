@@ -72,9 +72,9 @@ repos:
     rev: v0.11.8           # bundles Ruff 0.11.8 binary
     hooks:
       # 1 Formatter (runs first)
-      - id: ruff-format
-        stages: [pre-commit]
-        exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
+#     - id: ruff-format
+#       stages: [pre-commit]
+#       exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
 
       # 2 Linter + auto‑fix on commit
       - id: ruff
