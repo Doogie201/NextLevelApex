@@ -133,7 +133,11 @@ def run(
         log.critical("Failed to load configuration – aborting.")
         raise typer.Exit(code=1)
     log.debug("Configuration loaded: %s", json.dumps(config, indent=2))
-
+    print(
+        "\n=== LOADED CONFIG ===\n",
+        json.dumps(config, indent=2),
+        "\n=====================\n",
+    )
     # Build common context
     ctx: TaskContext = {
         "config": config,

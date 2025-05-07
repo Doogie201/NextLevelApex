@@ -87,37 +87,55 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     Fills in any missing properties with the schema’s own default values.
     """
     log.info(f"Attempting to load configuration from: {config_path}")
-    # Start from an empty dict and inject defaults:
+
+    # 1) Start with an empty dict
     config: Dict[str, Any] = {}
 
-    # Use Draft7Validator to inject defaults:
+    # 2) Build two validators:
+    #    - inject_validator: uses _set_defaults to populate defaults
+    #    - final_validator: pure Draft7Validator for actual validation
     validator_cls = jsonschema.validators.extend(
         jsonschema.Draft7Validator,
         {"properties": _set_defaults},
     )
-    validator = validator_cls(SCHEMA)
-    validator.validate(config)  # populates config with schema defaults
+    inject_validator = validator_cls(SCHEMA)
+    final_validator = jsonschema.Draft7Validator(SCHEMA)
 
-    # Now overlay user values if file exists:
+    # 3) Run through inject_validator to fill in schema defaults (no errors raised)
+    for _ in inject_validator.iter_errors(config):
+        pass
+
+    # 4) Overlay user file if it exists
     if config_path.is_file():
         try:
             user_config = json.loads(config_path.read_text())
-            validator.validate(user_config)  # also injects any new defaults
+            # Validate the user’s partial config (and pick up any new defaults)
+            final_validator.validate(user_config)
         except json.JSONDecodeError as e:
             log.error(f"Error parsing JSON: {e}")
             log.warning("Using schema defaults only.")
             return config
         except jsonschema.ValidationError as e:
             log.error(f"Configuration validation error: {e.message}")
-            log.warning("Falling back to last known good defaults.")
+            log.warning("Falling back to schema defaults.")
             return config
-        # deep-merge user_config onto our default config
+
+        # Merge user values onto our defaults
         _deep_update(config, user_config)
+
+        # Now validate the merged config
+        try:
+            final_validator.validate(config)
+        except jsonschema.ValidationError as e:
+            log.error(f"Merged configuration failed schema validation: {e.message}")
+            raise
+
         log.info("Configuration loaded and validated.")
         return config
-    else:
-        log.warning(f"No config at {config_path}; using schema defaults.")
-        return config
+
+    # 5) No user file: return just schema defaults
+    log.warning(f"No config at {config_path}; using schema defaults.")
+    return config
 
 
 def generate_default_config(config_path: Path = DEFAULT_CONFIG_PATH) -> bool:
