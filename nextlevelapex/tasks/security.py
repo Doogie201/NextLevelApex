@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Dict
 
 # ── Local imports ───────────────────────────────────────────────────────────
-from nextlevelapex.main import TaskContext, TaskResult, task  # noqa: WPS433
+from nextlevelapex.core.task import Severity, TaskResult
+from nextlevelapex.main import TaskContext  # noqa: WPS433
+from nextlevelapex.main import task  # ensure decorator is available
 
 log = logging.getLogger(__name__)
 
@@ -51,75 +53,96 @@ def _run_sudo(cmd: list[str], dry_run: bool) -> subprocess.CompletedProcess[str]
 # ── Task implementations ───────────────────────────────────────────────────
 @task("Security")
 def security_task(ctx: TaskContext) -> TaskResult:
-    """
-    Aggregate security‑related tweaks.
-
-    Returns TaskResult(success=False) if any sub‑task fails.
-    """
-    cfg = _security_config(ctx)
-    dry = ctx["dry_run"]
-
-    sub_results: list[bool] = [
-        _firewall_stealth(cfg, dry),
-        _enable_touchid_sudo(cfg, dry),
-        # add more here
-    ]
-    ok = all(sub_results)
-    return TaskResult(name="Security", success=ok, changed=any(sub_results))
+    result = TaskResult("security", True, False)
+    for fn in (_firewall_stealth, _enable_touchid_sudo):
+        sub = fn(ctx)
+        if not sub.success:
+            result.success = False
+        if sub.changed:
+            result.changed = True
+        result.messages.extend(sub.messages)
+    return result
 
 
 # --------------------------------------------------------------------------
 # Individual subtasks
 # --------------------------------------------------------------------------
-def _firewall_stealth(cfg: Dict, dry_run: bool) -> bool:
-    """Enable macOS firewall stealth mode if requested."""
+def _firewall_stealth(cfg: dict, dry_run: bool) -> TaskResult:
+    """
+    Enable macOS firewall stealth mode if requested.
+    Returns a TaskResult with detailed messages and change status.
+    """
+    result = TaskResult(name="security.firewall_stealth", success=True, changed=False)
     if not cfg.get("enable_firewall_stealth", False):
-        log.debug("Firewall stealth mode skipped by config.")
-        return False
+        result.messages.append((Severity.INFO, "Firewall stealth disabled in config"))
+        return result
 
-    log.info("Enabling macOS firewall stealth mode …")
-    cmd = ["sudo", FIREWALL_UTIL, "--setstealthmode", "on"]
+    cmd = [FIREWALL_UTIL, "--setstealthmode", "on"]
+    if dry_run:
+        result.messages.append(
+            (Severity.INFO, f"[dry-run] would run: sudo {' '.join(cmd)}")
+        )
+        return result
 
     try:
-        _run_sudo(cmd, dry_run)
-        log.info("Firewall stealth mode enabled.")
-        return True
+        subprocess.run(["sudo"] + cmd, check=True, text=True, capture_output=True)
+        result.changed = True
+        result.messages.append((Severity.INFO, "Enabled firewall stealth mode"))
     except subprocess.CalledProcessError as exc:
-        log.error("Failed to enable firewall stealth mode: %s", exc.stderr)
-        return False
+        result.success = False
+        err = exc.stderr or exc.stdout or str(exc)
+        result.messages.append(
+            (Severity.ERROR, f"Failed to enable firewall stealth mode: {err}")
+        )
+    return result
 
 
-def _enable_touchid_sudo(cfg: Dict, dry_run: bool) -> bool:
-    """Add pam_tid.so line to /etc/pam.d/sudo to allow Touch‑ID sudo."""
+def _enable_touchid_sudo(cfg: dict, dry_run: bool) -> TaskResult:
+    """
+    Add pam_tid.so line to /etc/pam.d/sudo to allow Touch-ID sudo.
+    Returns a TaskResult with details and change status.
+    """
+    result = TaskResult(name="security.touchid_sudo", success=True, changed=False)
     if not cfg.get("enable_touchid_sudo", False):
-        log.debug("Touch‑ID sudo skipped by config.")
-        return False
+        result.messages.append((Severity.INFO, "Touch-ID sudo disabled in config"))
+        return result
 
-    log.info("Ensuring Touch‑ID is enabled for sudo …")
-
-    # Already present?
+    # Check if already present
     try:
-        if PAM_SUDO_FILE.read_text().find(PAM_TID_LINE) != -1:
-            log.info("Touch‑ID sudo already configured.")
-            return False  # no change
+        content = PAM_SUDO_FILE.read_text()
+        if PAM_TID_LINE in content:
+            result.messages.append((Severity.INFO, "Touch-ID sudo already configured"))
+            return result
     except PermissionError:
-        log.debug("Need sudo to read %s – continuing", PAM_SUDO_FILE)
+        result.messages.append(
+            (Severity.INFO, f"No read access to {PAM_SUDO_FILE}, proceeding")
+        )
 
-    # Append line using sudo tee
     pam_line = f"{PAM_TID_LINE}\n"
+    if dry_run:
+        result.changed = True
+        result.messages.append(
+            (
+                Severity.INFO,
+                f"[dry-run] would append line to {PAM_SUDO_FILE}: {PAM_TID_LINE}",
+            )
+        )
+        return result
+
     shell_cmd = (
         f"printf '%s' {shlex.quote(pam_line)} | "
         f"sudo /usr/bin/tee -a {shlex.quote(str(PAM_SUDO_FILE))} >/dev/null"
     )
-    log.debug("Running shell: %s", shell_cmd)
-    if dry_run:
-        log.info("[dry‑run] Would run: %s", shell_cmd)
-        return True
-
     try:
-        subprocess.run(shell_cmd, shell=True, check=True, text=True)  # noqa: S602
-        log.info("Touch‑ID sudo rule added.")
-        return True
+        subprocess.run(
+            shell_cmd, shell=True, check=True, text=True, capture_output=True
+        )
+        result.changed = True
+        result.messages.append((Severity.INFO, "Added Touch-ID sudo rule"))
     except subprocess.CalledProcessError as exc:
-        log.error("Failed to add pam_tid.so rule: %s", exc.stderr)
-        return False
+        result.success = False
+        err = exc.stderr or exc.stdout or str(exc)
+        result.messages.append(
+            (Severity.ERROR, f"Failed to add pam_tid.so rule: {err}")
+        )
+    return result
