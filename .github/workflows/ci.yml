@@ -47,8 +47,18 @@ jobs:
 
       - name: 🧪 Run tests with coverage
         run: |
-          poetry run coverage run -m pytest
-          poetry run coverage html  # Generates htmlcov/
+          poetry run coverage run --source=nextlevelapex -m pytest
+          poetry run coverage html
+
+      - name: Upload coverage reports to Codecov
+        if: success() && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage.xml
+        flags: unittests
+        upload-name: codecov-upload
+        fail_ci_if_error: true
 
       - name: 🧾 Verify htmlcov/ directory and contents
         if: always()
