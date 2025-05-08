@@ -1,0 +1,33 @@
+---
+
+name: Publish ✨
+
+on:
+  push:
+    tags:
+      - ['v*.*.*']
+
+jobs:
+  publish-to-pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry & Build
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+          poetry config virtualenvs.create false
+          poetry install --no-interaction --no-ansi
+          poetry build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v2
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}

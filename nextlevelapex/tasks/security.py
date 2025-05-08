@@ -54,13 +54,22 @@ def _run_sudo(cmd: list[str], dry_run: bool) -> subprocess.CompletedProcess[str]
 @task("Security")
 def security_task(ctx: TaskContext) -> TaskResult:
     result = TaskResult("security", True, False)
+
+    # Extract the dry_run flag (works whether ctx is a dict or has an attribute)
+    try:
+        dry_run = ctx["dry_run"]
+    except (TypeError, KeyError):
+        dry_run = getattr(ctx, "dry_run", False)
+
+    # Now pass both ctx and dry_run into each check
     for fn in (_firewall_stealth, _enable_touchid_sudo):
-        sub = fn(ctx)
+        sub = fn(ctx, dry_run)
         if not sub.success:
             result.success = False
         if sub.changed:
             result.changed = True
         result.messages.extend(sub.messages)
+
     return result
 
 

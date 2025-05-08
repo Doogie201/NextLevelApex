@@ -1,0 +1,51 @@
+│ │              │   │   │   │   │   │   'script_path': {                                        │ │
+│ │              │   │   │   │   │   │   │   'type': 'string',                                   │ │
+│ │              │   │   │   │   │   │   │   'default':                                          │ │
+│ │              '~/Scripts/NextLevelApex/weekly_audit.sh',                                      │ │
+│ │              │   │   │   │   │   │   │   'description': 'Path to the wrapper script called   │ │
+│ │              by launchd.'                                                                    │ │
+│ │              │   │   │   │   │   │   }                                                       │ │
+│ │              │   │   │   │   │   },                                                          │ │
+│ │              │   │   │   │   │   'additionalProperties': False                               │ │
+│ │              │   │   │   │   }                                                               │ │
+│ │              │   │   │   },                                                                  │ │
+│ │              │   │   │   'additionalProperties': False                                       │ │
+│ │              │   │   },                                                                      │ │
+│ │              │   │   ... +1                                                                  │ │
+│ │              │   },                                                                          │ │
+│ │              │   'required': [                                                               │ │
+│ │              │   │   'script_behavior',                                                      │ │
+│ │              │   │   'system',                                                               │ │
+│ │              │   │   'security',                                                             │ │
+│ │              │   │   'homebrew',                                                             │ │
+│ │              │   │   'developer_tools',                                                      │ │
+│ │              │   │   'networking',                                                           │ │
+│ │              │   │   'local_ai',                                                             │ │
+│ │              │   │   'automation_agents',                                                    │ │
+│ │              │   │   'optional_apps'                                                         │ │
+│ │              │   ]                                                                           │ │
+│ │              }                                                                               │ │
+│ │  validator = Validator(                                                                      │ │
+│ │              │   schema={'$id': 'https://exam...1.schema.json', '$schema':                   │ │
+│ │              'http://json-...ft-07/schema#', 'description': 'Configuratio...trator (v1.0)',  │ │
+│ │              'properties': {'$schema': {'description': 'Reference to...ition itself.',       │ │
+│ │              'format': 'uri', 'type': 'string'}, '_comment': {'description': 'Top-level      │ │
+│ │              co...uration file.', 'type': 'string'}, 'automation_agents':                    │ │
+│ │              {'additionalProperties': False, 'description': 'Custom backg...d automation.',  │ │
+│ │              'properties': {'_comment': {'type': 'string'}, 'battery_alert':                 │ │
+│ │              {'additionalProperties': False, 'properties': {'check_interval_seconds': {...}, │ │
+│ │              'enable': {...}, 'script_path': {...}, 'threshold_percent': {...}}, 'type':     │ │
+│ │              'object'}, 'weekly_audit': {'additionalProperties': False, 'properties':        │ │
+│ │              {'audit_script_path': {...}, 'enable': {...}, 'git_commit_audit': {...},        │ │
+│ │              'log_directory': {...}, ...}, 'type': 'object'}}, 'type': 'object'},            │ │
+│ │              'developer_tools': {'additionalProperties': False, 'description':               │ │
+│ │              'Configuratio...es and tools.', 'properties': {'_comment': {'type': 'string'},  │ │
+│ │              'docker_runtime': {'additionalProperties': False, 'properties': {'colima':      │ │
+│ │              {...}, 'provider': {...}}, 'type': 'object'}, 'mise': {'additionalProperties':  │ │
+│ │              False, 'properties': {'enable': {...}, 'global_tools': {...}}, 'type':          │ │
+│ │              'object'}}, 'type': 'object'}, ...}, ...},                                      │ │
+│ │              │   format_checker=None                                                         │ │
+│ │              )                                                                               │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+RecursionError: maximum recursion depth exceeded while calling a Python object

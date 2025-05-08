@@ -1,0 +1,23 @@
+[run]
+branch = True
+source =
+    nextlevelapex
+omit =
+    */__init__.py
+    */tests/*
+    */migrations/*
+    .venv/*
+    setup.py
+
+[report]
+# Improve human readability in CLI output
+show_missing = True
+skip_covered = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == '__main__':
+    raise NotImplementedError
+
+[html]
+directory = htmlcov
+title = NextLevelApex Coverage Report

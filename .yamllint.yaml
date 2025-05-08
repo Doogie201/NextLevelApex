@@ -1,0 +1,25 @@
+---
+# .yamllint.yaml
+extends: default
+
+# Ignore specific files and directories.
+# yamllint supports glob patterns for ignoring.
+ignore:
+  - '.github/workflows/'       # Ignore all YAML files in the GitHub workflows directory
+  - '.github/dependabot.yml'  # Ignore the Dependabot configuration file
+  - '.pre-commit-config.yaml' # Ignore the pre-commit configuration file
+  - '.yamllint.yaml'          # Ignore this yamllint configuration file itself
+
+rules: {}
+  # Default rules from 'extends: default' will apply to all non-ignored YAML files.
+  # You can override or add rules here if needed for your other YAML files.
+  # For example:
+  # line-length: { max: 100, level: warning }
+
+  # The 'truthy' rule can be problematic for GitHub Actions files due to their syntax.
+  # If '.github/workflows/' is successfully ignored, you don't need to worry about this for those files.
+  # For any other YAML files you *do* lint, you might want to configure 'truthy' if it's too strict:
+  # truthy:
+  #   allowed-values: ['true', 'false', 'on', 'off', 'yes', 'no', '**', 'main'] # Add common patterns
+  #   check-keys: false # Avoids checking keys that often use non-boolean values
+  #   level: warning

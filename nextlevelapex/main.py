@@ -28,7 +28,7 @@ from nextlevelapex.core import config as config_loader
 from nextlevelapex.core.command import run_command  # noqa: F401  (exported for tasks)
 
 # ── Core task model for unified results ────────────────────────────────────
-from nextlevelapex.core.task import TaskResult
+from nextlevelapex.core.task import Severity, TaskResult
 
 # Discover built‑in task modules so they can self‑register via @task
 
@@ -156,7 +156,10 @@ def run(
         except Exception as exc:
             log.exception("Task %s crashed: %s", task_name, exc)
             result = TaskResult(
-                name=task_name, success=False, changed=False, message=str(exc)
+                name=task_name,
+                success=False,
+                changed=False,
+                messages=[(Severity.ERROR, str(exc))],
             )
 
         # Emit every message from the task
