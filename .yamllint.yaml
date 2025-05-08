@@ -5,7 +5,11 @@ extends: default
 # ignore all GitHub workflows, Dependabot, and this yamllint config itself,
 # plus your pre-commit config (so we don’t have to tweak those files).
 ignore: |
-  ^\.github/.*\.ya?ml$
-  ^\.dependabot\.ya?ml$
-  ^\.pre-commit-config\.ya?ml$
-  ^\.yamllint\.ya?ml$
+  # ignore GitHub workflows (with or without leading './')
+  ^(?:\./)?\.github/.*\.ya?ml$
+  # ignore Dependabot
+  ^(?:\./)?\.github/dependabot\.ya?ml$
+  # ignore pre-commit config
+  ^(?:\./)?\.pre-commit-config\.ya?ml$
+  # ignore this yamllint config itself
+  ^(?:\./)?\.yamllint\.ya?ml$
