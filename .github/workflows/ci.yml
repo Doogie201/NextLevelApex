@@ -49,7 +49,8 @@ jobs:
         run: poetry run pytest -q --disable-warnings --maxfail=1
 
       - name: Upload coverage report
-        if: success() && matrix.python-version == '3.12'
+        # only on real pushes, and only on Python 3.12
+        if: github.event_name == 'push' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v3
         with:
           name: coverage-report
