@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import jsonschema
+from jsonschema import Draft7Validator
 
 # Load our JSON Schema as a Python dict
 with resources.open_text("nextlevelapex.schema", "config.v1.schema.json") as f:
@@ -55,18 +56,24 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
 #     # ... add placeholders for other sections: networking, ollama, etc.
 # }
 
+# grab the un-hooked "properties" validator
+_default_properties = Draft7Validator.VALIDATORS["properties"]
+
 
 def _set_defaults(validator, properties, instance, schema):
     """
-    jsonschema hook: whenever a property has a 'default', insert it.
+    jsonschema hook: whenever a property has a 'default', insert it,
+    then delegate to the original Draft7 `properties` validator.
     """
+    # only apply to dicts
+    if not isinstance(instance, dict):
+        return
+    # inject any defaults
     for prop, subschema in properties.items():
         if "default" in subschema:
             instance.setdefault(prop, subschema["default"])
 
-    for error in validator.VALIDATORS["properties"](
-        validator, properties, instance, schema
-    ):
+    for error in _default_properties(validator, properties, instance, schema):
         yield error
 
 
