@@ -1,0 +1,11 @@
+---
+# .yamllint.yml
+extends: default
+
+# ignore all GitHub workflows, Dependabot, and this yamllint config itself,
+# plus your pre-commit config (so we don’t have to tweak those files).
+ignore: |
+  ^\.github/.*\.ya?ml$
+  ^\.dependabot\.ya?ml$
+  ^\.pre-commit-config\.ya?ml$
+  ^\.yamllint\.ya?ml$
