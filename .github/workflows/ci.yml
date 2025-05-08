@@ -1,5 +1,4 @@
 ---
-
 name: CI
 
 on:
@@ -16,42 +15,62 @@ jobs:
         python-version: [3.10, 3.11, 3.12]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Poetry
+      - name: 📦 Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 -
           echo "${HOME}/.local/bin" >> $GITHUB_PATH
 
-      - name: Install dependencies
+      - name: 📚 Install dependencies
         run: |
           poetry config virtualenvs.create false
           poetry install --no-interaction --no-ansi
 
-      - name: Lint with Ruff
+      - name: 🧼 Lint with Ruff
         run: poetry run ruff .
 
-      - name: Format-check with Black
+      - name: 🧽 Format check with Black
         run: poetry run black --check .
 
-      - name: Import-sort with isort
+      - name: 🔀 Sort imports with isort
         run: poetry run isort --check-only .
 
-      - name: Type-check with Mypy
+      - name: 🔎 Static type check with Mypy
         run: poetry run mypy .
 
-      - name: Run tests
-        run: poetry run pytest -q --disable-warnings --maxfail=1
+      - name: 🧪 Run tests with coverage
+        run: |
+          poetry run coverage run -m pytest
+          poetry run coverage html  # Generates htmlcov/
 
-      - name: Upload coverage report
-        # only on real pushes, and only on Python 3.12
+      - name: 🧾 Verify htmlcov/ directory and contents
+        if: always()
+        run: |
+          echo "🕵️ Checking for htmlcov/..."
+          if [ -d "htmlcov" ]; then
+            echo "✅ htmlcov/ directory FOUND. Listing contents:"
+            ls -lAR htmlcov/
+          else
+            echo "❌ htmlcov/ directory NOT FOUND in $(pwd)."
+            exit 1
+          fi
+
+      - name: 📤 Upload coverage report
         if: github.event_name == 'push' && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: htmlcov/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+      - name: 🚨 Enforce minimum coverage threshold
+        run: poetry run coverage report --fail-under=10
