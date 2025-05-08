@@ -55,10 +55,9 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-        files: ./coverage.xml
-        flags: unittests
-        upload-name: codecov-upload
-        fail_ci_if_error: true
+          slug: Doogie201/NextLevelApex
+          upload-name: codecov-upload
+          fail_ci_if_error: true
 
       - name: 🧾 Verify htmlcov/ directory and contents
         if: always()
