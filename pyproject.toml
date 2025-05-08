@@ -2,12 +2,16 @@
 requires    = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.ruff]
+# ignore unused‐import errors if you have legitimate reasons to keep imports
+ignore = ["F401"]
+
 [tool.poetry]
 name         = "nextlevelapex"
-version      = "0.1.0"
+version      = "0.1.1"
 description  = "Apex-level macOS setup orchestrator"
 readme       = "README.md"
-authors      = ["Marcus Smith <marcus@youremail.com>"]
+authors      = ["Marcus Smith <doogie201@gmail.com>"]
 license      = "MIT"
 homepage     = "https://github.com/Doogie201/NextLevelApex"
 repository   = "https://github.com/Doogie201/NextLevelApex.git"
@@ -36,7 +40,7 @@ jsonschema  = "^4.23.0"
 
 [tool.poetry.extras]
 # if you ever want to install just the CLI bits
-cli = ["typer[all]"]
+cli = ["typer"]
 
 [tool.poetry.scripts]
 nlx = "nextlevelapex.main:app"
