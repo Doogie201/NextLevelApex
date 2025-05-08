@@ -10,7 +10,7 @@ def test_load_generated_config(tmp_path: Path):
         "script_behavior": {},
         "system": {},
         "security": {},
-        "homebrew": {},
+        "homebrew": {"formulae": [], "casks": []},
         "developer_tools": {},
         "networking": {},
         "local_ai": {},
@@ -18,6 +18,6 @@ def test_load_generated_config(tmp_path: Path):
         "optional_apps": {},
     }
     config_path.write_text(json.dumps(config_data))
-    result = load_config(str(config_path))
+    result = load_config(config_path)
     assert isinstance(result, dict)
     assert "system" in result
