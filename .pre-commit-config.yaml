@@ -97,6 +97,7 @@ repos:
         pass_filenames: false
         files: "\\.py$"
         always_run: true
+        types: [python]
 
 # ---------------------------------------------------------------------------
 # Optional – MyPy strict typing (uncomment when ready)
