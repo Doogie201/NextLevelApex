@@ -36,6 +36,7 @@ include = [
 python      = ">=3.10,<4.0"
 typer       = { version = "^0.15.3", extras = ["all"] }
 jsonschema  = "^4.23.0"
+colorlog = "^6.8.0"
 
 [tool.poetry.extras]
 # if you ever want to install just the CLI bits

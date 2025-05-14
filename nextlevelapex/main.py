@@ -26,6 +26,7 @@ from typing_extensions import Annotated, TypedDict
 from nextlevelapex.core import config as config_loader
 from nextlevelapex.core import state as state_tracker
 from nextlevelapex.core.command import run_command  # noqa: F401
+from nextlevelapex.core.diagnostics import generate_diagnostic_report
 from nextlevelapex.core.logger import LoggerProxy, setup_logging
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
@@ -164,6 +165,16 @@ def run(
 
         if not result.success:
             log.error("Task %s FAILED – aborting further execution.", task_name)
+            diagnostics = generate_diagnostic_report(
+                failed_task_name=task_name,
+                error_message=str(result.messages),
+                ctx=ctx,
+            )
+            diagnostic_path = (
+                Path.home() / "Library/Logs/NextLevelApex/diagnostics.json"
+            )
+            diagnostic_path.write_text(json.dumps(diagnostics, indent=2))
+            log.info("Diagnostic report written to %s", diagnostic_path)
             overall_success = False
             break
 

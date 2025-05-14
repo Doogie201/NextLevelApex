@@ -13,6 +13,7 @@ log = LoggerProxy(__name__)
 
 @task("Colima Setup")
 def setup_colima_task(ctx: Dict) -> TaskResult:
+    # raise RuntimeError("Simulated task crash for diagnostics test")
     """
     Task wrapper for Colima VM setup.
     """
