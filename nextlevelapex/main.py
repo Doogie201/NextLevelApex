@@ -19,16 +19,20 @@ import sys
 from pathlib import Path
 from typing import Callable, Dict, List
 
-# ── Third‑party ─────────────────────────────────────────────────────────────
+# ── Third-party ─────────────────────────────────────────────────────────────
 import typer
 from typing_extensions import Annotated, TypedDict
 
-# ── Local imports (keep absolute to avoid sys.path surprises) ───────────────
+# ── Local imports ───────────────────────────────────────────────────────────
 from nextlevelapex.core import config as config_loader
-from nextlevelapex.core.command import run_command  # noqa: F401  (exported for tasks)
-
-# ── Core task model for unified results ────────────────────────────────────
+from nextlevelapex.core.command import run_command  # noqa: F401
+from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
+
+# ── Now register your tasks ─────────────────────────────────────────────────
+
+
+# Import TaskResult and Severity
 
 # Discover built‑in task modules so they can self‑register via @task
 
@@ -63,31 +67,6 @@ TaskFunc = Callable[[TaskContext], TaskResult]
 # ── Task registry API ───────────────────────────────────────────────────────
 
 
-_TASK_REGISTRY: dict[str, TaskFunc] = {}
-
-
-def task(name: str) -> Callable[[TaskFunc], TaskFunc]:
-    """
-    Decorator: mark a function as a CLI task and auto‑register it.
-
-    Usage inside any `nextlevelapex.tasks.<module>`:
-
-    ```python
-    @task("Homebrew")
-    def homebrew_task(ctx: TaskContext) -> TaskResult:
-        ...
-    ```
-    """
-
-    def _decorator(fn: TaskFunc) -> TaskFunc:
-        if name in _TASK_REGISTRY:
-            raise RuntimeError(f"Duplicate task name: {name}")
-        _TASK_REGISTRY[name] = fn
-        return fn
-
-    return _decorator
-
-
 # ── Bring in tasks that use the decorator (import order matters) ────────────
 # The mere import of modules above populates _TASK_REGISTRY.
 
@@ -120,9 +99,12 @@ def run(
 ):
     """
     Execute all registered tasks in order of registration.
-
-    Any task may short‑circuit the run by returning `success=False`.
     """
+    import nextlevelapex.tasks.brew
+    import nextlevelapex.tasks.launch_agents
+    import nextlevelapex.tasks.mise
+    import nextlevelapex.tasks.ollama
+
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
         log.debug("Verbose logging enabled")
@@ -147,7 +129,7 @@ def run(
     # Run tasks --------------------------------------------------------------
     overall_success = True
     summary: List[TaskResult] = []
-    for task_name, handler in _TASK_REGISTRY.items():
+    for task_name, handler in get_task_registry().items():
         log.info("─── Running task: %s ───", task_name)
         try:
             result: TaskResult = handler(ctx)

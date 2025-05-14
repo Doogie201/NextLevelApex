@@ -1,3 +1,5 @@
+# ~/Projects/NextLevelApex/nextlevelapex/tasks/security.py
+
 """
 Security‑related setup tasks for NextLevelApex
 =============================================
@@ -20,9 +22,9 @@ from pathlib import Path
 from typing import Dict
 
 # ── Local imports ───────────────────────────────────────────────────────────
+from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import TaskContext  # noqa: WPS433
-from nextlevelapex.main import task  # ensure decorator is available
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ def _firewall_stealth(cfg: dict, dry_run: bool) -> TaskResult:
     Returns a TaskResult with detailed messages and change status.
     """
     result = TaskResult(name="security.firewall_stealth", success=True, changed=False)
-    if not cfg.get("enable_firewall_stealth", False):
+    if not cfg.get("security", {}).get("enable_firewall_stealth", False):
         result.messages.append((Severity.INFO, "Firewall stealth disabled in config"))
         return result
 
@@ -112,7 +114,7 @@ def _enable_touchid_sudo(cfg: dict, dry_run: bool) -> TaskResult:
     Returns a TaskResult with details and change status.
     """
     result = TaskResult(name="security.touchid_sudo", success=True, changed=False)
-    if not cfg.get("enable_touchid_sudo", False):
+    if not cfg.get("security", {}).get("enable_touchid_sudo", False):
         result.messages.append((Severity.INFO, "Touch-ID sudo disabled in config"))
         return result
 

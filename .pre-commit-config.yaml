@@ -88,6 +88,15 @@ repos:
         args: ["--show-source"]
         stages: [pre-push]
 
+  - repo: local
+    hooks:
+      - id: pytest
+        name: Run pytest
+        entry: poetry run pytest -q
+        language: system
+        files: "\\.py$"
+        always_run: true
+
 # ---------------------------------------------------------------------------
 # Optional – MyPy strict typing (uncomment when ready)
 # ---------------------------------------------------------------------------

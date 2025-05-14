@@ -4,6 +4,8 @@ import logging
 from typing import Dict
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.registry import task
+from nextlevelapex.core.task import Severity, TaskResult
 
 log = logging.getLogger(__name__)
 
@@ -81,3 +83,18 @@ def setup_ollama(config: Dict, dry_run: bool = False) -> bool:
         # For now, let's say the section "completed" if ollama itself is installed/running.
 
     return True  # Return True if Ollama setup process itself completed, even if a model pull failed
+
+
+@task("Ollama Setup")
+def setup_ollama_task(ctx) -> TaskResult:
+    # call your existing bool‐returning setup_ollama()
+    success = setup_ollama(ctx["config"].get("local_ai", {}), dry_run=ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Ollama installation or pull failed"))
+    return TaskResult(
+        name="Ollama Setup",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )

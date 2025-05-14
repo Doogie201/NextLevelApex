@@ -1,23 +1,22 @@
 [build-system]
-requires    = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires       = ["poetry-core>=1.0.0"]
+build-backend  = "poetry.core.masonry.api"
 
-[tool.ruff]
-# ignore unused‐import errors if you have legitimate reasons to keep imports
-ignore = ["F401"]
+[tool.ruff.lint]
+ignore = ["F401", "E501"]
 
 [tool.poetry]
-name         = "nextlevelapex"
-version      = "0.1.1"
-description  = "Apex-level macOS setup orchestrator"
-readme       = "README.md"
-authors      = ["Marcus Smith <doogie201@gmail.com>"]
-license      = "MIT"
-homepage     = "https://github.com/Doogie201/NextLevelApex"
-repository   = "https://github.com/Doogie201/NextLevelApex.git"
-documentation= "https://github.com/Doogie201/NextLevelApex#readme"
-keywords     = ["macos", "automation", "setup", "cli", "orchestration"]
-classifiers  = [
+name           = "nextlevelapex"
+version        = "0.1.1"
+description    = "Apex-level macOS setup orchestrator"
+readme         = "README.md"
+authors        = ["Marcus Smith <doogie201@gmail.com>"]
+license        = "MIT"
+homepage       = "https://github.com/Doogie201/NextLevelApex"
+repository     = "https://github.com/Doogie201/NextLevelApex.git"
+documentation  = "https://github.com/Doogie201/NextLevelApex#readme"
+keywords       = ["macos", "automation", "setup", "cli", "orchestration"]
+classifiers    = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -34,8 +33,8 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python     = ">=3.10,<4.0"
-typer       = {version = "^0.15.3", extras = ["all"]}
+python      = ">=3.10,<4.0"
+typer       = { version = "^0.15.3", extras = ["all"] }
 jsonschema  = "^4.23.0"
 
 [tool.poetry.extras]
@@ -49,13 +48,13 @@ nlx = "nextlevelapex.main:app"
 optional = false
 
 [tool.poetry.group.dev.dependencies]
-ruff            = "0.11.8"
+ruff            = "^0.11.8"
 mypy            = "^1.15.0"
 types-requests  = "^2.32.0"
-pytest          = "^8.3.0"
-black           = "^23.9.1"
-isort           = "^5.12.0"
-pre-commit      = "^2.20.0"
-yamllint = "^1.37.1"
-coverage = "^7.8.0"
-pytest-cov = "^6.1.1"
+pytest          = "^8.3.5"
+black           = "^23.12.1"
+isort           = "^5.13.2"
+pre-commit      = "^2.21.0"
+yamllint        = "^1.37.1"
+coverage        = "^7.8.0"
+pytest-cov      = "^6.1.1"

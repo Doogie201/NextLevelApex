@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.registry import get_task_registry, task
+from nextlevelapex.core.task import Severity, TaskResult
 
 log = logging.getLogger(__name__)
 
@@ -112,65 +114,84 @@ def _manage_launch_agent(
 
 # --- Battery Alert Agent ---
 def setup_battery_alert_agent(config: Dict, dry_run: bool = False) -> bool:
-    """Sets up a LaunchAgent to monitor battery levels."""
-    agents_config = config.get("automation_agents", {})
-    battery_config = agents_config.get("battery_alert", {})
-
-    if not battery_config.get("enable", False):
-        log.info("Skipping battery alert agent setup as per config.")
-        return True
-
+    """Stub logic for setting up the battery alert agent. Customize this."""
     log.info("Setting up battery alert LaunchAgent...")
-    script_path_str = battery_config.get(
-        "script_path", "~/Scripts/NextLevelApex/battery_alert.sh"
-    )
-    script_path = Path(script_path_str).expanduser().resolve()
-    threshold = battery_config.get("threshold_percent", 85)
-    interval = battery_config.get("check_interval_seconds", 1800)
 
-    battery_script_content = f"""#!/usr/bin/env zsh
-# Check battery percentage and alert if above threshold
-# Threshold: {threshold}%
-
-# Get battery percentage (works on M-series Macs, adjust if needed for Intel)
-PERCENTAGE=$(pmset -g batt | grep -Eo "\\d+%" | cut -d% -f1)
-CHARGING_STATUS=$(pmset -g batt | grep -o "'.*'")
-
-# Only notify if not charging and above threshold
-if [[ "$PERCENTAGE" -gt {threshold} && "$CHARGING_STATUS" != *'(Charging)'* && "$CHARGING_STATUS" != *'(AC Power)'* ]]; then
-  osascript -e 'display notification "Battery at {threshold}%+. Unplug to preserve health." with title "Battery Monitor"'
-fi
-"""
-    if not _write_executable_script(script_path, battery_script_content, dry_run):
-        return False
-
+    # Example values — adjust to your actual automation config
     plist_name = "com.nextlevelapex.batteryalert.plist"
     label = plist_name.removesuffix(".plist")
-    battery_plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+    script_path = Path("~/Scripts/NextLevelApex/battery_alert.sh").expanduser()
+
+    script_content = """#!/bin/bash
+# Battery Alert Script
+pmset -g batt > ~/battery_status.log
+"""
+
+    if not _write_executable_script(script_path, script_content, dry_run):
+        return False
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>{label}</string>
+  <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key>
-  <array>
-    <string>{script_path}</string>
-  </array>
-  <key>StartInterval</key>
-  <integer>{interval}</integer>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>{Path.home()}/Library/Logs/NextLevelApex/{label}.log</string>
-  <key>StandardErrorPath</key>
-  <string>{Path.home()}/Library/Logs/NextLevelApex/{label}.err.log</string>
+  <array><string>{script_path}</string></array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>{Path.home()}/Library/Logs/{label}.log</string>
+  <key>StandardErrorPath</key><string>{Path.home()}/Library/Logs/{label}.err</string>
 </dict>
 </plist>
 """
-    return _manage_launch_agent(plist_name, battery_plist_content, dry_run)
+    return _manage_launch_agent(plist_name, plist_content, dry_run)
+
+
+@task("Battery Alert Agent")
+def setup_battery_alert_agent_task(ctx) -> TaskResult:
+    success = setup_battery_alert_agent(ctx.get("config", {}), ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Battery alert agent setup failed"))
+    return TaskResult(
+        name="Battery Alert Agent",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )
+
+
+# Remove the duplicate definition
+# @task("Battery Alert Agent")
+# def setup_battery_alert_agent_task(ctx) -> TaskResult:
+#     # Calls your real implementation; returns bool
+#     success = setup_battery_alert_agent(dry_run=ctx["dry_run"])
+#     messages = []
+#     if not success:
+#         messages.append((Severity.ERROR, "Battery alert agent setup failed"))
+#     return TaskResult(
+#         name="Battery Alert Agent",
+#         success=success,
+#         changed=success and not ctx["dry_run"],
+#         messages=messages,
+#     )
 
 
 # --- Weekly Audit Agent ---
+@task("Weekly Audit Agent")
+def setup_weekly_audit_agent_task(ctx) -> TaskResult:
+    success = setup_weekly_audit_agent(ctx["config"], dry_run=ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Weekly audit agent setup failed"))
+    return TaskResult(
+        name="Weekly Audit Agent",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )
+
+
 def setup_weekly_audit_agent(config: Dict, dry_run: bool = False) -> bool:
     """Sets up a LaunchAgent for a weekly audit script."""
     agents_config = config.get("automation_agents", {})

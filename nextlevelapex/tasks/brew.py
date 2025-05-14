@@ -6,6 +6,9 @@ from pathlib import Path
 
 # Import the command runner from the core module
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.registry import task
+from nextlevelapex.core.task import Severity, TaskResult
+from nextlevelapex.main import get_task_registry
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +128,34 @@ def ensure_brew_shellenv(dry_run: bool = False) -> bool:
             log.info(f"DRYRUN: Would add shellenv command to {profile_path}.")
 
     return True
+
+
+@task("Homebrew Install")
+def install_brew_task(ctx) -> TaskResult:
+    success = install_brew(dry_run=ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Homebrew install failed"))
+    return TaskResult(
+        name="Homebrew Install",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )
+
+
+@task("Homebrew Shellenv")
+def ensure_brew_shellenv_task(ctx) -> TaskResult:
+    success = ensure_brew_shellenv(dry_run=ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Failed to configure brew shellenv"))
+    return TaskResult(
+        name="Homebrew Shellenv",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )
 
 
 def update_brew(dry_run: bool = False) -> bool:

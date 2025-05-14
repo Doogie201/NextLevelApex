@@ -7,7 +7,9 @@ import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
+from nextlevelapex.main import get_task_registry
 
 log = logging.getLogger(__name__)
 

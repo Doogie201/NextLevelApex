@@ -5,22 +5,14 @@ from pathlib import Path
 from typing import Dict
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.registry import task
+from nextlevelapex.core.task import Severity, TaskResult
+from nextlevelapex.main import TaskContext
 
 log = logging.getLogger(__name__)
 
 
 def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
-    """
-    Installs or updates global tools using 'mise use -g'.
-
-    Args:
-        tools: Dictionary where keys are tool names and values are versions.
-               Example: {"python": "3.11.9", "node": "lts"}
-        dry_run: If True, only print the command.
-
-    Returns:
-        True if successful or dry run, False otherwise.
-    """
     log.debug(f"setup_mise_globals received dict: {tools} (Type: {type(tools)})")
     if not tools:
         log.info("No Mise global tools specified in config.")
@@ -30,13 +22,12 @@ def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
     log.info(f"Setting global Mise tools: {', '.join(tool_args)}...")
 
     cmd = ["mise", "use", "--global"] + tool_args
-    result = run_command(cmd, dry_run=dry_run, check=True)  # Fail if mise use fails
+    result = run_command(cmd, dry_run=dry_run, check=True)
 
     if not result.success:
         log.error("Failed to set global Mise tools.")
         return False
 
-    # After setting, run install to ensure they are actually downloaded/built
     cmd_install = ["mise", "install"]
     log.info("Ensuring Mise global tools are installed...")
     result_install = run_command(cmd_install, dry_run=dry_run, check=True)
@@ -49,13 +40,28 @@ def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
     return True
 
 
+@task("Mise Globals")
+def setup_mise_globals_task(ctx: TaskContext) -> TaskResult:
+    tools = (
+        ctx["config"].get("developer_tools", {}).get("mise", {}).get("global_tools", {})
+    )
+    success = setup_mise_globals(tools=tools, dry_run=ctx["dry_run"])
+    messages = []
+    if not success:
+        messages.append((Severity.ERROR, "Failed to write mise globals"))
+    return TaskResult(
+        name="Mise Globals",
+        success=success,
+        changed=success and not ctx["dry_run"],
+        messages=messages,
+    )
+
+
 def ensure_mise_activation(
-    shell_config_file: str = "~/.zshrc",  # Get from config
+    shell_config_file: str = "~/.zshrc",
     dry_run: bool = False,
 ) -> bool:
-    """Ensures 'mise activate zsh' line is present in the shell config file."""
-    activation_line = 'eval "$(mise activate zsh)"'  # Command to activate mise
-    # Expand ~ and resolve path
+    activation_line = 'eval "$(mise activate zsh)"'
     config_path = Path(shell_config_file).expanduser().resolve()
 
     log.info(f"Ensuring Mise activation command is in {config_path}...")
@@ -64,21 +70,18 @@ def ensure_mise_activation(
         log.warning(
             f"Parent directory for {config_path} does not exist. Cannot check/add activation line."
         )
-        # This usually shouldn't happen for ~/.zshrc
-        return True  # Don't fail, just warn and continue
+        return True
 
     line_found = False
     if config_path.is_file():
         try:
             with open(config_path, "r") as f:
                 for line in f:
-                    # Check for the exact line or common variations
                     if activation_line in line and not line.strip().startswith("#"):
                         line_found = True
                         break
         except Exception as e:
             log.error(f"Error reading {config_path}: {e}")
-            # Proceed to attempt writing
 
     if line_found:
         log.info(f"Mise activation line already found in {config_path}.")
@@ -94,7 +97,7 @@ def ensure_mise_activation(
                 return True
             except Exception as e:
                 log.error(f"Failed to write Mise activation line to {config_path}: {e}")
-                return False  # Fail if we can't write it
+                return False
         else:
             log.info(f"DRYRUN: Would add Mise activation line to {config_path}.")
             return True
