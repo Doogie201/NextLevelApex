@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskContext, TaskResult
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 @task("Advanced Networking")

@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Dict
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import get_task_registry, task
 from nextlevelapex.core.task import Severity, TaskResult
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 # --- Helper to write script files ---

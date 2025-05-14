@@ -9,11 +9,13 @@ from typing import Any, Dict
 import jsonschema
 from jsonschema import Draft7Validator
 
+from nextlevelapex.core.logger import LoggerProxy
+
 # Load our JSON Schema as a Python dict
 with resources.open_text("nextlevelapex.schema", "config.v1.schema.json") as f:
     SCHEMA = json.load(f)
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
 

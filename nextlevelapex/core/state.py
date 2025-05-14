@@ -5,7 +5,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
-log = logging.getLogger(__name__)
+from nextlevelapex.core.logger import LoggerProxy
+
+log = LoggerProxy(__name__)
 
 STATE_SCHEMA_VERSION = "1.0"
 

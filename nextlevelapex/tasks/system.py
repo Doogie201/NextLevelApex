@@ -7,11 +7,12 @@ import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import get_task_registry
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 # --- Constants ---
 APEX_BLOCK_START_MARKER = "# --- NextLevelApex Aliases Start ---"

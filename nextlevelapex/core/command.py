@@ -5,8 +5,10 @@ import shlex
 import subprocess
 from typing import Optional
 
+from nextlevelapex.core.logger import LoggerProxy
+
 # Get logger instance (assuming basic config in main.py for now)
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 class CommandResult:

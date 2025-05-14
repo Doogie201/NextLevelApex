@@ -6,11 +6,12 @@ from pathlib import Path
 
 # Import the command runner from the core module
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import get_task_registry
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 # --- Constants ---
 HOMEBREW_INSTALL_URL = (
@@ -171,7 +172,7 @@ def update_brew(dry_run: bool = False) -> bool:
     return True
 
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 def install_formulae(formula_list: list[str], dry_run: bool = False) -> bool:
@@ -192,7 +193,7 @@ def install_formulae(formula_list: list[str], dry_run: bool = False) -> bool:
     return True
 
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 def install_casks(cask_list: list[str], dry_run: bool = False) -> bool:

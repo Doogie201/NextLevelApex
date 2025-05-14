@@ -14,7 +14,6 @@ from __future__ import annotations
 
 # ── Standard library ────────────────────────────────────────────────────────
 import json
-import logging
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List
@@ -27,18 +26,9 @@ from typing_extensions import Annotated, TypedDict
 from nextlevelapex.core import config as config_loader
 from nextlevelapex.core import state as state_tracker
 from nextlevelapex.core.command import run_command  # noqa: F401
+from nextlevelapex.core.logger import LoggerProxy, setup_logging
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
-
-# ── Logging setup ───────────────────────────────────────────────────────────
-LOG_FORMAT = "%(asctime)s [%(levelname)-8s] %(name)-18s: %(message)s"
-logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-log = logging.getLogger(__name__)
 
 # ── Constants & default paths ───────────────────────────────────────────────
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
@@ -104,15 +94,15 @@ def run(
     import nextlevelapex.tasks.ollama
     import nextlevelapex.tasks.optional
 
-    if verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-        log.debug("Verbose logging enabled")
-
-    # Load configuration -----------------------------------------------------
+    # Load configuration first
     config = config_loader.load_config(config_file)
     if not config:
-        log.critical("Failed to load configuration – aborting.")
+        print("CRITICAL: Failed to load configuration – aborting.", file=sys.stderr)
         raise typer.Exit(code=1)
+
+    # Setup logging
+    setup_logging(config, verbose=verbose)
+    log = LoggerProxy(__name__)
 
     state_data = state_tracker.load_state(state_file)
 
@@ -184,7 +174,7 @@ def run(
             log.info("Task %s made changes", task_name)
 
     # Summary ---------------------------------------------------------------
-    _print_summary(summary, overall_success)
+    _print_summary(summary, overall_success, log)
 
     if overall_success:
         state_tracker.mark_run_success(state_data)
@@ -200,7 +190,7 @@ def run(
     raise typer.Exit(code=0 if overall_success else 1)
 
 
-def _print_summary(results: List[TaskResult], ok: bool) -> None:
+def _print_summary(results: List[TaskResult], ok: bool, log: LoggerProxy) -> None:
     """Pretty print a one‑line summary per task."""
     log.info("================================================================")
     for res in results:
@@ -223,6 +213,7 @@ def generate_config_command(
     `~/.config/nextlevelapex/config.json`.
     """
     cfg_path = DEFAULT_CONFIG_PATH
+    log = LoggerProxy(__name__)
     log.info("Generating default config at %s", cfg_path)
     if cfg_path.exists() and not force:
         log.error("Config already exists – use --force to overwrite.")

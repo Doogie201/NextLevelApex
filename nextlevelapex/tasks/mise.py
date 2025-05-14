@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Dict
 
 from nextlevelapex.core.command import run_command
+from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import TaskContext
 
-log = logging.getLogger(__name__)
+log = LoggerProxy(__name__)
 
 
 def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
