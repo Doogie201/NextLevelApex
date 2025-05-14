@@ -90,6 +90,7 @@ def run(
     import nextlevelapex.tasks.launch_agents
     import nextlevelapex.tasks.mise
     import nextlevelapex.tasks.ollama
+    import nextlevelapex.tasks.optional
 
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
