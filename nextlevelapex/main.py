@@ -89,6 +89,7 @@ def run(
     import nextlevelapex.tasks.dev_tools
     import nextlevelapex.tasks.launch_agents
     import nextlevelapex.tasks.mise
+    import nextlevelapex.tasks.network
     import nextlevelapex.tasks.ollama
     import nextlevelapex.tasks.optional
 

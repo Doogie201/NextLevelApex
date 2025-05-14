@@ -2,7 +2,15 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Tuple
+from typing import Dict, List, Tuple, TypedDict
+
+
+class TaskContext(TypedDict):
+    """Runtime context passed to every task function."""
+
+    config: Dict
+    dry_run: bool
+    verbose: bool
 
 
 class Severity(Enum):
