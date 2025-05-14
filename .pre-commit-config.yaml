@@ -94,6 +94,7 @@ repos:
         name: Run pytest
         entry: poetry run pytest -q
         language: system
+        pass_filenames: false
         files: "\\.py$"
         always_run: true
 
