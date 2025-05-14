@@ -25,6 +25,7 @@ from typing_extensions import Annotated, TypedDict
 
 # ── Local imports ───────────────────────────────────────────────────────────
 from nextlevelapex.core import config as config_loader
+from nextlevelapex.core import state as state_tracker
 from nextlevelapex.core.command import run_command  # noqa: F401
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
@@ -43,9 +44,8 @@ log = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "nextlevelapex" / "config.json"
 DEFAULT_STATE_PATH = Path.home() / ".local" / "state" / "nextlevelapex" / "state.json"
 
+
 # ── Typed helpers ───────────────────────────────────────────────────────────
-
-
 class TaskContext(TypedDict):
     """Runtime context passed to every task function."""
 
@@ -73,6 +73,13 @@ def run(
             envvar="NLX_CONFIG_FILE",
         ),
     ] = DEFAULT_CONFIG_PATH,
+    state_file: Annotated[
+        Path,
+        typer.Option(
+            help="Path to state tracking file.",
+            envvar="NLX_STATE_FILE",
+        ),
+    ] = DEFAULT_STATE_PATH,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", "-n", help="Print commands without executing."),
@@ -80,6 +87,10 @@ def run(
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Enable verbose (DEBUG) output."),
+    ] = False,
+    save_dryrun_state: Annotated[
+        bool,
+        typer.Option("--save-dryrun-state", help="Persist state file after dry-run."),
     ] = False,
 ):
     """
@@ -102,22 +113,45 @@ def run(
     if not config:
         log.critical("Failed to load configuration – aborting.")
         raise typer.Exit(code=1)
+
+    state_data = state_tracker.load_state(state_file)
+
     log.debug("Configuration loaded: %s", json.dumps(config, indent=2))
     print(
         "\n=== LOADED CONFIG ===\n",
         json.dumps(config, indent=2),
         "\n=====================\n",
     )
+
     # Build common context
     ctx: TaskContext = {
         "config": config,
         "dry_run": dry_run,
         "verbose": verbose,
     }
+
     # Run tasks --------------------------------------------------------------
     overall_success = True
     summary: List[TaskResult] = []
+
     for task_name, handler in get_task_registry().items():
+        if state_tracker.is_section_complete(task_name, state_data):
+            log.info("Skipping %s – already marked complete in state.", task_name)
+            summary.append(
+                TaskResult(
+                    name=task_name,
+                    success=True,
+                    changed=False,
+                    messages=[
+                        (
+                            Severity.INFO,
+                            "Task skipped – already completed in previous run.",
+                        )
+                    ],
+                )
+            )
+            continue
+
         log.info("─── Running task: %s ───", task_name)
         try:
             result: TaskResult = handler(ctx)
@@ -132,7 +166,6 @@ def run(
                 messages=[(Severity.ERROR, str(exc))],
             )
 
-        # Emit every message from the task
         if hasattr(result, "messages"):
             for lvl, msg in result.messages:
                 getattr(log, lvl.value)(f"{result.name}: {msg}")
@@ -144,11 +177,26 @@ def run(
             overall_success = False
             break
 
+        if result.success:
+            state_tracker.mark_section_complete(task_name, state_data)
+
         if result.changed:
             log.info("Task %s made changes", task_name)
 
     # Summary ---------------------------------------------------------------
     _print_summary(summary, overall_success)
+
+    if overall_success:
+        state_tracker.mark_run_success(state_data)
+    else:
+        failed_task = next((r.name for r in summary if not r.success), "UNKNOWN")
+        state_tracker.mark_run_failed(failed_task, state_data)
+
+    if not dry_run or save_dryrun_state:
+        state_tracker.save_state(state_data, state_file, dry_run=False)
+    else:
+        log.info("Skipping state file write because this is a dry run.")
+
     raise typer.Exit(code=0 if overall_success else 1)
 
 
