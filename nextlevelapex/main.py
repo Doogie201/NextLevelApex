@@ -29,13 +29,6 @@ from nextlevelapex.core.command import run_command  # noqa: F401
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
 
-# ── Now register your tasks ─────────────────────────────────────────────────
-
-
-# Import TaskResult and Severity
-
-# Discover built‑in task modules so they can self‑register via @task
-
 # ── Logging setup ───────────────────────────────────────────────────────────
 LOG_FORMAT = "%(asctime)s [%(levelname)-8s] %(name)-18s: %(message)s"
 logging.basicConfig(
@@ -62,14 +55,6 @@ class TaskContext(TypedDict):
 
 
 TaskFunc = Callable[[TaskContext], TaskResult]
-
-
-# ── Task registry API ───────────────────────────────────────────────────────
-
-
-# ── Bring in tasks that use the decorator (import order matters) ────────────
-# The mere import of modules above populates _TASK_REGISTRY.
-
 
 # ── Typer CLI app ───────────────────────────────────────────────────────────
 app = typer.Typer(
@@ -101,6 +86,7 @@ def run(
     Execute all registered tasks in order of registration.
     """
     import nextlevelapex.tasks.brew
+    import nextlevelapex.tasks.dev_tools
     import nextlevelapex.tasks.launch_agents
     import nextlevelapex.tasks.mise
     import nextlevelapex.tasks.ollama

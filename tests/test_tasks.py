@@ -1,5 +1,6 @@
 import pytest
 
+import nextlevelapex.tasks.dev_tools  # ⬅️ ensures Colima Setup is registered
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import get_task_registry
@@ -14,14 +15,6 @@ class DummyCtx(dict):
         super().__init__()
         self["dry_run"] = dry_run
         self["config"] = {"local_ai": {}}
-
-
-def test_registry_contains_tasks():
-    """Make sure our @task decorators actually registered them."""
-    tasks = get_task_registry()
-    assert "Ollama Setup" in tasks
-    assert "Homebrew Install" in tasks
-    assert "Homebrew Shellenv" in tasks
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
@@ -56,3 +49,14 @@ def test_brew_tasks(monkeypatch):
 
     assert shellenv_res.success is False
     assert any(sev == Severity.ERROR for sev, _ in shellenv_res.messages)
+
+
+def test_registry_contains_tasks():
+    """Make sure our @task decorators actually registered them."""
+    tasks = get_task_registry()
+    names = [getattr(fn, "_task_name", None) for fn in tasks.values()]
+
+    assert "Ollama Setup" in names
+    assert "Homebrew Install" in names
+    assert "Homebrew Shellenv" in names
+    assert "Colima Setup" in names  # ← ✅ added
