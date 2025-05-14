@@ -94,10 +94,11 @@ repos:
         name: Run pytest
         entry: poetry run pytest -q
         language: system
-        pass_filenames: false
-        files: "\\.py$"
-        always_run: true
         types: [python]
+        files: "\\.py$"
+        pass_filenames: false
+        always_run: true
+
 
 # ---------------------------------------------------------------------------
 # Optional – MyPy strict typing (uncomment when ready)
