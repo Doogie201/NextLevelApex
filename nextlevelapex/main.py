@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 # ── Third-party ─────────────────────────────────────────────────────────────
 import typer
@@ -108,11 +108,12 @@ def run(
     state_data = state_tracker.load_state(state_file)
 
     log.debug("Configuration loaded: %s", json.dumps(config, indent=2))
-    print(
-        "\n=== LOADED CONFIG ===\n",
-        json.dumps(config, indent=2),
-        "\n=====================\n",
-    )
+    if verbose:
+        print(
+            "\n=== LOADED CONFIG ===\n",
+            json.dumps(config, indent=2),
+            "\n=====================\n",
+        )
 
     # Build common context
     ctx: TaskContext = {
@@ -167,9 +168,10 @@ def run(
             log.error("Task %s FAILED – aborting further execution.", task_name)
             diagnostics = generate_diagnostic_report(
                 failed_task_name=task_name,
-                error_message=str(result.messages),
-                ctx=ctx,
+                error_info=str(result.messages),
+                context=ctx,
             )
+
             diagnostic_path = (
                 Path.home() / "Library/Logs/NextLevelApex/diagnostics.json"
             )
@@ -237,6 +239,55 @@ def generate_config_command(
     else:
         typer.echo("Failed to create default config", err=True)
         raise typer.Exit(code=1)
+
+
+@app.command(name="diagnose")
+def diagnose_command(
+    task: Annotated[str, typer.Option(help="Name of the failed task")],
+    error: Annotated[str, typer.Option(help="Error message or summary")],
+    config_file: Annotated[
+        Path,
+        typer.Option(
+            help="Path to JSON configuration file.",
+            envvar="NLX_CONFIG_FILE",
+        ),
+    ] = DEFAULT_CONFIG_PATH,
+    output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output",
+            "-o",
+            help="Optional path to write the diagnostic JSON report.",
+        ),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+):
+    """
+    Run a standalone diagnostic report for a failed task.
+    """
+    setup_logging({}, verbose=verbose)
+    log = LoggerProxy(__name__)
+
+    config = config_loader.load_config(config_file)
+    if not config:
+        log.error("Failed to load config file.")
+        raise typer.Exit(code=1)
+
+    context: TaskContext = {
+        "config": config,
+        "dry_run": True,  # always dry-run for diagnostics
+        "verbose": verbose,
+    }
+
+    report = generate_diagnostic_report(task, error, context)
+
+    json_str = json.dumps(report, indent=2)
+
+    if output:
+        output.write_text(json_str)
+        typer.echo(f"Diagnostic report written to {output}")
+    else:
+        typer.echo(json_str)
 
 
 # ── Main guard ──────────────────────────────────────────────────────────────
