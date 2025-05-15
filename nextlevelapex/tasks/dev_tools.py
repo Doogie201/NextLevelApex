@@ -58,6 +58,7 @@ def setup_colima(config: Dict, dry_run: bool = False) -> bool:
     status_result = run_command(
         ["colima", "status"], dry_run=False, check=False, capture=True
     )
+
     if status_result.success and "colima is running" in status_result.stdout.lower():
         log.info("Colima is already running.")
         return True
@@ -80,30 +81,32 @@ def setup_colima(config: Dict, dry_run: bool = False) -> bool:
 
     start_result = run_command(start_cmd, dry_run=dry_run, check=False)
 
-    if not dry_run:
-        if start_result.returncode == 0:
-            log.info("Colima started successfully.")
-        else:
-            log.warning(
-                f"Colima start returned RC={start_result.returncode}. Checking status..."
-            )
+    if dry_run:
+        return True  # in dry-run mode, assume success after attempting start
 
-        final_status = run_command(
-            ["colima", "status"], dry_run=False, check=True, capture=True
+    if start_result.returncode != 0:
+        log.warning(
+            f"Colima start returned RC={start_result.returncode}. Proceeding to verify status..."
         )
 
-        if final_status.success:
-            lowered_output = final_status.stdout.lower()
-            log.debug(f"Colima status output:\n{lowered_output}")
+    final_status = run_command(
+        ["colima", "status"], dry_run=False, check=True, capture=True
+    )
 
-            # More relaxed: look for the exact known phrase
-            if "colima is running" in lowered_output:
-                log.info("Colima appears to be running (relaxed match).")
-                run_command(["sleep", "5"], dry_run=dry_run)
-                return True
-            else:
-                log.warning(
-                    "Could not confirm Colima is running — match phrase not found."
-                )
-                return False
+    if final_status.success:
+        status_output = final_status.stdout.lower()
+        indicators = [
+            "colima is running",
+            "runtime: docker",
+            "socket:",
+            "arch:",
+            "mounttype:",
+        ]
+        if any(phrase in status_output for phrase in indicators):
+            log.info("Colima appears to be running – relaxed check passed.")
+            return True
+
+    log.error("Could not confirm Colima is running.")
+    return False
+
     return False
