@@ -29,7 +29,7 @@ def setup_colima_task(ctx: Dict) -> TaskResult:
         name="Colima Setup",
         success=success,
         changed=success and not dry_run,
-        messages=messages,
+        messages=[] if success else [(Severity.ERROR, "Failed to set up Colima VM")],
     )
 
 
@@ -91,15 +91,19 @@ def setup_colima(config: Dict, dry_run: bool = False) -> bool:
         final_status = run_command(
             ["colima", "status"], dry_run=False, check=True, capture=True
         )
-        if final_status.success and "colima is running" in final_status.stdout.lower():
-            log.info("Colima is now running.")
-            log.info("Waiting 5 seconds for Docker socket...")
-            run_command(["sleep", "5"], dry_run=dry_run)
-            return True
-        else:
-            log.error(
-                f"Failed to verify Colima VM running: {final_status.stdout} {final_status.stderr}"
-            )
-            return False
 
-    return True
+        if final_status.success:
+            lowered_output = final_status.stdout.lower()
+            log.debug(f"Colima status output:\n{lowered_output}")
+
+            # More relaxed: look for the exact known phrase
+            if "colima is running" in lowered_output:
+                log.info("Colima appears to be running (relaxed match).")
+                run_command(["sleep", "5"], dry_run=dry_run)
+                return True
+            else:
+                log.warning(
+                    "Could not confirm Colima is running — match phrase not found."
+                )
+                return False
+    return False

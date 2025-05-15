@@ -75,22 +75,45 @@ def test_colima_task_skips_if_not_colima_provider():
 
 
 def test_colima_task_fails_if_status_check_fails(monkeypatch):
-    monkeypatch.setattr(
-        "nextlevelapex.tasks.dev_tools.run_command",
-        lambda cmd, **kwargs: type(
+    call_log = []
+
+    def mock_run_command(cmd, **kwargs):
+        call_log.append(cmd)
+        if cmd[:2] == ["colima", "start"]:
+            return type(
+                "MockResult",
+                (),
+                {
+                    "success": False,
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": "failed to start",
+                },
+            )()
+        elif cmd[:2] == ["colima", "status"]:
+            # Simulate a successful run, but with missing expected keywords
+            return type(
+                "MockResult",
+                (),
+                {
+                    "success": True,
+                    "returncode": 0,
+                    "stdout": "some unrelated output",
+                    "stderr": "",
+                },
+            )()
+        return type(
             "MockResult",
             (),
-            {
-                "success": False,
-                "returncode": 1,
-                "stdout": "colima is not running",
-                "stderr": "error",
-            },
-        )(),
-    )
+            {"success": True, "returncode": 0, "stdout": "", "stderr": ""},
+        )()
+
+    monkeypatch.setattr("nextlevelapex.tasks.dev_tools.run_command", mock_run_command)
+
     ctx = DummyCtx(dry_run=False)
     result: TaskResult = setup_colima_task(ctx)
 
     assert isinstance(result, TaskResult)
     assert result.success is False
-    assert any(sev == Severity.ERROR for sev, _ in result.messages)
+    assert result.changed is False
+    assert any("Failed to set up Colima VM" in msg for _, msg in result.messages)
