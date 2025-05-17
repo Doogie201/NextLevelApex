@@ -16,12 +16,13 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence, Set
 
 # ── Third-party ─────────────────────────────────────────────────────────────
 import typer
 from typing_extensions import Annotated, TypedDict
 
+# Register tasks that live outside core
 import nextlevelapex.tasks.cloudflared
 
 # ── Local imports ───────────────────────────────────────────────────────────
@@ -85,10 +86,25 @@ def run(
         bool,
         typer.Option("--save-dryrun-state", help="Persist state file after dry-run."),
     ] = False,
+    only: Optional[List[str]] = typer.Option(
+        None,
+        "--only",
+        "-o",
+        help=(
+            "Run only the specified task(s). May be supplied multiple times – "
+            "e.g.  -o 'Cloudflared DoH' -o 'Mise Globals'"
+        ),
+    ),
 ):
     """
-    Execute all registered tasks in order of registration.
+    Execute registered tasks.
+
+    • By default everything is executed in the order tasks registered.
+    • If `--only / -o` is supplied, _only_ the named tasks are executed
+      (in the same registration order).  State-file skipping is **ignored**
+      for those tasks so they always re-run.
     """
+    # ── Import side-effect task modules ────────────────────────────────────
     import nextlevelapex.tasks.brew
     import nextlevelapex.tasks.dev_tools
     import nextlevelapex.tasks.launch_agents
@@ -97,7 +113,7 @@ def run(
     import nextlevelapex.tasks.ollama
     import nextlevelapex.tasks.optional
 
-    # Load configuration first
+    # ── Prep logging + state ───────────────────────────────────────────────
     config = config_loader.load_config(config_file)
     if not config:
         print("CRITICAL: Failed to load configuration – aborting.", file=sys.stderr)
@@ -124,12 +140,29 @@ def run(
         "verbose": verbose,
     }
 
-    # Run tasks --------------------------------------------------------------
+    # Normalize --only into a lookup set
+    only_set: Set[str] = {name.strip() for name in only} if only else set()
+
+    # Quick sanity: warn about unknown task names
+    unknown = only_set - set(get_task_registry())
+    if unknown:
+        typer.echo(
+            f"ERROR: Unknown task(s) in --only: {', '.join(sorted(unknown))}", err=True
+        )
+        raise typer.Exit(1)
+
     overall_success = True
     summary: List[TaskResult] = []
 
     for task_name, handler in get_task_registry().items():
-        if state_tracker.is_section_complete(task_name, state_data):
+        # Skip tasks not requested via --only
+        if only_set and task_name not in only_set:
+            log.info("Skipping %s – not selected via --only.", task_name)
+            continue
+
+        # Respect state only when NOT forced by --only
+        already_done = state_tracker.is_section_complete(task_name, state_data)
+        if already_done and not only_set:
             log.info("Skipping %s – already marked complete in state.", task_name)
             summary.append(
                 TaskResult(
@@ -146,6 +179,7 @@ def run(
             )
             continue
 
+        # Run tasks --------------------------------------------------------------
         log.info("─── Running task: %s ───", task_name)
         try:
             result: TaskResult = handler(ctx)
@@ -160,12 +194,14 @@ def run(
                 messages=[(Severity.ERROR, str(exc))],
             )
 
+        # Emit messages
         if hasattr(result, "messages"):
             for lvl, msg in result.messages:
                 getattr(log, lvl.value)(f"{result.name}: {msg}")
 
         summary.append(result)
 
+        # Failure → abort
         if not result.success:
             log.error("Task %s FAILED – aborting further execution.", task_name)
             diagnostics = generate_diagnostic_report(
@@ -182,6 +218,7 @@ def run(
             overall_success = False
             break
 
+        # Persist success in state unless we’re in dry-run
         if result.success:
             state_tracker.mark_section_complete(task_name, state_data)
 
@@ -205,6 +242,7 @@ def run(
     raise typer.Exit(code=0 if overall_success else 1)
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────
 def _print_summary(results: List[TaskResult], ok: bool, log: LoggerProxy) -> None:
     """Pretty print a one‑line summary per task."""
     log.info("================================================================")
