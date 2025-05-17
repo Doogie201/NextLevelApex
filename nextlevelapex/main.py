@@ -22,6 +22,8 @@ from typing import Callable, Dict, List, Optional
 import typer
 from typing_extensions import Annotated, TypedDict
 
+import nextlevelapex.tasks.cloudflared
+
 # ── Local imports ───────────────────────────────────────────────────────────
 from nextlevelapex.core import config as config_loader
 from nextlevelapex.core import state as state_tracker

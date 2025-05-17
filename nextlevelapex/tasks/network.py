@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shlex
+import socket
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -40,12 +41,30 @@ def setup_networking_tasks(context: TaskContext) -> TaskResult:
 
     vm_ip = _get_colima_vm_ip(dry_run)
     if not vm_ip:
+        vm_ip = _get_vm_ip_from_docker_network(dry_run)
+        if vm_ip:
+            messages.append(
+                (Severity.WARNING, "Fallback Colima VM IP obtained via Docker.")
+            )
+
+    if not vm_ip:
         messages.append((Severity.ERROR, "Could not retrieve Colima VM IP."))
         return TaskResult("Advanced Networking", False, False, messages)
 
     host_ip = _get_host_ip_from_colima(dry_run)
     if not host_ip:
-        messages.append((Severity.WARNING, "Could not determine host IP from Colima."))
+        try:
+            host_ip = socket.gethostbyname(socket.gethostname())
+            messages.append(
+                (Severity.WARNING, f"Fallback host IP from socket: {host_ip}")
+            )
+        except Exception as e:
+            messages.append(
+                (
+                    Severity.WARNING,
+                    f"Could not determine host IP from Colima or socket: {e}",
+                )
+            )
 
     if not _ensure_passwordless_networksetup(dry_run):
         messages.append(
@@ -59,7 +78,7 @@ def setup_networking_tasks(context: TaskContext) -> TaskResult:
     if doh_method == "pihole_builtin":
         pihole_upstream_dns = "https://1.1.1.1/dns-query;https://1.0.0.1/dns-query"
         messages.append((Severity.INFO, "Configured Pi-hole to use built-in DoH."))
-    elif doh_method == "host_cloudflared":
+    elif doh_method == "host_cloudflared" and host_ip:
         pihole_upstream_dns = f"{host_ip}#5053"
         messages.append(
             (
@@ -173,38 +192,54 @@ def _get_active_network_service_name() -> Optional[str]:
             ["networksetup", "-listallnetworkservices"], capture=True, check=True
         )
         for line in out.stdout.splitlines():
-            if line and not line.startswith("An asterisk"):
-                return line.strip()
+            stripped = line.strip()
+            if (
+                stripped
+                and not stripped.startswith("*")
+                and not stripped.startswith("An asterisk")
+            ):
+                return stripped
     except Exception as e:
         log.error(f"Failed to detect active network service: {e}")
     return None
 
 
 def _get_colima_vm_ip(dry_run: bool = False) -> Optional[str]:
-    """
-    Gets the Colima VM IP address using `colima status --json`.
-    """
     log.info("Fetching Colima VM IP using `colima status --json`...")
     try:
         out = run_command(
             ["colima", "status", "--json"], capture=True, check=True, dry_run=dry_run
         )
         if not out.success or not out.stdout:
-            if dry_run:
-                log.info("DRYRUN: Simulating Colima IP response.")
-                return "DRYRUN_VM_IP"
-            return None
+            return "DRYRUN_VM_IP" if dry_run else None
 
         data = json.loads(out.stdout)
-        ip = data.get("network", {}).get("address")
+        ip = data.get("ip_address") or data.get("network", {}).get("address")
         if not ip:
             log.warning("No IP found in Colima status output.")
-            return "DRYRUN_VM_IP" if dry_run else None
+            return None
 
         return ip
     except Exception as e:
         log.error(f"Error parsing Colima VM IP: {e}", exc_info=True)
-        return "DRYRUN_VM_IP" if dry_run else None
+        return None
+
+
+def _get_vm_ip_from_docker_network(dry_run: bool = False) -> Optional[str]:
+    try:
+        res = run_command(
+            ["docker", "network", "inspect", "bridge"],
+            capture=True,
+            check=False,
+            dry_run=dry_run,
+        )
+        if res.success and res.stdout:
+            parsed = json.loads(res.stdout)
+            ipam = parsed[0].get("IPAM", {}).get("Config", [{}])[0]
+            return ipam.get("Gateway")
+    except Exception as e:
+        log.warning(f"Docker network fallback IP parse failed: {e}", exc_info=True)
+    return None
 
 
 def _get_host_ip_from_colima(dry_run: bool = False) -> Optional[str]:
@@ -225,5 +260,16 @@ def _ensure_passwordless_networksetup(dry_run: bool = False) -> bool:
     user = os.environ.get("USER", "user")
     rule = f"{user} ALL=(root) NOPASSWD: /usr/sbin/networksetup -setdnsservers *"
 
-    grep_cmd = ["sudo", "grep", "-Fxq", rule, sudo_file]
-    run_command(grep_cmd, check=False, capture=True)
+    check = run_command(
+        ["sudo", "grep", "-Fxq", rule, sudo_file], check=False, capture=True
+    )
+    if check.returncode == 0:
+        return True
+
+    if dry_run:
+        log.info(f"DRYRUN: Would write rule to {sudo_file}")
+        return True
+
+    write_cmd = f'echo "{rule}" | sudo tee {shlex.quote(sudo_file)} > /dev/null'
+    result = run_command(["bash", "-c", write_cmd], check=False)
+    return result.success
