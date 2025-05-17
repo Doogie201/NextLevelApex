@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local.doh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ cloudflared_bin }}</string>
+        <string>proxy-dns</string>
+        <string>--address</string><string>127.0.0.1</string>
+        <string>--port</string><string>5053</string>
+        <string>--upstream</string><string>https://1.1.1.1/dns-query</string>
+        <string>--upstream</string><string>https://1.0.0.1/dns-query</string>
+    </array>
+
+    <!-- Restart automatically if it crashes -->
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>3</integer>
+
+    <key>StandardOutPath</key><string>{{ log_path }}</string>
+    <key>StandardErrorPath</key><string>{{ log_path }}</string>
+</dict>
+</plist>
