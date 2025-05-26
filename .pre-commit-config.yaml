@@ -69,7 +69,7 @@ repos:
         language_version: python3.13
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8           # bundles Ruff 0.11.8 binary
+    rev: v0.11.11           # bundles Ruff 0.11.8 binary
     hooks:
       # 1 Formatter (runs first)
 #     - id: ruff-format
