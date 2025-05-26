@@ -34,7 +34,7 @@ include = [
 
 [tool.poetry.dependencies]
 python      = ">=3.10,<4.0"
-typer       = { version = "^0.15.3", extras = ["all"] }
+typer       = { version = "^0.16.0", extras = ["all"] }
 jsonschema  = "^4.23.0"
 colorlog = "^6.8.0"
 jinja2 = ">=3.1,<4"
