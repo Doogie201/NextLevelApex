@@ -1,0 +1,85 @@
+---
+
+networks:
+  dns_stack:
+    driver: bridge
+    ipam:  # Add this section for static IPs
+      config:
+        - subnet: 172.19.0.0/24  # Use the same subnet as before for consistency
+          gateway: 172.19.0.1
+
+services:
+  cloudflared:
+    image: cloudflared:with-dig  # <- the image you built that contains dig
+    container_name: cloudflared
+    command: >
+      proxy-dns
+      --address 0.0.0.0
+      --port 5053
+      --upstream https://1.1.1.1/dns-query
+      --upstream https://1.0.0.1/dns-query
+    # ⚠️  Scope the port to localhost so nothing else can steal it
+    ports:
+      - "127.0.0.1:5053:5053/udp"
+    restart: always  # strongest policy
+    healthcheck:
+      # dig must be inside the image; we added it in cloudflared:with-dig
+      test: ["CMD-SHELL", "dig @127.0.0.1 -p5053 cloudflare.com +short"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+    networks:
+      dns_stack:
+        ipv4_address: 172.19.0.2
+
+  unbound:
+    image: apexkit-unbound:latest
+    container_name: unbound
+    depends_on:
+      cloudflared:
+        condition: service_healthy
+    ports:
+      - "5335:5335/tcp"
+      - "5335:5335/udp"
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "cloudflare.com", "-p", "5335"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      dns_stack:
+        ipv4_address: 172.19.0.3  # Assign static IP to unbound
+    restart: unless-stopped
+    volumes:
+      - ~/Projects/NextLevelApex/docker/unbound/state/unbound.conf:/etc/unbound/unbound.conf:ro
+      - ~/Projects/NextLevelApex/docker/unbound/state/root.hints:/etc/unbound/root.hints:ro
+      - ~/Projects/NextLevelApex/docker/unbound/state/root.key:/etc/unbound/root.key:ro
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    depends_on:
+      unbound:
+        condition: service_healthy
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "80:80/tcp"
+    environment:
+      TZ: America/New_York
+      WEBPASSWORD: changeme
+      DNSMASQ_LISTENING: all
+      # For Pi-hole's own upstream DNS queries during startup,
+      # point to Unbound's static IP. This is more reliable.
+      PIHOLE_DNS_: 172.19.0.3#5335
+      DNS_ALLOW_REMOTE: true
+    volumes:
+      - pihole_etc:/etc/pihole
+      - pihole_dnsmasq:/etc/dnsmasq.d
+    networks:
+      - dns_stack
+    restart: unless-stopped
+
+volumes:
+  pihole_etc:
+  pihole_dnsmasq:

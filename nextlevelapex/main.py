@@ -112,6 +112,7 @@ def run(
     import nextlevelapex.tasks.network
     import nextlevelapex.tasks.ollama
     import nextlevelapex.tasks.optional
+    import nextlevelapex.tasks.pihole
 
     # ── Prep logging + state ───────────────────────────────────────────────
     config = config_loader.load_config(config_file)

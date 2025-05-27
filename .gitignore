@@ -132,3 +132,4 @@ cython_debug/
 
 # macOS Files
 .DS_Store
+etc-pihole/tls.pem
