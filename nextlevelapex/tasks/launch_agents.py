@@ -162,22 +162,6 @@ def setup_battery_alert_agent_task(ctx) -> TaskResult:
     )
 
 
-# Remove the duplicate definition
-# @task("Battery Alert Agent")
-# def setup_battery_alert_agent_task(ctx) -> TaskResult:
-#     # Calls your real implementation; returns bool
-#     success = setup_battery_alert_agent(dry_run=ctx["dry_run"])
-#     messages = []
-#     if not success:
-#         messages.append((Severity.ERROR, "Battery alert agent setup failed"))
-#     return TaskResult(
-#         name="Battery Alert Agent",
-#         success=success,
-#         changed=success and not ctx["dry_run"],
-#         messages=messages,
-#     )
-
-
 # --- Weekly Audit Agent ---
 @task("Weekly Audit Agent")
 def setup_weekly_audit_agent_task(ctx) -> TaskResult:
