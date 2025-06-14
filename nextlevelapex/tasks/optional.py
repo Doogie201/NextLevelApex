@@ -24,7 +24,7 @@ def setup_yubikey_ssh_task(ctx: Dict) -> TaskResult:
 
     return TaskResult(
         name="YubiKey SSH Setup",
-        success=True,
+        success=success,
         changed=success and not dry_run,
         messages=messages,
     )
