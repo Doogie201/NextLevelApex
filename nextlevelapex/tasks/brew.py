@@ -197,7 +197,9 @@ log = LoggerProxy(__name__)
 
 
 def install_casks(cask_list: list[str], dry_run: bool = False) -> bool:
-    log.debug(f"install_formulae received list: {cask_list} (Type: {type(cask_list)})")
+    log.debug(
+        f"install_casks received list: {cask_list} (Type: {type(cask_list)})"
+    )
     if not cask_list:
         log.info("No Homebrew casks specified for installation.")
         return True
