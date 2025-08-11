@@ -1,5 +1,4 @@
 # test_logger.py
-import json
 import logging
 from pathlib import Path
 
@@ -38,7 +37,7 @@ if log_files:
     print(f"\nLatest log file: {log_files[0]}")
     print("Contents preview:")
     print("-" * 60)
-    with open(log_files[0], "r") as f:
+    with open(log_files[0]) as f:
         print("".join(f.readlines()[-10:]))  # Show last 10 lines of the log
     print("-" * 60)
 else:

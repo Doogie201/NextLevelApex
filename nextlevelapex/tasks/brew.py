@@ -1,6 +1,5 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/brew.py
 
-import logging
 import os
 from pathlib import Path
 
@@ -9,14 +8,11 @@ from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import get_task_registry
 
 log = LoggerProxy(__name__)
 
 # --- Constants ---
-HOMEBREW_INSTALL_URL = (
-    "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
-)
+HOMEBREW_INSTALL_URL = "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
 HOMEBREW_PREFIX = "/opt/homebrew"  # Standard for Apple Silicon
 
 
@@ -44,9 +40,7 @@ def install_brew(dry_run: bool = False) -> bool:
         "-c",
         f'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL {HOMEBREW_INSTALL_URL})" < /dev/null',
     ]
-    result = run_command(
-        cmd, dry_run=dry_run, check=True
-    )  # Check ensures failure stops us
+    result = run_command(cmd, dry_run=dry_run, check=True)  # Check ensures failure stops us
 
     if result.success and not dry_run:
         # Verify install after running (necessary if check=False above)
@@ -54,9 +48,7 @@ def install_brew(dry_run: bool = False) -> bool:
             log.info("Homebrew installation successful.")
             return True
         else:
-            log.error(
-                "Homebrew installation command ran but 'brew' not found afterwards."
-            )
+            log.error("Homebrew installation command ran but 'brew' not found afterwards.")
             return False
     elif dry_run and result.success:
         log.info("DRYRUN: Homebrew installation would be attempted.")
@@ -103,7 +95,7 @@ def ensure_brew_shellenv(dry_run: bool = False) -> bool:
     line_found = False
     if profile_path.is_file():
         try:
-            with open(profile_path, "r") as f:
+            with open(profile_path) as f:
                 for line in f:
                     if shellenv_command in line:
                         line_found = True
@@ -176,15 +168,13 @@ log = LoggerProxy(__name__)
 
 
 def install_formulae(formula_list: list[str], dry_run: bool = False) -> bool:
-    log.debug(
-        f"install_formulae received list: {formula_list} (Type: {type(formula_list)})"
-    )
+    log.debug(f"install_formulae received list: {formula_list} (Type: {type(formula_list)})")
     if not formula_list:
         log.info("No Homebrew formulae specified for installation.")
         return True
     log.info(f"Installing Homebrew formulae: {', '.join(formula_list)}...")
     # Install all at once for potentially better dependency resolution
-    cmd = ["brew", "install"] + formula_list
+    cmd = ["brew", "install", *formula_list]
     result = run_command(cmd, dry_run=dry_run, check=True)
     if not result.success:
         log.error(f"Failed to install one or more formulae: {formula_list}")
@@ -202,7 +192,7 @@ def install_casks(cask_list: list[str], dry_run: bool = False) -> bool:
         log.info("No Homebrew casks specified for installation.")
         return True
     log.info(f"Installing Homebrew casks: {', '.join(cask_list)}...")
-    cmd = ["brew", "install", "--cask"] + cask_list
+    cmd = ["brew", "install", "--cask", *cask_list]
     result = run_command(cmd, dry_run=dry_run, check=True)
     if not result.success:
         log.error(f"Failed to install one or more casks: {cask_list}")

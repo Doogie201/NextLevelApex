@@ -1,18 +1,19 @@
-# nextlevelapex/core/registry.py
+from collections.abc import Callable
 
-from typing import Callable, Dict, TypedDict
+# nextlevelapex/core/registry.py
+from typing import Any, TypedDict
 
 from nextlevelapex.core.task import TaskResult
 
 
 class TaskContext(TypedDict):
-    config: dict
+    config: dict[str, Any]
     dry_run: bool
     verbose: bool
 
 
 TaskFunc = Callable[[TaskContext], TaskResult]
-_TASK_REGISTRY: Dict[str, TaskFunc] = {}
+_TASK_REGISTRY: dict[str, TaskFunc] = {}
 
 
 def task(name: str) -> Callable[[TaskFunc], TaskFunc]:
@@ -24,16 +25,16 @@ def task(name: str) -> Callable[[TaskFunc], TaskFunc]:
         if name in _TASK_REGISTRY:
             raise RuntimeError(f"Duplicate task name: {name}")
 
-        setattr(fn, "_task_name", name)  # 🔥 Use setattr for reliability
+        fn._task_name = name  # type: ignore[attr-defined]  # 🔥 Use setattr for reliability
         _TASK_REGISTRY[name] = fn
         return fn
 
     return _decorator
 
 
-def get_task_registry() -> Dict[str, TaskFunc]:
+def get_task_registry() -> dict[str, TaskFunc]:
     return dict(_TASK_REGISTRY)
 
 
-def clear_registry():
+def clear_registry() -> None:
     _TASK_REGISTRY.clear()

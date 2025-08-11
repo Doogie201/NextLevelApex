@@ -15,15 +15,13 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import time
-from pathlib import Path
-from typing import Optional
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskContext, TaskResult
+from nextlevelapex.tasks.shared.dns_helpers import is_container_running
 
 log = LoggerProxy(__name__)
 
@@ -33,9 +31,7 @@ DNSMASQ_DATA = "pihole_dnsmasq_data"
 
 
 # ───────────────────────── Colima helpers ──────────────────────────
-def _ensure_colima_running(
-    dev_cfg: dict, dry_run: bool
-) -> tuple[bool, list[tuple[Severity, str]]]:
+def _ensure_colima_running(dev_cfg: dict, dry_run: bool) -> tuple[bool, list[tuple[Severity, str]]]:
     """
     Ensure Colima VM is running.
 
@@ -44,9 +40,7 @@ def _ensure_colima_running(
     msgs: list[tuple[Severity, str]] = []
 
     # 1) Quick status check first
-    status = run_command(
-        ["colima", "status"], capture=True, check=False, dry_run=dry_run
-    )
+    status = run_command(["colima", "status"], capture=True, check=False, dry_run=dry_run)
     if status.success and "Running" in status.stdout:
         msgs.append((Severity.INFO, "Colima already running"))
         return True, msgs
@@ -75,9 +69,7 @@ def _ensure_colima_running(
         return True, msgs
 
     # 3) If start failed, but status now says Running, treat as success (typical when already up)
-    status_retry = run_command(
-        ["colima", "status"], capture=True, check=False, dry_run=dry_run
-    )
+    status_retry = run_command(["colima", "status"], capture=True, check=False, dry_run=dry_run)
     if status_retry.success and "Running" in status_retry.stdout:
         msgs.append((Severity.INFO, "Colima running (start command returned non‑zero)"))
         return True, msgs
@@ -88,7 +80,7 @@ def _ensure_colima_running(
 
 
 @task("Pi-hole DNS Sinkhole")
-def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
+def setup_pihole(context: TaskContext) -> TaskResult:
     cfg = context["config"]
     dry_run = context["dry_run"]
 
@@ -96,9 +88,7 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
     changed, ok = False, True
 
     net_cfg = cfg.get("networking", {})
-    if not net_cfg.get("enable", True) or not net_cfg.get("pihole", {}).get(
-        "enable", True
-    ):
+    if not net_cfg.get("enable", True) or not net_cfg.get("pihole", {}).get("enable", True):
         return TaskResult(
             "Pi-hole DNS Sinkhole",
             True,
@@ -114,8 +104,7 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
         if not colima_ok:
             return TaskResult("Pi-hole DNS Sinkhole", False, changed, messages)
         changed |= any(
-            sev is Severity.INFO and "started" in msg.lower()
-            for sev, msg in colima_msgs
+            sev is Severity.INFO and "started" in msg.lower() for sev, msg in colima_msgs
         )
 
     # 2️⃣  Discover the VM gateway IP (host-side)
@@ -135,9 +124,7 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
     # 3️⃣  Prepare passwords / env
     pihole_cfg = net_cfg["pihole"]
     pw_env = pihole_cfg.get("web_password_env_var", "NLX_PIHOLE_PASSWORD")
-    web_pass = os.environ.get(
-        pw_env, pihole_cfg.get("default_web_password", "changeme")
-    )
+    web_pass = os.environ.get(pw_env, pihole_cfg.get("default_web_password", "changeme"))
     if web_pass == "changeme":
         messages.append(
             (
@@ -146,14 +133,15 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
             )
         )
 
+    # 🧠  Sanity check: prevent conflict if Pi-hole is already running
+    if is_container_running(PIHOLE_CONTAINER):
+        messages.append((Severity.INFO, "Pi-hole container already running in Colima"))
+        return TaskResult("Pi-hole DNS Sinkhole", True, False, messages)
+
     # 4️⃣  (Re)create container
     run_command(["docker", "rm", "-f", PIHOLE_CONTAINER], dry_run=dry_run, check=False)
-    run_command(
-        ["docker", "volume", "create", PIHOLE_DATA], dry_run=dry_run, check=False
-    )
-    run_command(
-        ["docker", "volume", "create", DNSMASQ_DATA], dry_run=dry_run, check=False
-    )
+    run_command(["docker", "volume", "create", PIHOLE_DATA], dry_run=dry_run, check=False)
+    run_command(["docker", "volume", "create", DNSMASQ_DATA], dry_run=dry_run, check=False)
 
     docker_cmd = [
         "docker",
@@ -214,13 +202,9 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
             messages.append((Severity.ERROR, "Pi‑hole did not answer test DNS query"))
             ok = False
         else:
-            messages.append(
-                (Severity.INFO, f"Pi‑hole is responding on {local_dns_ip}:53")
-            )
+            messages.append((Severity.INFO, f"Pi‑hole is responding on {local_dns_ip}:53"))
     else:
-        messages.append(
-            (Severity.INFO, f"Pi‑hole would respond on {local_dns_ip}:53 (dry‑run)")
-        )
+        messages.append((Severity.INFO, f"Pi‑hole would respond on {local_dns_ip}:53 (dry‑run)"))
 
     # 6️⃣  Optionally set system DNS
     if ok and net_cfg.get("set_system_dns", True):
@@ -236,15 +220,13 @@ def setup_pihole(context: TaskContext) -> TaskResult:  # noqa: C901, PLR0911
                 dry_run=dry_run,
                 check=False,
             )
-            messages.append(
-                (Severity.INFO, f"System DNS set to {local_dns_ip} ({iface})")
-            )
+            messages.append((Severity.INFO, f"System DNS set to {local_dns_ip} ({iface})"))
 
     return TaskResult("Pi-hole DNS Sinkhole", ok, changed, messages)
 
 
 # ───────────────────────── helpers ──────────────────────────
-def _docker_bridge_gateway(dry_run: bool) -> Optional[str]:
+def _docker_bridge_gateway(dry_run: bool) -> str | None:
     out = run_command(
         ["docker", "network", "inspect", "bridge"],
         capture=True,
@@ -256,11 +238,11 @@ def _docker_bridge_gateway(dry_run: bool) -> Optional[str]:
     try:
         data = json.loads(out.stdout)[0]
         return data["IPAM"]["Config"][0]["Gateway"]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
-def _host_ip_from_colima(dry_run: bool) -> Optional[str]:
+def _host_ip_from_colima(dry_run: bool) -> str | None:
     """
     Return the Mac (host) IP as observed from inside the Colima VM.
 
@@ -289,10 +271,8 @@ def _host_ip_from_colima(dry_run: bool) -> Optional[str]:
             return None
 
 
-def _active_network_service() -> Optional[str]:
-    out = run_command(
-        ["networksetup", "-listallnetworkservices"], capture=True, check=False
-    )
+def _active_network_service() -> str | None:
+    out = run_command(["networksetup", "-listallnetworkservices"], capture=True, check=False)
     if not out.success:
         return None
     for line in out.stdout.splitlines():

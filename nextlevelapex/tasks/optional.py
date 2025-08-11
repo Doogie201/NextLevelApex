@@ -1,8 +1,6 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/optional.py
 
-import logging
 from pathlib import Path
-from typing import Dict
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
@@ -13,7 +11,7 @@ log = LoggerProxy(__name__)
 
 
 @task("YubiKey SSH Setup")
-def setup_yubikey_ssh_task(ctx: Dict) -> TaskResult:
+def setup_yubikey_ssh_task(ctx: dict) -> TaskResult:
     config = ctx.get("config", {})
     dry_run = ctx.get("dry_run", False)
     success = setup_yubikey_ssh(config=config, dry_run=dry_run)
@@ -30,7 +28,7 @@ def setup_yubikey_ssh_task(ctx: Dict) -> TaskResult:
     )
 
 
-def setup_yubikey_ssh(config: Dict, dry_run: bool = False) -> bool:
+def setup_yubikey_ssh(config: dict, dry_run: bool = False) -> bool:
     security_config = config.get("security", {})
     yubikey_config = security_config.get("yubikey", {})
 
@@ -95,7 +93,7 @@ def setup_yubikey_ssh(config: Dict, dry_run: bool = False) -> bool:
 
 
 @task("NordVPN Launch")
-def launch_nordvpn_task(ctx: Dict) -> TaskResult:
+def launch_nordvpn_task(ctx: dict) -> TaskResult:
     config = ctx.get("config", {})
     dry_run = ctx.get("dry_run", False)
     success = launch_nordvpn(config=config, dry_run=dry_run)
@@ -112,7 +110,7 @@ def launch_nordvpn_task(ctx: Dict) -> TaskResult:
     )
 
 
-def launch_nordvpn(config: Dict, dry_run: bool = False) -> bool:
+def launch_nordvpn(config: dict, dry_run: bool = False) -> bool:
     nordvpn_config = config.get("optional_apps", {}).get("nordvpn", {})
 
     if not nordvpn_config.get("launch_on_setup", False):

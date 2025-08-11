@@ -1,9 +1,7 @@
 # ~/Projects/NextLevelApex/nextlevelapex/core/command.py
 
-import logging
 import shlex
 import subprocess
-from typing import Optional
 
 from nextlevelapex.core.logger import LoggerProxy
 
@@ -20,7 +18,7 @@ class CommandResult:
         self.stderr = stderr
         self.success = success  # True if returncode is 0 (or if check=False)
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         """Allows treating the result object as boolean for success."""
         return self.success
 
@@ -31,8 +29,8 @@ def run_command(
     check: bool = True,  # If True, non-zero exit code is considered failure
     capture: bool = True,  # Capture stdout/stderr
     text: bool = True,  # Decode output as text
-    cwd: Optional[str] = None,  # Working directory
-    env: Optional[dict] = None,  # Environment variables
+    cwd: str | None = None,  # Working directory
+    env: dict[str, str] | None = None,  # Environment variables
 ) -> CommandResult:
     """
     Runs an external command using subprocess.
@@ -98,7 +96,5 @@ def run_command(
             success=False,
         )
     except Exception as e:
-        log.error(
-            f"An unexpected error occurred running command: {cmd_str}", exc_info=True
-        )
+        log.error(f"An unexpected error occurred running command: {cmd_str}", exc_info=True)
         return CommandResult(returncode=-1, stdout="", stderr=str(e), success=False)

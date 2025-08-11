@@ -1,7 +1,6 @@
 from typer.testing import CliRunner
 
-from nextlevelapex.core.registry import task
-from nextlevelapex.main import app, get_task_registry
+from nextlevelapex.main import app
 
 runner = CliRunner()
 

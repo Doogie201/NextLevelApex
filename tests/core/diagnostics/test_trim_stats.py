@@ -17,9 +17,7 @@ def test_trim_stats_are_correct():
     data = {
         "long_str": "x" * 100,  # trimmed, 50 removed
         "long_list": list(range(10)),  # trimmed
-        "logs": "\n".join(
-            [f"Line {i}" for i in range(10)]
-        ),  # multiline trimmed, 8 lines removed
+        "logs": "\n".join([f"Line {i}" for i in range(10)]),  # multiline trimmed, 8 lines removed
         "nested": {"deep_str": "y" * 75},  # trimmed, 25 removed
     }
 

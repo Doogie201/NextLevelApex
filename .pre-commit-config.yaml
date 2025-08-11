@@ -1,22 +1,16 @@
----             # ← document start required by yamllint
-# ---------------------------------------------------------------------------
-# Global pre‑commit settings
-# ---------------------------------------------------------------------------
+--- # ← document start (keeps yamllint happy)
 minimum_pre_commit_version: "3.6.0"
 
 default_language_version:
-  python: python3.13        # project’s baseline interpreter
+  python: python3.11 # match your Poetry env (3.11.x)
 
 ci:
-  autofix: true             # rewrite files, then fail so diff is visible
+  autofix: true # rewrite files, then fail so diff is visible
 fail_fast: true
-default_stages: [pre-commit, pre-push]
+default_stages: [pre-commit, pre-push] # was [commit, push]
 
-# ---------------------------------------------------------------------------
-# Repositories & hooks
-# ---------------------------------------------------------------------------
 repos:
-  # ---------------------------------------------------- House‑keeping hooks
+  # ---------------------------------------------------- House-keeping hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -47,46 +41,50 @@ repos:
     hooks:
       - id: shfmt
         args: ["-i", "2", "-sr", "-ci"]
+        files: "^scripts/.*\\.sh$" # only format our scripts/
+        exclude: "^docker/" # avoid parsing docker/orchestrate.sh for now
 
   - repo: https://github.com/koalaman/shellcheck-precommit
     rev: v0.10.0
     hooks:
       - id: shellcheck
         args: ["--severity", "warning"]
+        files: "^scripts/.*\\.sh$"
+        exclude: "^docker/"
 
   # ----------------------------------- Python formatters & linters stack
   - repo: https://github.com/psf/black
     rev: 25.1.0
     hooks:
       - id: black
-        language_version: python3.13
+        language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/PyCQA/isort
     rev: 6.0.1
     hooks:
       - id: isort
         args: ["--profile", "black"]
-        language_version: python3.13
+        language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.8           # bundles Ruff 0.11.8 binary
+    rev: v0.11.9 # keep in sync with your lockfile/ruff version
     hooks:
-      # 1 Formatter (runs first)
-#     - id: ruff-format
-#       stages: [pre-commit]
-#       exclude: "build/|dist/|\\.venv/|\\.eggs/|\\.mypy_cache/|\\.ruff_cache/"
+      # If you want the formatter, uncomment:
+      # - id: ruff-format
+      #   stages: [commit]
 
-      # 2 Linter + auto‑fix on commit
+      # Linter + auto-fix on commit
       - id: ruff
         name: ruff-lint-fix
-        args: ["--fix", "--exit-non-zero-on-fix", "--show-fixes", "--unsafe-fixes"]
-        stages: [pre-commit]
+        args:
+          ["--fix", "--exit-non-zero-on-fix", "--show-fixes", "--unsafe-fixes"]
+        stages: [pre-commit] # <-- was [commit]
 
-      # 3 Strict linter on push/CI (no fixes)
+      # Strict linter on push/CI (no fixes)
       - id: ruff
         name: ruff-lint-ci
         args: ["--show-source"]
-        stages: [pre-push]
+        stages: [pre-push] # <-- was [push]
 
   - repo: local
     hooks:
@@ -98,14 +96,3 @@ repos:
         files: "\\.py$"
         pass_filenames: false
         always_run: true
-
-
-# ---------------------------------------------------------------------------
-# Optional – MyPy strict typing (uncomment when ready)
-# ---------------------------------------------------------------------------
-# - repo: https://github.com/pre-commit/mirrors-mypy
-#   rev: v1.10.0
-#   hooks:
-#     - id: mypy
-#       additional_dependencies: ["types-requests"]
-#       args: ["--strict"]

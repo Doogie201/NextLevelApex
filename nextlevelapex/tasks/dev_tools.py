@@ -1,7 +1,5 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/dev_tools.py
 
-import logging
-from typing import Dict, List
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
@@ -13,7 +11,7 @@ log = LoggerProxy(__name__)
 
 
 @task("Colima Setup")
-def setup_colima_task(ctx: Dict) -> TaskResult:
+def setup_colima_task(ctx: dict) -> TaskResult:
     """
     Task wrapper for Colima VM setup.
     """
@@ -32,7 +30,7 @@ def setup_colima_task(ctx: Dict) -> TaskResult:
         and "skipping" not in (colima_status.reason or "").lower()
     )
 
-    messages: List[tuple] = []
+    messages: list[tuple] = []
     if colima_status.success:
         messages.append((Severity.INFO, colima_status.reason))
     else:
@@ -50,7 +48,7 @@ def setup_colima_task(ctx: Dict) -> TaskResult:
     )
 
 
-def setup_colima(config: Dict, dry_run: bool = False) -> ColimaStatusResult:
+def setup_colima(config: dict, dry_run: bool = False) -> ColimaStatusResult:
     """
     Starts the Colima VM based on configuration.
     Returns a structured result containing status verification.
@@ -73,9 +71,7 @@ def setup_colima(config: Dict, dry_run: bool = False) -> ColimaStatusResult:
     log.info("Attempting to start Colima VM...")
 
     # Step 1: Check if Colima is already running
-    initial_status = run_command(
-        ["colima", "status"], dry_run=False, check=False, capture=True
-    )
+    initial_status = run_command(["colima", "status"], dry_run=False, check=False, capture=True)
     initial_check = _check_colima_running(initial_status)
 
     if initial_check.success:
@@ -116,15 +112,11 @@ def setup_colima(config: Dict, dry_run: bool = False) -> ColimaStatusResult:
         )
 
     # Step 4: Verify final status
-    final_status = run_command(
-        ["colima", "status"], dry_run=False, check=True, capture=True
-    )
+    final_status = run_command(["colima", "status"], dry_run=False, check=True, capture=True)
     final_check = _check_colima_running(final_status)
 
     if final_check.success:
-        log.info(
-            f"Colima appears to be running. Matched: {final_check.matched_indicators}"
-        )
+        log.info(f"Colima appears to be running. Matched: {final_check.matched_indicators}")
     else:
         log.error(f"Colima verification failed. Reason: {final_check.reason}")
 

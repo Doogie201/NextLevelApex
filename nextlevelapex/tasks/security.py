@@ -14,12 +14,11 @@ All functions conform to the @task decorator contract.
 
 from __future__ import annotations
 
-# ── Standard library ────────────────────────────────────────────────────────
-import logging
 import shlex
 import subprocess
+
+# ── Standard library ────────────────────────────────────────────────────────
 from pathlib import Path
-from typing import Dict
 
 from nextlevelapex.core.logger import LoggerProxy
 
@@ -37,7 +36,7 @@ PAM_TID_LINE = "auth       sufficient     pam_tid.so"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-def _security_config(ctx: TaskContext) -> Dict:
+def _security_config(ctx: TaskContext) -> dict:
     """Return the `security` section of the global config (or {})."""
     return ctx["config"].get("security", {})
 
@@ -49,9 +48,7 @@ def _run_sudo(cmd: list[str], dry_run: bool) -> subprocess.CompletedProcess[str]
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     # Hard fail on non‑zero
-    return subprocess.run(
-        cmd, check=True, text=True, capture_output=True
-    )  # noqa: S603,S607
+    return subprocess.run(cmd, check=True, text=True, capture_output=True)
 
 
 # ── Task implementations ───────────────────────────────────────────────────
@@ -92,21 +89,17 @@ def _firewall_stealth(cfg: dict, dry_run: bool) -> TaskResult:
 
     cmd = [FIREWALL_UTIL, "--setstealthmode", "on"]
     if dry_run:
-        result.messages.append(
-            (Severity.INFO, f"[dry-run] would run: sudo {' '.join(cmd)}")
-        )
+        result.messages.append((Severity.INFO, f"[dry-run] would run: sudo {' '.join(cmd)}"))
         return result
 
     try:
-        subprocess.run(["sudo"] + cmd, check=True, text=True, capture_output=True)
+        subprocess.run(["sudo", *cmd], check=True, text=True, capture_output=True)
         result.changed = True
         result.messages.append((Severity.INFO, "Enabled firewall stealth mode"))
     except subprocess.CalledProcessError as exc:
         result.success = False
         err = exc.stderr or exc.stdout or str(exc)
-        result.messages.append(
-            (Severity.ERROR, f"Failed to enable firewall stealth mode: {err}")
-        )
+        result.messages.append((Severity.ERROR, f"Failed to enable firewall stealth mode: {err}"))
     return result
 
 
@@ -127,9 +120,7 @@ def _enable_touchid_sudo(cfg: dict, dry_run: bool) -> TaskResult:
             result.messages.append((Severity.INFO, "Touch-ID sudo already configured"))
             return result
     except PermissionError:
-        result.messages.append(
-            (Severity.INFO, f"No read access to {PAM_SUDO_FILE}, proceeding")
-        )
+        result.messages.append((Severity.INFO, f"No read access to {PAM_SUDO_FILE}, proceeding"))
 
     pam_line = f"{PAM_TID_LINE}\n"
     if dry_run:
@@ -147,15 +138,11 @@ def _enable_touchid_sudo(cfg: dict, dry_run: bool) -> TaskResult:
         f"sudo /usr/bin/tee -a {shlex.quote(str(PAM_SUDO_FILE))} >/dev/null"
     )
     try:
-        subprocess.run(
-            shell_cmd, shell=True, check=True, text=True, capture_output=True
-        )
+        subprocess.run(shell_cmd, shell=True, check=True, text=True, capture_output=True)
         result.changed = True
         result.messages.append((Severity.INFO, "Added Touch-ID sudo rule"))
     except subprocess.CalledProcessError as exc:
         result.success = False
         err = exc.stderr or exc.stdout or str(exc)
-        result.messages.append(
-            (Severity.ERROR, f"Failed to add pam_tid.so rule: {err}")
-        )
+        result.messages.append((Severity.ERROR, f"Failed to add pam_tid.so rule: {err}"))
     return result

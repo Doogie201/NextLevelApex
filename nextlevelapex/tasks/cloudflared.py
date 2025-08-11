@@ -19,7 +19,6 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import List
 
 # ── Third‑party ───────────────────────────────────────────────────────
 from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
@@ -29,6 +28,7 @@ from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskContext, TaskResult
+from nextlevelapex.tasks.shared.dns_helpers import is_container_running
 
 log = LoggerProxy(__name__)
 
@@ -107,9 +107,18 @@ def _dig_ok() -> bool:
 @task("Cloudflared DoH")
 def setup_cloudflared(
     context: TaskContext,
-) -> TaskResult:  # noqa: C901  — complexity ok
+) -> TaskResult:
     dry_run: bool = context["dry_run"]
-    messages: List[tuple[Severity, str]] = []
+    messages: list[tuple[Severity, str]] = []
+    # 🧠  Sanity: Prevent a container from accidentally running alongside the LaunchAgent
+    if is_container_running("cloudflared"):
+        messages.append(
+            (
+                Severity.ERROR,
+                "A Docker-based cloudflared container is running. Please remove it to avoid conflict with the LaunchAgent.",
+            )
+        )
+        return TaskResult("Cloudflared DoH", False, False, messages)
     changed = False
     success = True
 
@@ -134,7 +143,7 @@ def setup_cloudflared(
             LOG_PATH=str(Path.home() / "Library" / "Logs" / "com.local.doh.log"),
         )
 
-        if LA_PATH.read_text() if LA_PATH.exists() else "" != plist:
+        if LA_PATH.read_text() if LA_PATH.exists() else plist != "":
             LA_PATH.write_text(plist)
             changed = True
             messages.append((Severity.INFO, f"Launch agent written to {LA_PATH}"))
@@ -158,15 +167,11 @@ def setup_cloudflared(
             for _ in range(6):
                 if _dig_ok():
                     changed = True
-                    messages.append(
-                        (Severity.INFO, "cloudflared responded after restart")
-                    )
+                    messages.append((Severity.INFO, "cloudflared responded after restart"))
                     break
                 time.sleep(0.5)
             else:
-                messages.append(
-                    (Severity.ERROR, "cloudflared not answering on 127.0.0.1:5053")
-                )
+                messages.append((Severity.ERROR, "cloudflared not answering on 127.0.0.1:5053"))
                 success = False
 
     return TaskResult("Cloudflared DoH", success, changed, messages)

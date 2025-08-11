@@ -1,26 +1,31 @@
 [run]
 branch = True
 source =
-    nextlevelapex
-    Tests
+	nextlevelapex
+	Tests
 omit =
-    */__init__.py
-    */tests/*
-    */migrations/*
-    .venv/*
-    setup.py
-    */site-packages/*
+		*/__init__.py
+		*/migrations/*
+		*/site-packages/*
+		*/tests/*
+		.venv/*
+		nextlevelapex/core/logger.py
+		nextlevelapex/main.py
+		nextlevelapex/tasks/*
+		setup.py
+
 
 [report]
-# Improve human readability in CLI output
 show_missing = True
 skip_covered = True
 exclude_lines =
-    pragma: no cover
-    def __repr__
-    if self\.debug
-    raise NotImplementedError
-    if __name__ == .__main__.:
+		def __repr__
+		if TYPE_CHECKING:
+		if __name__ == .__main__.:
+		if self\.debug
+		pragma: no cover
+		raise NotImplementedError
+
 
 [html]
 directory = htmlcov

@@ -1,68 +1,68 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal
 
 
 @dataclass
 class ColimaStatusResult:
     success: bool
     reason: str
-    matched_indicators: List[str] = field(default_factory=list)
-    raw_stdout: Optional[str] = None
-    raw_stderr: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
+    matched_indicators: list[str] = field(default_factory=list)
+    raw_stdout: str | None = None
+    raw_stderr: str | None = None
+    metadata: dict[str, Any] | None = field(default_factory=dict)
 
 
 @dataclass
 class ServiceCheckResult:
     service_name: str
     is_running: bool
-    status_output: Optional[str] = None
-    extra_info: Optional[Dict[str, Union[str, bool, int]]] = field(default_factory=dict)
-    reason: Optional[str] = None
+    status_output: str | None = None
+    extra_info: dict[str, str | bool | int] | None = field(default_factory=dict)
+    reason: str | None = None
 
 
 @dataclass
 class InstallableToolStatus:
     name: str
     is_installed: bool
-    version: Optional[str] = None
+    version: str | None = None
     source: Literal["brew", "cask", "manual", "mise", "unknown"] = "unknown"
-    install_path: Optional[str] = None
-    notes: Optional[str] = None
+    install_path: str | None = None
+    notes: str | None = None
 
 
 @dataclass
 class CommandDiagnostic:
     command: str
     returncode: int
-    stdout: Optional[str] = None
-    stderr: Optional[str] = None
+    stdout: str | None = None
+    stderr: str | None = None
     success: bool = False
-    timestamp: Optional[str] = None
-    runtime_seconds: Optional[float] = None
+    timestamp: str | None = None
+    runtime_seconds: float | None = None
 
 
 @dataclass
 class VerificationOutcome:
     passed: bool
-    failure_reason: Optional[str] = None
-    warnings: List[str] = field(default_factory=list)
-    info: Optional[str] = None
+    failure_reason: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    info: str | None = None
 
 
 @dataclass
 class SectionHealthSummary:
     section_name: str
     success: bool
-    failed_tasks: List[str] = field(default_factory=list)
-    notes: Optional[str] = None
+    failed_tasks: list[str] = field(default_factory=list)
+    notes: str | None = None
 
 
 @dataclass
 class DependencyState:
     name: str
-    expected_version: Optional[str]
-    actual_version: Optional[str]
+    expected_version: str | None
+    actual_version: str | None
     is_satisfied: bool
     source: Literal["brew", "mise", "env", "system", "unknown"] = "unknown"
 
@@ -71,6 +71,6 @@ class DependencyState:
 class SecurityModuleStatus:
     module: str
     enabled: bool
-    verification_command: Optional[str] = None
-    output: Optional[str] = None
-    notes: Optional[str] = None
+    verification_command: str | None = None
+    output: str | None = None
+    notes: str | None = None
