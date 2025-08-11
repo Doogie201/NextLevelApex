@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import Any
 
 from nextlevelapex.core.config import load_config
 
 
 class SmartConfig:
-    _instance: Optional[SmartConfig] = None
+    _instance: SmartConfig | None = None
     _lock = threading.Lock()
 
     def __new__(cls) -> SmartConfig:
@@ -24,9 +24,7 @@ class SmartConfig:
         script_behavior = config.get("script_behavior", {})
 
         # Global smart anti-bloat toggles
-        self.enable_bloat_protection: bool = script_behavior.get(
-            "enable_bloat_protection", True
-        )
+        self.enable_bloat_protection: bool = script_behavior.get("enable_bloat_protection", True)
         self.max_string_len: int = script_behavior.get("max_string_len", 3000)
         self.max_log_lines: int = script_behavior.get("max_log_lines", 100)
         self.max_list_items: int = script_behavior.get("max_list_items", 50)
@@ -37,7 +35,7 @@ class SmartConfig:
     def refresh(self) -> None:
         self._initialize()
 
-    def summary(self) -> dict:
+    def summary(self) -> dict[str, Any]:
         return {
             "bloat_protection": self.enable_bloat_protection,
             "profile": self.smart_bloat_profile,
@@ -63,7 +61,7 @@ def is_bloat_protection_enabled() -> bool:
     return global_config.enable_bloat_protection
 
 
-def get_bloat_limits() -> dict:
+def get_bloat_limits() -> dict[str, Any]:
     return global_config.summary()
 
 

@@ -1,11 +1,9 @@
 # ~/Projects/NextLevelApex/nextlevelapex/core/logger.py
-
-import datetime
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 try:
     from rich.logging import RichHandler
@@ -27,18 +25,19 @@ class LoggerProxy:
 
     def __init__(self, name: str):
         self._name = name
-        self._logger = None
+        self._logger: logging.Logger | None = None
 
-    def _get_logger(self):
+    def _get_logger(self) -> logging.Logger:
         if self._logger is None:
             self._logger = logging.getLogger(self._name)
+        assert self._logger is not None
         return self._logger
 
-    def __getattr__(self, item):
+    def __getattr__(self, item: str) -> Any:
         return getattr(self._get_logger(), item)
 
 
-def setup_logging(config: Dict[str, Any], verbose: bool = False):
+def setup_logging(config: dict[str, Any], verbose: bool = False) -> None:
     """
     Sets up logging with rich console output, rotating file handler, and formatting.
 
@@ -49,23 +48,19 @@ def setup_logging(config: Dict[str, Any], verbose: bool = False):
     script_behavior_config = config.get("script_behavior", {})
 
     level_str = (
-        "DEBUG"
-        if verbose
-        else script_behavior_config.get("log_level_default", "INFO").upper()
+        "DEBUG" if verbose else script_behavior_config.get("log_level_default", "INFO").upper()
     )
     level = getattr(logging, level_str, logging.INFO)
 
     log_format = script_behavior_config.get("log_format", DEFAULT_LOG_FORMAT)
     date_format = script_behavior_config.get("date_format", DEFAULT_DATE_FORMAT)
 
-    handlers = []
+    handlers: list[logging.Handler] = []
 
     # Rich console handler
     if RICH_AVAILABLE:
         handlers.append(
-            RichHandler(
-                rich_tracebacks=True, markup=True, show_time=False, show_path=False
-            )
+            RichHandler(rich_tracebacks=True, markup=True, show_time=False, show_path=False)
         )
     else:
         handlers.append(logging.StreamHandler(sys.stdout))
@@ -95,9 +90,7 @@ def setup_logging(config: Dict[str, Any], verbose: bool = False):
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    logging.basicConfig(
-        level=level, format=log_format, datefmt=date_format, handlers=handlers
-    )
+    logging.basicConfig(level=level, format=log_format, datefmt=date_format, handlers=handlers)
 
     LoggerProxy(__name__).debug(
         f"Logging initialized. Level: {level_str}. Rich: {RICH_AVAILABLE}. File logging: {script_behavior_config.get('log_to_file', True)}"

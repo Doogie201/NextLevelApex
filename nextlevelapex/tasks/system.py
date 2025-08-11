@@ -1,16 +1,13 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/system.py
 
 import fnmatch
-import logging
 import shutil
 import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from nextlevelapex.core.logger import LoggerProxy
-from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import get_task_registry
 
 log = LoggerProxy(__name__)
 
@@ -24,7 +21,7 @@ def _read_shell_config(config_path: Path) -> list[str]:
     if not config_path.is_file():
         return []
     try:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             return f.readlines()
     except Exception as e:
         log.error(f"Error reading shell config {config_path}: {e}")
@@ -113,10 +110,9 @@ def prune_logitech_agents(cfg: dict, dry_run: bool = False) -> TaskResult:
         result.messages.append((Severity.INFO, "Logitech pruning disabled"))
         return result
 
-    paths = []
-    for p in Path("/Library/LaunchAgents").iterdir():
-        if fnmatch.fnmatch(p.name, "com.logi.*"):
-            paths.append(p)
+    paths = [
+        p for p in Path("/Library/LaunchAgents").iterdir() if fnmatch.fnmatch(p.name, "com.logi.*")
+    ]
 
     if not paths:
         result.messages.append((Severity.INFO, "No Logitech agents found"))
@@ -134,8 +130,6 @@ def prune_logitech_agents(cfg: dict, dry_run: bool = False) -> TaskResult:
                     result.messages.append((Severity.INFO, f"Ran: {' '.join(cmd)}"))
                 except subprocess.CalledProcessError as e:
                     result.success = False
-                    result.messages.append(
-                        (Severity.ERROR, f"Failed {cmd}: {e.stderr}")
-                    )
+                    result.messages.append((Severity.ERROR, f"Failed {cmd}: {e.stderr}"))
     result.changed = True
     return result

@@ -1,7 +1,5 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/ollama.py
 
-import logging
-from typing import Dict
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
@@ -11,7 +9,7 @@ from nextlevelapex.core.task import Severity, TaskResult
 log = LoggerProxy(__name__)
 
 
-def setup_ollama(config: Dict, dry_run: bool = False) -> bool:
+def setup_ollama(config: dict, dry_run: bool = False) -> bool:
     """Installs Ollama and pulls specified models."""
     local_ai_config = config.get("local_ai", {})
     ollama_config = local_ai_config.get("ollama", {})
@@ -27,12 +25,8 @@ def setup_ollama(config: Dict, dry_run: bool = False) -> bool:
     #    The main brew_tasks.install_formulae should ideally cover 'ollama'.
     #    If it's already installed, brew install will just say so.
     log.info("Ensuring Ollama brew formula is installed...")
-    install_result = run_command(
-        ["brew", "install", "ollama"], dry_run=dry_run, check=True
-    )
-    if (
-        not install_result.success and not dry_run
-    ):  # Check for actual failure if not dry run
+    install_result = run_command(["brew", "install", "ollama"], dry_run=dry_run, check=True)
+    if not install_result.success and not dry_run:  # Check for actual failure if not dry run
         log.error("Failed to install Ollama via Homebrew.")
         return False
     log.info("Ollama formula check/install complete.")
@@ -68,9 +62,7 @@ def setup_ollama(config: Dict, dry_run: bool = False) -> bool:
     for model_name in models_to_pull:
         log.info(f"Pulling Ollama model: {model_name}...")
         # `ollama pull` can take a long time; no timeout specified here
-        pull_result = run_command(
-            ["ollama", "pull", model_name], dry_run=dry_run, check=True
-        )
+        pull_result = run_command(["ollama", "pull", model_name], dry_run=dry_run, check=True)
         if not pull_result.success:
             log.error(f"Failed to pull Ollama model: {model_name}")
             all_models_pulled = False  # Continue trying other models

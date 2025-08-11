@@ -1,7 +1,5 @@
 import pytest
 
-import nextlevelapex.tasks.dev_tools  # ⬅️ ensures Colima Setup is registered
-from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.main import get_task_registry
 from nextlevelapex.tasks.brew import ensure_brew_shellenv_task, install_brew_task
@@ -20,9 +18,7 @@ class DummyCtx(dict):
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_ollama_task_returns_taskresult(dry_run, monkeypatch):
     # Monkey-patch the real setup_ollama() to control its return
-    monkeypatch.setattr(
-        "nextlevelapex.tasks.ollama.setup_ollama", lambda cfg, dry_run: not dry_run
-    )
+    monkeypatch.setattr("nextlevelapex.tasks.ollama.setup_ollama", lambda cfg, dry_run: not dry_run)
     ctx = DummyCtx(dry_run=dry_run)
     result: TaskResult = setup_ollama_task(ctx)
     # Validate the TaskResult fields
@@ -37,9 +33,7 @@ def test_ollama_task_returns_taskresult(dry_run, monkeypatch):
 def test_brew_tasks(monkeypatch):
     # Patch install_brew() to succeed and shellenv to fail
     monkeypatch.setattr("nextlevelapex.tasks.brew.install_brew", lambda dry_run: True)
-    monkeypatch.setattr(
-        "nextlevelapex.tasks.brew.ensure_brew_shellenv", lambda dry_run: False
-    )
+    monkeypatch.setattr("nextlevelapex.tasks.brew.ensure_brew_shellenv", lambda dry_run: False)
     ctx = DummyCtx(dry_run=False)
     install_res = install_brew_task(ctx)
     shellenv_res = ensure_brew_shellenv_task(ctx)

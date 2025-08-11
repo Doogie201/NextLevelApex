@@ -1,6 +1,3 @@
-import pytest
-
-from nextlevelapex.core.registry import task
 from nextlevelapex.main import get_task_registry
 
 # Import the wrapper you created in mise.py
@@ -30,9 +27,7 @@ def test_mise_task_behavior(monkeypatch):
         def __init__(self, dry_run):
             super().__init__()
             self["dry_run"] = dry_run
-            self["config"] = {
-                "developer_tools": {"mise": {"global_tools": {"python": "3.11.9"}}}
-            }
+            self["config"] = {"developer_tools": {"mise": {"global_tools": {"python": "3.11.9"}}}}
 
     # Force the underlying function to succeed/fail
     monkeypatch.setattr(

@@ -1,14 +1,12 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/launch_agents.py
 
-import logging
 import os  # Need to import 'os' for _manage_launch_agent
 import stat  # For chmod
 from pathlib import Path
-from typing import Dict
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
-from nextlevelapex.core.registry import get_task_registry, task
+from nextlevelapex.core.registry import task
 from nextlevelapex.core.task import Severity, TaskResult
 
 log = LoggerProxy(__name__)
@@ -45,9 +43,7 @@ def _manage_launch_agent(
 ) -> bool:
     launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
     plist_path = launch_agents_dir / plist_name
-    label = plist_name.removesuffix(
-        ".plist"
-    )  # Convention: Label is filename without .plist
+    label = plist_name.removesuffix(".plist")  # Convention: Label is filename without .plist
 
     log.info(f"Managing LaunchAgent: {label} at {plist_path}")
 
@@ -70,13 +66,9 @@ def _manage_launch_agent(
         return False
 
     # Lint the plist
-    lint_result = run_command(
-        ["plutil", "-lint", str(plist_path)], dry_run=False, check=False
-    )
+    lint_result = run_command(["plutil", "-lint", str(plist_path)], dry_run=False, check=False)
     if not lint_result.success:
-        log.error(
-            f"Plist file {plist_path} failed linting.Stderr:\n{lint_result.stderr}"
-        )
+        log.error(f"Plist file {plist_path} failed linting.Stderr:\n{lint_result.stderr}")
         return False
     log.info(f"Plist file {plist_path} linted successfully.")
 
@@ -106,15 +98,13 @@ def _manage_launch_agent(
         if legacy_load_result.success:
             log.info(f"LaunchAgent {label} loaded using legacy 'load -w'.")
         else:
-            log.error(
-                f"Failed to load LaunchAgent {label} with bootstrap or legacy load."
-            )
+            log.error(f"Failed to load LaunchAgent {label} with bootstrap or legacy load.")
             return False
     return True
 
 
 # --- Battery Alert Agent ---
-def setup_battery_alert_agent(config: Dict, dry_run: bool = False) -> bool:
+def setup_battery_alert_agent(config: dict, dry_run: bool = False) -> bool:
     """Stub logic for setting up the battery alert agent. Customize this."""
     log.info("Setting up battery alert LaunchAgent...")
 
@@ -193,7 +183,7 @@ def setup_weekly_audit_agent_task(ctx) -> TaskResult:
     )
 
 
-def setup_weekly_audit_agent(config: Dict, dry_run: bool = False) -> bool:
+def setup_weekly_audit_agent(config: dict, dry_run: bool = False) -> bool:
     """Sets up a LaunchAgent for a weekly audit script."""
     agents_config = config.get("automation_agents", {})
     audit_config = agents_config.get("weekly_audit", {})
@@ -203,9 +193,7 @@ def setup_weekly_audit_agent(config: Dict, dry_run: bool = False) -> bool:
         return True
 
     log.info("Setting up weekly audit LaunchAgent...")
-    script_path_str = audit_config.get(
-        "script_path", "~/Scripts/NextLevelApex/weekly_audit.sh"
-    )
+    script_path_str = audit_config.get("script_path", "~/Scripts/NextLevelApex/weekly_audit.sh")
     script_path = Path(script_path_str).expanduser().resolve()
     audit_main_script = Path(
         audit_config.get("audit_script_path", "~/Tools/macDeepDive.sh")

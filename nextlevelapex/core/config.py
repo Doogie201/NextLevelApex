@@ -1,10 +1,9 @@
 # ~/Projects/NextLevelApex/nextlevelapex/core/config.py
 
 import json
-import logging
 from importlib import resources
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
 from jsonschema import Draft7Validator
@@ -75,11 +74,18 @@ def _set_defaults(validator, properties, instance, schema):
         if "default" in subschema:
             instance.setdefault(prop, subschema["default"])
 
-    for error in _default_properties(validator, properties, instance, schema):
-        yield error
+
+# after
 
 
-def _deep_update(base: dict, updates: dict):
+def _validate_properties(validator, properties, instance, schema):
+    """
+    Generator function to validate properties using the default properties validator.
+    """
+    yield from _default_properties(validator, properties, instance, schema)
+
+
+def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> None:
     """
     Recursively update base with updates (mutates base).
     """
@@ -90,7 +96,7 @@ def _deep_update(base: dict, updates: dict):
             base[k] = v
 
 
-def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
+def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     """
     Loads and validates configuration against our JSON Schema.
     Fills in any missing properties with the schema’s own default values.
@@ -98,7 +104,7 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     log.info(f"Attempting to load configuration from: {config_path}")
 
     # 1) Start with an empty dict
-    config: Dict[str, Any] = {}
+    config: dict[str, Any] = {}
 
     # 2) Build two validators:
     #    - inject_validator: uses _set_defaults to populate defaults

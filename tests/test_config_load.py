@@ -2,8 +2,6 @@ import json
 from pathlib import Path
 
 from nextlevelapex.core.config import load_config
-from nextlevelapex.core.registry import task
-from nextlevelapex.main import get_task_registry
 
 
 def test_load_generated_config(tmp_path: Path):

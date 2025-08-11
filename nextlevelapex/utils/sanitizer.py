@@ -1,3 +1,5 @@
+from typing import Any
+
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.smartconfig import (
     get_bloat_limit,
@@ -7,7 +9,9 @@ from nextlevelapex.core.smartconfig import (
 log = LoggerProxy(__name__)
 
 
-def trim_large_fields(d: dict, path=(), stats=None) -> tuple[dict, dict]:
+def trim_large_fields(
+    d: dict[str, Any], path: tuple[Any, ...] = (), stats: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if stats is None:
         stats = {
             "fields_trimmed": 0,
@@ -18,7 +22,7 @@ def trim_large_fields(d: dict, path=(), stats=None) -> tuple[dict, dict]:
             "total_nested_paths_touched": 0,
         }
 
-    trimmed = {}
+    trimmed: dict[str, Any] = {}
     max_str_len = get_bloat_limit("max_string_len")
     max_list_items = get_bloat_limit("max_list_items")
     max_log_lines = get_bloat_limit("max_log_lines")
@@ -35,17 +39,14 @@ def trim_large_fields(d: dict, path=(), stats=None) -> tuple[dict, dict]:
                 stats["string_fields_trimmed"] += 1
                 stats["lines_removed"] += len(lines) - max_log_lines
                 trimmed[key] = (
-                    "\n".join(lines[:max_log_lines])
-                    + f"\n... (trimmed @ {max_log_lines} lines)"
+                    "\n".join(lines[:max_log_lines]) + f"\n... (trimmed @ {max_log_lines} lines)"
                 )
                 log.debug(f"BloatGuard: Trimmed string field at '{full_path}'")
             elif bloat_guard_enabled and len(value) > max_str_len:
                 stats["fields_trimmed"] += 1
                 stats["string_fields_trimmed"] += 1
                 stats["chars_removed"] += len(value) - max_str_len
-                trimmed[key] = (
-                    value[:max_str_len] + f"\n... (trimmed @ {max_str_len} chars)"
-                )
+                trimmed[key] = value[:max_str_len] + f"\n... (trimmed @ {max_str_len} chars)"
                 log.debug(f"BloatGuard: Trimmed multiline string at '{full_path}'")
             else:
                 trimmed[key] = value
@@ -64,4 +65,4 @@ def trim_large_fields(d: dict, path=(), stats=None) -> tuple[dict, dict]:
         else:
             trimmed[key] = value
 
-    return (trimmed, stats) if path == () else (trimmed, stats)
+    return trimmed, stats

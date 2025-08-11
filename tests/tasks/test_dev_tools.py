@@ -63,9 +63,7 @@ def test_colima_task_runs_with_colima_provider(monkeypatch, dry_run):
 
 def test_colima_task_skips_if_not_colima_provider():
     ctx = DummyCtx(
-        config_override={
-            "developer_tools": {"docker_runtime": {"provider": "docker-desktop"}}
-        },
+        config_override={"developer_tools": {"docker_runtime": {"provider": "docker-desktop"}}},
         dry_run=True,
     )
     result = setup_colima_task(ctx)

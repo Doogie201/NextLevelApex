@@ -1,8 +1,6 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/mise.py
 
-import logging
 from pathlib import Path
-from typing import Dict
 
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
@@ -13,7 +11,7 @@ from nextlevelapex.main import TaskContext
 log = LoggerProxy(__name__)
 
 
-def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
+def setup_mise_globals(tools: dict[str, str], dry_run: bool = False) -> bool:
     log.debug(f"setup_mise_globals received dict: {tools} (Type: {type(tools)})")
     if not tools:
         log.info("No Mise global tools specified in config.")
@@ -22,7 +20,7 @@ def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
     tool_args = [f"{name}@{version}" for name, version in tools.items()]
     log.info(f"Setting global Mise tools: {', '.join(tool_args)}...")
 
-    cmd = ["mise", "use", "--global"] + tool_args
+    cmd = ["mise", "use", "--global", *tool_args]
     result = run_command(cmd, dry_run=dry_run, check=True)
 
     if not result.success:
@@ -43,9 +41,7 @@ def setup_mise_globals(tools: Dict[str, str], dry_run: bool = False) -> bool:
 
 @task("Mise Globals")
 def setup_mise_globals_task(ctx: TaskContext) -> TaskResult:
-    tools = (
-        ctx["config"].get("developer_tools", {}).get("mise", {}).get("global_tools", {})
-    )
+    tools = ctx["config"].get("developer_tools", {}).get("mise", {}).get("global_tools", {})
     success = setup_mise_globals(tools=tools, dry_run=ctx["dry_run"])
     messages = []
     if not success:
@@ -76,7 +72,7 @@ def ensure_mise_activation(
     line_found = False
     if config_path.is_file():
         try:
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 for line in f:
                     if activation_line in line and not line.strip().startswith("#"):
                         line_found = True
