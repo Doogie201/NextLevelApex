@@ -1,160 +1,175 @@
 ---
 name: CI
+'on':
+push:
+  branches: [main]
+pull_request:
+  branches: [main]
 
-"on":
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+# Cancel older runs on the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+group: ${{ github.workflow }}-${{ github.ref }}
+cancel-in-progress: true
 
+# Least-privilege + OIDC for Codecov
 permissions:
-  contents: read
-  id-token: write
+contents: read
+id-token: write
 
 jobs:
-  build-test:
-    name: Lint & Test (stable)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+build-test:
+  name: Lint & Test (stable)
+  runs-on: ubuntu-latest
 
-    env:
-      POETRY_VIRTUALENVS_CREATE: "true"
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PYTHONUNBUFFERED: "1"
+  strategy:
+    fail-fast: false
+    matrix:
+      python-version: ["3.10", "3.11", "3.12"]
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  env:
+    POETRY_VIRTUALENVS_CREATE: "true"
+    POETRY_VIRTUALENVS_IN_PROJECT: "true"   # .venv in repo (faster, cacheable)
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PYTHONUNBUFFERED: "1"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: poetry
-          cache-dependency-path: "**/poetry.lock"
+  steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
 
-      - name: Install Poetry
-        run: |
-          if command -v pipx >/dev/null 2>&1; then
-            pipx install "poetry==1.8.*"
-          else
-            python -m pip install --upgrade pip
-            python -m pip install "poetry==1.8.*"
-          fi
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: |
-          poetry --version
-          poetry install --no-interaction --no-ansi
+    # ✅ Robust Poetry install that puts the binary on PATH
+    - name: 📦 Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: "1.8.3"       # pin for reproducibility; update when you choose
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
 
-      - name: Ruff (lint)
-        run: poetry run ruff check .
+    # Cache the in-project venv to speed everything up
+    - name: ♻️ Cache .venv
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-${{ matrix.python-version }}-
 
-      - name: Black (format check)
-        run: poetry run black --check .
+    # Self-healing diagnostics (helps if Poetry ever "disappears")
+    - name: 🔎 Poetry diagnostics
+      run: |
+        echo "PATH=$PATH"
+        which poetry || true
+        poetry --version
 
-      - name: isort (imports)
-        run: poetry run isort --check-only .
+    - name: 📚 Install dependencies
+      run: poetry install --no-interaction --no-ansi
 
-      - name: mypy (types)
-        run: poetry run mypy .
+    # ---- Linters / type checks ----
+    - name: 🧼 Ruff (lint)
+      run: poetry run ruff check .
 
-      - name: Pytest with coverage (xml + html)
-        run: |
-          poetry run pip install --upgrade coverage pytest-cov
-          poetry run pytest -q --maxfail=1 --disable-warnings \
-            --cov=nextlevelapex --cov-branch \
-            --cov-report=xml:coverage.xml \
-            --cov-report=term \
-            --cov-report=html:htmlcov
+    - name: 🧽 Black (format check)
+      run: poetry run black --check .
 
-      - name: Upload coverage to Codecov (OIDC)
-        if: matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
-          verbose: true
-          use_oidc: true
-          # If you prefer token auth (e.g., private repo), instead:
-          # token: ${{ secrets.CODECOV_TOKEN }}
+    - name: 🔀 isort (imports)
+      run: poetry run isort --check-only .
 
-      - name: List htmlcov (non-fatal)
-        if: always()
-        run: |
-          echo "Checking for htmlcov/..."
-          if [ -d "htmlcov" ]; then
-            echo "Found htmlcov/, listing contents:"
-            ls -lAR htmlcov/
-          else
-            echo "htmlcov/ not found (skipping)."
-          fi
+    - name: 🔎 mypy (types)
+      run: poetry run mypy .
 
-      - name: Upload coverage HTML (artifact)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html-${{ matrix.python-version }}
-          path: htmlcov/
-          if-no-files-found: warn
-          retention-days: 7
+    # ---- Tests + coverage (single invocation) ----
+    - name: 🧪 Pytest with coverage (xml + html)
+      run: |
+        poetry run python -m pip install --upgrade coverage pytest-cov
+        poetry run pytest -q --maxfail=1 --disable-warnings \
+          --cov=nextlevelapex --cov-branch \
+          --cov-report=xml:coverage.xml \
+          --cov-report=term \
+          --cov-report=html:htmlcov
 
-  experimental:
-    name: Lint & Test (experimental Python)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.13"]
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      POETRY_VIRTUALENVS_CREATE: "true"
-      POETRY_VIRTUALENVS_IN_PROJECT: "true"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: poetry
-          cache-dependency-path: "**/poetry.lock"
-      - name: Install Poetry
-        run: |
-          if command -v pipx >/dev/null 2>&1; then
-            pipx install "poetry==1.8.*"
-          else
-            python -m pip install "poetry==1.8.*"
-          fi
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-ansi
-      - name: Ruff
-        run: poetry run ruff check .
-      - name: Pytest + coverage
-        run: |
-          poetry run pip install --upgrade coverage pytest-cov
-          poetry run pytest -q --maxfail=1 --disable-warnings \
-            --cov=nextlevelapex --cov-branch \
-            --cov-report=xml:coverage.xml \
-            --cov-report=term
-      - name: Codecov (OIDC)
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
-          use_oidc: true
+    # Upload coverage from the primary (3.12) run only
+    - name: ☂️ Upload coverage to Codecov (OIDC)
+      if: matrix.python-version == '3.12'
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage.xml
+        fail_ci_if_error: false         # let Codecov status checks gate coverage
+        verbose: true
+        use_oidc: true                  # tokenless auth for public repos
+        # If you prefer a token (e.g., private repo), you can add:
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: 🧾 List htmlcov if present (non-fatal)
+      if: always()
+      run: |
+        echo "🕵️ Checking for htmlcov/..."
+        if [-d "htmlcov"]; then
+          echo "✅ htmlcov/ directory FOUND. Listing contents:"
+          ls -lAR htmlcov/
+        else
+          echo "⚠️ htmlcov/ directory NOT FOUND (skipping)."
+        fi
+
+    - name: 📤 Upload coverage HTML (artifact)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-html-${{ matrix.python-version }}
+        path: htmlcov/
+        if-no-files-found: warn
+        retention-days: 7
+
+# Forward-compat check that won't fail your PRs if upstream breaks early
+experimental:
+  name: Lint & Test (experimental Python)
+  runs-on: ubuntu-latest
+  continue-on-error: true
+  strategy:
+    matrix:
+      python-version: ["3.13"]    # adjust as new versions drop
+  permissions:
+    contents: read
+    id-token: write
+  env:
+    POETRY_VIRTUALENVS_CREATE: "true"
+    POETRY_VIRTUALENVS_IN_PROJECT: "true"
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PYTHONUNBUFFERED: "1"
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - uses: snok/install-poetry@v1
+      with:
+        version: "1.8.3"
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    - uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-${{ matrix.python-version }}-
+    - name: Install deps
+      run: poetry install --no-interaction --no-ansi
+    - name: Ruff
+      run: poetry run ruff check .
+    - name: Pytest + coverage (xml only)
+      run: |
+        poetry run python -m pip install --upgrade coverage pytest-cov
+        poetry run pytest -q --maxfail=1 --disable-warnings \
+          --cov=nextlevelapex --cov-branch \
+          --cov-report=xml:coverage.xml \
+          --cov-report=term
+    - name: Codecov (OIDC)
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage.xml
+        fail_ci_if_error: false
+        use_oidc: true
