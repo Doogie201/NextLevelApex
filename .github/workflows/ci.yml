@@ -54,7 +54,7 @@ jobs:
           poetry run coverage html
 
       - name: Upload coverage reports to Codecov
-        if: success() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml                # be explicit
