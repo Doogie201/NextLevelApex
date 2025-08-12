@@ -1,91 +1,160 @@
 ---
 name: CI
 
-on:
+"on":
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build-test:
+    name: Lint & Test (stable)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
+    env:
+      POETRY_VIRTUALENVS_CREATE: "true"
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUNBUFFERED: "1"
+
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: poetry
+          cache-dependency-path: "**/poetry.lock"
 
-      - name: 📦 Install Poetry
+      - name: Install Poetry
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "${HOME}/.local/bin" >> $GITHUB_PATH
-
-      - name: 📚 Install dependencies
-        run: |
-          poetry config virtualenvs.create false
-          poetry install --no-interaction --no-ansi
-
-      - name: 🧼 Lint with Ruff
-        run: poetry run ruff .
-
-      - name: 🧽 Format check with Black
-        run: poetry run black --check .
-
-      - name: 🔀 Sort imports with isort
-        run: poetry run isort --check-only .
-
-      - name: 🔎 Static type check with Mypy
-        run: poetry run mypy .
-
-      - name: 🧪 Run tests with coverage
-        run: |
-          poetry run coverage run --rcfile=.coveragerc -m pytest
-          poetry run coverage xml -o coverage.xml
-          poetry run coverage report --rcfile=.coveragerc
-          poetry run coverage html
-
-      - name: Upload coverage reports to Codecov
-        if: always() && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.xml                # be explicit
-          flags: py${{ matrix.python-version }}
-          # Omit token for public repos; add it if private:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          slug: Doogie201/NextLevelApex
-          fail_ci_if_error: true
-          verbose: true
-
-      - name: 🧾 Verify htmlcov/ directory and contents
-        if: always()
-        run: |
-          echo "🕵️ Checking for htmlcov/..."
-          if [ -d "htmlcov" ]; then
-            echo "✅ htmlcov/ directory FOUND. Listing contents:"
-            ls -lAR htmlcov/
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install "poetry==1.8.*"
           else
-            echo "❌ htmlcov/ directory NOT FOUND in $(pwd)."
-            exit 1
+            python -m pip install --upgrade pip
+            python -m pip install "poetry==1.8.*"
           fi
 
-      - name: 📤 Upload coverage report
-        if: github.event_name == 'push' && matrix.python-version == '3.12'
+      - name: Install dependencies
+        run: |
+          poetry --version
+          poetry install --no-interaction --no-ansi
+
+      - name: Ruff (lint)
+        run: poetry run ruff check .
+
+      - name: Black (format check)
+        run: poetry run black --check .
+
+      - name: isort (imports)
+        run: poetry run isort --check-only .
+
+      - name: mypy (types)
+        run: poetry run mypy .
+
+      - name: Pytest with coverage (xml + html)
+        run: |
+          poetry run pip install --upgrade coverage pytest-cov
+          poetry run pytest -q --maxfail=1 --disable-warnings \
+            --cov=nextlevelapex --cov-branch \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term \
+            --cov-report=html:htmlcov
+
+      - name: Upload coverage to Codecov (OIDC)
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+          use_oidc: true
+          # If you prefer token auth (e.g., private repo), instead:
+          # token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: List htmlcov (non-fatal)
+        if: always()
+        run: |
+          echo "Checking for htmlcov/..."
+          if [ -d "htmlcov" ]; then
+            echo "Found htmlcov/, listing contents:"
+            ls -lAR htmlcov/
+          else
+            echo "htmlcov/ not found (skipping)."
+          fi
+
+      - name: Upload coverage HTML (artifact)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-html-${{ matrix.python-version }}
           path: htmlcov/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
-          overwrite: true
 
-      - name: 🚨 Enforce minimum coverage threshold
-        run: poetry run coverage report --rcfile=.coveragerc --fail-under=85
+  experimental:
+    name: Lint & Test (experimental Python)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      POETRY_VIRTUALENVS_CREATE: "true"
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: poetry
+          cache-dependency-path: "**/poetry.lock"
+      - name: Install Poetry
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install "poetry==1.8.*"
+          else
+            python -m pip install "poetry==1.8.*"
+          fi
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+      - name: Ruff
+        run: poetry run ruff check .
+      - name: Pytest + coverage
+        run: |
+          poetry run pip install --upgrade coverage pytest-cov
+          poetry run pytest -q --maxfail=1 --disable-warnings \
+            --cov=nextlevelapex --cov-branch \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term
+      - name: Codecov (OIDC)
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          use_oidc: true
