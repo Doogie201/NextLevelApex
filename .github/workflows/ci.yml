@@ -48,10 +48,12 @@ jobs:
 
       - name: 🧪 Run tests with coverage
         run: |
-          poetry run coverage run --rcfile=.coveragerc -m pytest
-          poetry run coverage xml -o coverage.xml
-          poetry run coverage report --rcfile=.coveragerc
-          poetry run coverage html
+          poetry run pytest -q --maxfail=1 --disable-warnings
+            --cov=nextlevelapex --cov-branch
+            --cov-report=xml:coverage.xml
+            --cov-report=term
+            --cov-report=html:htmlcov
+
 
       - name: Upload coverage reports to Codecov
         if: always() && matrix.python-version == '3.12'
