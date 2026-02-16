@@ -12,7 +12,7 @@ default_stages: [pre-commit, pre-push] # was [commit, push]
 repos:
   # ---------------------------------------------------- House-keeping hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -27,7 +27,7 @@ repos:
 
   # ----------------------------------------------------------- YAML linter
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         files: "\\.(ya?ml)$"
@@ -37,7 +37,7 @@ repos:
 
   # ------------------------------------------- Shell formatting & linting
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.11.0-1
+    rev: v3.12.0-2
     hooks:
       - id: shfmt
         args: ["-i", "2", "-sr", "-ci"]
@@ -45,7 +45,7 @@ repos:
         exclude: "^docker/" # avoid parsing docker/orchestrate.sh for now
 
   - repo: https://github.com/koalaman/shellcheck-precommit
-    rev: v0.10.0
+    rev: v0.11.0
     hooks:
       - id: shellcheck
         args: ["--severity", "warning"]
@@ -53,21 +53,21 @@ repos:
         exclude: "^docker/"
 
   # ----------------------------------- Python formatters & linters stack
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.1.0
     hooks:
       - id: black
         language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/PyCQA/isort
-    rev: 6.0.1
+    rev: 7.0.0
     hooks:
       - id: isort
         args: ["--profile", "black"]
         language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.9 # keep in sync with your lockfile/ruff version
+    rev: v0.15.1 # keep in sync with your lockfile/ruff version
     hooks:
       # If you want the formatter, uncomment:
       # - id: ruff-format
