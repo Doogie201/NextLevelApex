@@ -25,7 +25,6 @@ log = LoggerProxy(__name__)
 @task(TASK_NAME)
 def run(ctx: TaskContext) -> TaskResult:
     dry_run = ctx.get("dry_run", False)
-    verbose = ctx.get("verbose", False)
 
     if not STACK_SCRIPT.exists():
         return TaskResult(
@@ -44,7 +43,7 @@ def run(ctx: TaskContext) -> TaskResult:
     log.info(f"Executing: {' '.join(command)}")
 
     try:
-        result = run_command(command, dry_run=dry_run, verbose=verbose)
+        result = run_command(command, dry_run=dry_run)
         return TaskResult(
             name=TASK_NAME,
             success=result.success,

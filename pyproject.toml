@@ -55,7 +55,7 @@ websockets = "^16.0"
 cli = ["typer"]
 
 [tool.poetry.scripts]
-nlx = "nextlevelapex.main:app"
+nlx = "nextlevelapex.main2:app"
 
 # ───────────────────────────── Dev groups ──────────────────────────────────
 [tool.poetry.group.dev]
