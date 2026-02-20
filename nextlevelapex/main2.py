@@ -677,5 +677,86 @@ def generate_config_command(
         raise typer.Exit(code=1)
 
 
+@app.command("archive-reports")
+def archive_reports_cmd(
+    dry_run: bool = typer.Option(False, help="Show which files would be archived without actually doing so."),
+):
+    """
+    Archive and compress all reports (.html and .md) that were not created the current month.
+    """
+    from nextlevelapex.core.maintenance import archive_old_reports
+    # Resolve the reports directory based on our standard layout
+    r_dir = APP_ROOT.parent / "reports"
+    archive_old_reports(r_dir, dry_run=dry_run)
+
+
+@app.command("install-archiver")
+def install_archiver_cmd():
+    """
+    Generate and install a macOS launchd agent to run `archive-reports` automatically
+    on the 1st of every month at midnight.
+    """
+    import os
+    import sys
+    from pathlib import Path
+    import subprocess
+
+    agent_name = "com.nextlevelapex.archiver.plist"
+    agents_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = agents_dir / agent_name
+
+    # We resolve the absolute paths so launchd knows exactly what to run without needing $PATH setup
+    poetry_bin = subprocess.run(["which", "poetry"], capture_output=True, text=True).stdout.strip()
+    if not poetry_bin:
+        typer.secho("Error: Could not locate `poetry` executable.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    main_py_str = str(APP_ROOT / "main2.py")
+    cwd_str = str(APP_ROOT.parent)
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nextlevelapex.archiver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{poetry_bin}</string>
+        <string>run</string>
+        <string>python</string>
+        <string>{main_py_str}</string>
+        <string>archive-reports</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{cwd_str}</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{cwd_str}/reports/archiver.log</string>
+    <key>StandardErrorPath</key>
+    <string>{cwd_str}/reports/archiver.error.log</string>
+</dict>
+</plist>
+"""
+
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    plist_path.write_text(plist_content)
+
+    # Reload the agent to make it live
+    subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, check=False)
+    subprocess.run(["launchctl", "load", "-w", str(plist_path)], capture_output=True, check=False)
+
+    typer.secho(f"✅ Auto-archiver successfully installed to {plist_path}", fg=typer.colors.GREEN)
+    typer.secho("It will automatically sweep old reports on the 1st of every month.", fg=typer.colors.CYAN)
+
+
 if __name__ == "__main__":
     app()
