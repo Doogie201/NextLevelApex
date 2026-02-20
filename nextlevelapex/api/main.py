@@ -1,12 +1,31 @@
+import inspect
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from nextlevelapex.core.config import DEFAULT_CONFIG_PATH, generate_default_config
 from nextlevelapex.core.state import get_task_health_trend, load_state, save_state
-from nextlevelapex.main2 import STATE_PATH, discover_tasks, run_task, execute_remediation
+from nextlevelapex.main2 import (
+    STATE_PATH,
+    archive_reports_cmd,
+)
+from nextlevelapex.main2 import auto_fix as auto_fix_cli
+from nextlevelapex.main2 import (
+    discover_tasks,
+    execute_remediation,
+)
+from nextlevelapex.main2 import export_state as export_state_cli
+from nextlevelapex.main2 import (
+    generate_report_cli,
+    install_archiver_cmd,
+)
+from nextlevelapex.main2 import reset_state as reset_state_cli
+from nextlevelapex.main2 import (
+    run_task,
+)
 
 app = FastAPI(
     title="NextLevelApex Mission Control API",
@@ -23,23 +42,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class DiagnoseRequest(BaseModel):
     task_name: str
     autofix: bool = False
 
+
 class GlobalRunRequest(BaseModel):
     mode: str = "run"
     dry_run: bool = False
+    task_filters: list[str] | None = None
+    no_reports: bool = False
+
+
+class ExportRequest(BaseModel):
+    fmt: str = "json"
+
+
+class ResetStateRequest(BaseModel):
+    only_failed: bool = False
+    backup: bool = True
+
+
+class AutoFixRequest(BaseModel):
+    dry_run: bool = False
+
 
 @app.get("/api/tasks")
-def list_tasks() -> Dict[str, Any]:
+def list_tasks() -> dict[str, Any]:
     """Returns all discovered tasks and their current state."""
     state = load_state(STATE_PATH)
     tasks = state.get("task_status", {})
     return {"tasks": tasks}
 
+
 @app.get("/api/health")
-def health_history(task_name: Optional[str] = None) -> Dict[str, Any]:
+def health_history(task_name: str | None = None) -> dict[str, Any]:
     """Returns the health history for a task or all tasks."""
     state = load_state(STATE_PATH)
     if task_name:
@@ -48,13 +86,40 @@ def health_history(task_name: Optional[str] = None) -> Dict[str, Any]:
 
     return {"history": state.get("health_history", {})}
 
+
+@app.get("/api/tasks/{task_name}")
+def get_task_detail(task_name: str) -> dict[str, Any]:
+    """Returns details and history about a specific task."""
+    discovered = discover_tasks()
+    if task_name not in discovered:
+        raise HTTPException(status_code=404, detail="Task not found in registry.")
+
+    task_callable = discovered[task_name]
+    docstring = inspect.getdoc(task_callable) or "No documentation provided."
+
+    state = load_state(STATE_PATH)
+    history = get_task_health_trend(task_name, state)
+    status_info = state.get("task_status", {}).get(task_name, {})
+
+    return {"name": task_name, "docstring": docstring, "status": status_info, "history": history}
+
+
 @app.post("/api/run")
-def trigger_run(req: GlobalRunRequest) -> Dict[str, Any]:
-    """Triggers a global run across all discovered tasks."""
-    # Similar to main2.py main() logic
+def trigger_run(req: GlobalRunRequest) -> dict[str, Any]:
+    """Triggers a run across discovered tasks, matching CLI options."""
     state = load_state(STATE_PATH)
     discovered_tasks = discover_tasks()
     now = datetime.utcnow().isoformat()
+
+    # Apply task filters similar to main2.py
+    if req.task_filters:
+        filtered = {}
+        target_lower_list = [t.lower() for t in req.task_filters]
+        for name, callable_def in discovered_tasks.items():
+            name_lower = name.lower()
+            if any(t in name_lower for t in target_lower_list):
+                filtered[name] = callable_def
+        discovered_tasks = filtered
 
     results = {}
     for name, task_callable in discovered_tasks.items():
@@ -70,10 +135,19 @@ def trigger_run(req: GlobalRunRequest) -> Dict[str, Any]:
         except Exception as e:
             results[name] = {"status": "error", "message": str(e)}
 
+    # Generate reports if not skipped
+    skip_reports = req.no_reports or req.task_filters
+    if not skip_reports:
+        try:
+            generate_report_cli(html=True, markdown=True)
+        except Exception as e:
+            results["_report_generation"] = {"status": "error", "message": str(e)}
+
     return {"status": "completed", "results": results}
 
+
 @app.post("/api/diagnose")
-def trigger_diagnose(req: DiagnoseRequest) -> Dict[str, Any]:
+def trigger_diagnose(req: DiagnoseRequest) -> dict[str, Any]:
     """Runs a deep diagnosis on a specific task."""
     state = load_state(STATE_PATH)
     discovered_tasks = discover_tasks()
@@ -108,11 +182,19 @@ def trigger_diagnose(req: DiagnoseRequest) -> Dict[str, Any]:
 
             if actions_successful:
                 logs.append("Re-running task to verify fix...")
-                post_context = {"mode": "run", "dry_run": False, "state": state, "now": datetime.utcnow().isoformat()}
+                post_context = {
+                    "mode": "run",
+                    "dry_run": False,
+                    "state": state,
+                    "now": datetime.utcnow().isoformat(),
+                }
                 post_result = run_task(req.task_name, task_callable, post_context)
 
                 if post_result.get("status") == "PASS":
-                    state["task_status"][req.task_name] = {"status": "PASS", "last_update": post_context["now"]}
+                    state["task_status"][req.task_name] = {
+                        "status": "PASS",
+                        "last_update": post_context["now"],
+                    }
                     save_state(state, STATE_PATH)
                     logs.append("Verification SUCCESS. Task healed.")
                     result["status"] = "PASS"
@@ -125,4 +207,79 @@ def trigger_diagnose(req: DiagnoseRequest) -> Dict[str, Any]:
         return {"status": "success", "result": result}
     except Exception as e:
         import traceback as tb
+
         return {"status": "error", "message": str(e), "traceback": tb.format_exc()}
+
+
+@app.post("/api/autofix")
+def autofix_global(req: AutoFixRequest) -> dict[str, Any]:
+    """Run global autofix routine (Advanced Meta-Level Healing Protocol)."""
+    try:
+        # Wrap the Typer output stream temporarily
+        auto_fix_cli(dry_run=req.dry_run)
+        return {"status": "success", "message": "Autofix protocol completed."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/reset")
+def reset_system_state(req: ResetStateRequest) -> dict[str, Any]:
+    """Resets the state tracking document."""
+    try:
+        reset_state_cli(only_failed=req.only_failed, backup=req.backup)
+        return {"status": "success", "message": "State reset successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/report")
+def generate_reports() -> dict[str, Any]:
+    """Generates the HTML and Markdown reports manually."""
+    try:
+        generate_report_cli(html=True, markdown=True)
+        return {"status": "success", "message": "Reports generated."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/export")
+def export_system_state(req: ExportRequest) -> dict[str, Any]:
+    """Exports orchestrator state."""
+    try:
+        export_state_cli(fmt=req.fmt)
+        return {"status": "success", "message": f"State exported successfully in {req.fmt} format."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/config/generate")
+def generate_default_config_api(force: bool = False) -> dict[str, Any]:
+    """Generates the default configuration."""
+    if DEFAULT_CONFIG_PATH.exists() and not force:
+        raise HTTPException(status_code=400, detail="Config already exists. Use force=true.")
+
+    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ok = generate_default_config(DEFAULT_CONFIG_PATH)
+    if ok:
+        return {"status": "success", "message": f"Config written to {DEFAULT_CONFIG_PATH}"}
+    return {"status": "error", "message": "Failed to create config."}
+
+
+@app.post("/api/maintenance/archive")
+def trigger_archiver(dry_run: bool = False) -> dict[str, Any]:
+    """Archives old reports."""
+    try:
+        archive_reports_cmd(dry_run=dry_run)
+        return {"status": "success", "message": "Archiving process complete."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/maintenance/install-archiver")
+def install_launchd_archiver() -> dict[str, Any]:
+    """Installs the macOS launchd monthly archiver."""
+    try:
+        install_archiver_cmd()
+        return {"status": "success", "message": "Auto-archiver installed successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
