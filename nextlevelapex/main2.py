@@ -211,8 +211,10 @@ def execute_remediation(action: RemediationAction, dry_run: bool = False) -> boo
 def main(
     ctx: typer.Context,
     mode: str = typer.Option("run", help="run|test|stress|security"),
-    html_report: bool = typer.Option(True, help="Generate HTML report"),
-    markdown_report: bool = typer.Option(True, help="Generate Markdown report"),
+    task: Optional[List[str]] = typer.Option(None, "--task", "-t", help="Run specific tasks (substring match). Skips reports by default when used."),
+    html_report: bool = typer.Option(True, help="Generate HTML report. Overridden if --task or --no-reports is specified."),
+    markdown_report: bool = typer.Option(True, help="Generate Markdown report. Overridden if --task or --no-reports is specified."),
+    no_reports: bool = typer.Option(False, "--no-reports", help="Skip all report generation globally."),
     dry_run: bool = typer.Option(False, help="Dry run only, no changes made."),
 ):
     # Skip main execution if a sub-command (like diagnose or list-tasks) is called
@@ -226,7 +228,61 @@ def main(
 
     # 2. Discover tasks
     discovered_tasks = discover_tasks()
+
+    # 2b. Filter tasks if --task is provided
+    if task:
+        # User specified at least one filter
+        filtered = {}
+        target_lower_list = [t.lower() for t in task]
+        for name, task_callable in discovered_tasks.items():
+            name_lower = name.lower()
+            if any(t in name_lower for t in target_lower_list):
+                filtered[name] = task_callable
+
+        if not filtered:
+            typer.secho(f"No tasks matched the filters: {task}", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+
+        typer.secho(f"Filtered to {len(filtered)} tasks (from {len(discovered_tasks)}): {list(filtered.keys())}", fg=typer.colors.CYAN)
+        discovered_tasks = filtered
+
+        # Override report generation so we don't bloat the directory on selective runs
+        if not no_reports:
+            typer.secho("Disabling HTML/Markdown report generation for selective task execution.", fg=typer.colors.YELLOW)
+            html_report = False
+            markdown_report = False
+
     task_names = list(discovered_tasks.keys())
+
+    # Optional Sudo Consolidation: Ping for sudo upfront purely to cache it for `networksetup` / etc
+    print("Ensuring sudo privileges are active for this run...")
+    import pty
+    import os
+    # We use pty.spawn to trick sudo into thinking it's running directly in a terminal
+    # This ensures the password prompt is displayed even when nested under poetry run or Typer
+    try:
+        ret = pty.spawn(["sudo", "-v"])
+        if ret != 0:
+            typer.secho("Sudo authorization failed or was cancelled.", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+    except Exception as e:
+        typer.secho(f"Exception during sudo auth: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    # Fork a daemon thread to keep sudo alive every 60s
+    import threading
+    import time
+    def keep_sudo_alive():
+        while True:
+            time.sleep(60)
+            subprocess.run(["sudo", "-n", "-v"], check=False, capture_output=True)
+
+    try:
+        t = threading.Thread(target=keep_sudo_alive, daemon=True)
+        t.start()
+    except Exception:
+        pass # Ignore threading failures gracefully
+
     ensure_task_state(state, task_names)
 
     # 3. Update config/manifest file hashes for drift detection
@@ -277,11 +333,18 @@ def main(
     save_state(state, STATE_PATH, dry_run=dry_run)
 
     # 6. Generate report(s)
-    h_path, m_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
-    if h_path:
-        print(f"[REPORT] HTML report written: {h_path}")
-    if m_path:
-        print(f"[REPORT] Markdown report written: {m_path}")
+    if no_reports:
+        html_report = False
+        markdown_report = False
+
+    if html_report or markdown_report:
+        h_path, m_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
+        if h_path:
+            print(f"[REPORT] HTML report written: {h_path}")
+        if m_path:
+            print(f"[REPORT] Markdown report written: {m_path}")
+    else:
+        print("[SKIP] Report generation disabled.")
 
     print("\n[Done] State updated.")
     print("Current health summary:")
