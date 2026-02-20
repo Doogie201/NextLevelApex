@@ -13,6 +13,8 @@ import typer
 
 from nextlevelapex.core.config import DEFAULT_CONFIG_PATH, generate_default_config, load_config
 from nextlevelapex.core.logger import LoggerProxy
+from nextlevelapex.core.registry import get_task_registry
+
 # Import core state and base_task utilities
 from nextlevelapex.core.report import generate_report
 
@@ -28,7 +30,6 @@ from nextlevelapex.core.state import (
     update_task_health,
 )
 from nextlevelapex.tasks.base_task import BaseTask, RemediationAction, RemediationPlan
-from nextlevelapex.core.registry import get_task_registry
 
 # Type Alias for State definitions to improve readability
 StateDict = Dict[str, Any]
@@ -121,7 +122,9 @@ def ensure_task_state(state: StateDict, task_names: List[str]) -> None:
             del state["health_history"][old]
 
 
-def run_task(task_name: str, task_callable: Union[Type[BaseTask], Callable], context: StateDict) -> StateDict:
+def run_task(
+    task_name: str, task_callable: Union[Type[BaseTask], Callable], context: StateDict
+) -> StateDict:
     """
     Runs a discovered task, class or function-based.
     Returns standardized result dict.
@@ -136,7 +139,9 @@ def run_task(task_name: str, task_callable: Union[Type[BaseTask], Callable], con
 
             # Format messages if it's a list of tuples like (Severity, str)
             if msgs and isinstance(msgs, list) and isinstance(msgs[0], tuple):
-                details = "\n".join(f"[{m[0].name}] {m[1]}" if hasattr(m[0], 'name') else str(m) for m in msgs)
+                details = "\n".join(
+                    f"[{m[0].name}] {m[1]}" if hasattr(m[0], 'name') else str(m) for m in msgs
+                )
             else:
                 details = str(msgs) if msgs else "No details"
 
@@ -158,21 +163,26 @@ def execute_remediation(action: RemediationAction, dry_run: bool = False) -> boo
     Returns True if successful, False otherwise.
     """
     action_type = action.get("action_type")
-    payload = action.get("payload")
+    payload = action.get("payload", "")
     req_elevated = action.get("requires_elevated", False)
 
     if action_type == "shell_cmd":
-        cmd = payload
-        if req_elevated:
-            cmd = f"sudo {cmd}"
+        import shlex
 
+        cmd_list = shlex.split(payload)
+        if req_elevated:
+            cmd_list.insert(0, "sudo")
+
+        cmd_str = " ".join(cmd_list)
         if dry_run:
-            typer.secho(f"    DRY RUN: Would execute `{cmd}`", fg=typer.colors.YELLOW)
+            typer.secho(f"    DRY RUN: Would execute `{cmd_str}`", fg=typer.colors.YELLOW)
             return True
 
         try:
             # Execute with a 30 second timeout to prevent hanging the orchestrator
-            result = subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True, timeout=30)
+            result = subprocess.run(
+                cmd_list, check=True, text=True, capture_output=True, timeout=30
+            )
             if result.stdout:
                 typer.echo(f"      STDOUT: {result.stdout.strip()}")
             return True
@@ -180,17 +190,33 @@ def execute_remediation(action: RemediationAction, dry_run: bool = False) -> boo
             typer.secho("    ACTION TIMED OUT AFTER 30s.", fg=typer.colors.RED)
             return False
         except subprocess.CalledProcessError as e:
-            typer.secho(f"    ACTION FAILED (Exit {e.returncode}). STDERR: {e.stderr.strip()}", fg=typer.colors.RED)
+            typer.secho(
+                f"    ACTION FAILED (Exit {e.returncode}). STDERR: {e.stderr.strip()}",
+                fg=typer.colors.RED,
+            )
             return False
 
     elif action_type == "restart_service":
-        cmd = f"sudo systemctl restart {payload}" if sys.platform != "darwin" else f"brew services restart {payload}"
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9_\-]+$", payload):
+            typer.secho(
+                f"    FAILED TO RESTART SERVICE: Invalid service name '{payload}'",
+                fg=typer.colors.RED,
+            )
+            return False
+
+        if sys.platform != "darwin":
+            cmd_list = ["sudo", "systemctl", "restart", payload]
+        else:
+            cmd_list = ["brew", "services", "restart", payload]
+
         if dry_run:
             typer.secho(f"    DRY RUN: Would restart service `{payload}`", fg=typer.colors.YELLOW)
             return True
 
         try:
-            subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True, timeout=15)
+            subprocess.run(cmd_list, check=True, text=True, capture_output=True, timeout=15)
             typer.echo(f"      Restarted service: {payload}")
             return True
         except subprocess.CalledProcessError:
@@ -206,15 +232,25 @@ def execute_remediation(action: RemediationAction, dry_run: bool = False) -> boo
         return False
 
 
-
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     mode: str = typer.Option("run", help="run|test|stress|security"),
-    task: Optional[List[str]] = typer.Option(None, "--task", "-t", help="Run specific tasks (substring match). Skips reports by default when used."),
-    html_report: bool = typer.Option(True, help="Generate HTML report. Overridden if --task or --no-reports is specified."),
-    markdown_report: bool = typer.Option(True, help="Generate Markdown report. Overridden if --task or --no-reports is specified."),
-    no_reports: bool = typer.Option(False, "--no-reports", help="Skip all report generation globally."),
+    task: Optional[List[str]] = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help="Run specific tasks (substring match). Skips reports by default when used.",
+    ),
+    html_report: bool = typer.Option(
+        True, help="Generate HTML report. Overridden if --task or --no-reports is specified."
+    ),
+    markdown_report: bool = typer.Option(
+        True, help="Generate Markdown report. Overridden if --task or --no-reports is specified."
+    ),
+    no_reports: bool = typer.Option(
+        False, "--no-reports", help="Skip all report generation globally."
+    ),
     dry_run: bool = typer.Option(False, help="Dry run only, no changes made."),
 ):
     # Skip main execution if a sub-command (like diagnose or list-tasks) is called
@@ -243,12 +279,18 @@ def main(
             typer.secho(f"No tasks matched the filters: {task}", fg=typer.colors.RED)
             raise typer.Exit(code=1)
 
-        typer.secho(f"Filtered to {len(filtered)} tasks (from {len(discovered_tasks)}): {list(filtered.keys())}", fg=typer.colors.CYAN)
+        typer.secho(
+            f"Filtered to {len(filtered)} tasks (from {len(discovered_tasks)}): {list(filtered.keys())}",
+            fg=typer.colors.CYAN,
+        )
         discovered_tasks = filtered
 
         # Override report generation so we don't bloat the directory on selective runs
         if not no_reports:
-            typer.secho("Disabling HTML/Markdown report generation for selective task execution.", fg=typer.colors.YELLOW)
+            typer.secho(
+                "Disabling HTML/Markdown report generation for selective task execution.",
+                fg=typer.colors.YELLOW,
+            )
             html_report = False
             markdown_report = False
 
@@ -256,8 +298,9 @@ def main(
 
     # Optional Sudo Consolidation: Ping for sudo upfront purely to cache it for `networksetup` / etc
     print("Ensuring sudo privileges are active for this run...")
-    import pty
     import os
+    import pty
+
     # We use pty.spawn to trick sudo into thinking it's running directly in a terminal
     # This ensures the password prompt is displayed even when nested under poetry run or Typer
     try:
@@ -272,6 +315,7 @@ def main(
     # Fork a daemon thread to keep sudo alive every 60s
     import threading
     import time
+
     def keep_sudo_alive():
         while True:
             time.sleep(60)
@@ -281,7 +325,7 @@ def main(
         t = threading.Thread(target=keep_sudo_alive, daemon=True)
         t.start()
     except Exception:
-        pass # Ignore threading failures gracefully
+        pass  # Ignore threading failures gracefully
 
     ensure_task_state(state, task_names)
 
@@ -338,7 +382,9 @@ def main(
         markdown_report = False
 
     if html_report or markdown_report:
-        h_path, m_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
+        h_path, m_path = generate_report(
+            state, REPORTS_DIR, as_html=html_report, as_md=markdown_report
+        )
         if h_path:
             print(f"[REPORT] HTML report written: {h_path}")
         if m_path:
@@ -545,7 +591,9 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
     fixes_applied = 0
     failures_remaining = 0
 
-    failed_tasks = [t for t, info in state.get("task_status", {}).items() if info.get("status") == "FAIL"]
+    failed_tasks = [
+        t for t, info in state.get("task_status", {}).items() if info.get("status") == "FAIL"
+    ]
 
     if not failed_tasks:
         typer.secho("All tasks healthy. No remediation needed.", fg=typer.colors.GREEN)
@@ -571,25 +619,38 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
             if not plan:
                 legacy_rec = result.get("recommendation")
                 if legacy_rec:
-                    typer.secho(f"  Legacy Recommendation exists but cannot auto-execute: {legacy_rec}", fg=typer.colors.YELLOW)
+                    typer.secho(
+                        f"  Legacy Recommendation exists but cannot auto-execute: {legacy_rec}",
+                        fg=typer.colors.YELLOW,
+                    )
                 else:
                     typer.secho(f"  No remediation plan available for {t}.", fg=typer.colors.RED)
                 failures_remaining += 1
                 continue
 
-            typer.secho(f"  Plan: {plan.get('description', 'Unnamed Execution Block')}", fg=typer.colors.BLUE)
+            typer.secho(
+                f"  Plan: {plan.get('description', 'Unnamed Execution Block')}",
+                fg=typer.colors.BLUE,
+            )
 
             actions_successful = True
             for i, action in enumerate(plan.get("actions", [])):
-                typer.secho(f"  [Action {i+1}] Executing {action['action_type']}...", fg=typer.colors.BLUE)
+                typer.secho(
+                    f"  [Action {i+1}] Executing {action['action_type']}...", fg=typer.colors.BLUE
+                )
                 if not execute_remediation(action, dry_run):
                     actions_successful = False
-                    break # Stop executing further actions in this plan if one fails
+                    break  # Stop executing further actions in this plan if one fails
 
             if actions_successful and not dry_run:
                 # Post-flight check: Rerun the task context lightly to verify fix
                 typer.secho("  Post-flight validation...", fg=typer.colors.BLUE)
-                post_context = {"mode": "run", "dry_run": False, "state": state, "now": datetime.now().isoformat()}
+                post_context = {
+                    "mode": "run",
+                    "dry_run": False,
+                    "state": state,
+                    "now": datetime.now().isoformat(),
+                }
                 post_result = run_task(t, task_callable, post_context)
 
                 if post_result.get("status") == "PASS":
@@ -597,7 +658,9 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
                     state["task_status"][t]["status"] = "PASS"
                     fixes_applied += 1
                 else:
-                    typer.secho(f"  Remediation failed to clear the fault in {t}.", fg=typer.colors.RED)
+                    typer.secho(
+                        f"  Remediation failed to clear the fault in {t}.", fg=typer.colors.RED
+                    )
                     failures_remaining += 1
             elif actions_successful and dry_run:
                 typer.secho(f"  Dry-run of plan complete for {t}.", fg=typer.colors.GREEN)
@@ -611,9 +674,17 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
     # Save state if we fixed anything
     if fixes_applied > 0 and not dry_run:
         save_state(state, STATE_PATH)
-        typer.secho(f"\nHealing cycle complete. {fixes_applied} nodes restored.", fg=typer.colors.GREEN, bold=True)
+        typer.secho(
+            f"\nHealing cycle complete. {fixes_applied} nodes restored.",
+            fg=typer.colors.GREEN,
+            bold=True,
+        )
     elif failures_remaining > 0:
-        typer.secho(f"\nHealing cycle incomplete. {failures_remaining} nodes require manual intervention.", fg=typer.colors.RED, bold=True)
+        typer.secho(
+            f"\nHealing cycle incomplete. {failures_remaining} nodes require manual intervention.",
+            fg=typer.colors.RED,
+            bold=True,
+        )
 
 
 @app.command("export-state")
@@ -679,12 +750,15 @@ def generate_config_command(
 
 @app.command("archive-reports")
 def archive_reports_cmd(
-    dry_run: bool = typer.Option(False, help="Show which files would be archived without actually doing so."),
+    dry_run: bool = typer.Option(
+        False, help="Show which files would be archived without actually doing so."
+    ),
 ):
     """
     Archive and compress all reports (.html and .md) that were not created the current month.
     """
     from nextlevelapex.core.maintenance import archive_old_reports
+
     # Resolve the reports directory based on our standard layout
     r_dir = APP_ROOT.parent / "reports"
     archive_old_reports(r_dir, dry_run=dry_run)
@@ -697,9 +771,9 @@ def install_archiver_cmd():
     on the 1st of every month at midnight.
     """
     import os
+    import subprocess
     import sys
     from pathlib import Path
-    import subprocess
 
     agent_name = "com.nextlevelapex.archiver.plist"
     agents_dir = Path.home() / "Library" / "LaunchAgents"
@@ -755,7 +829,9 @@ def install_archiver_cmd():
     subprocess.run(["launchctl", "load", "-w", str(plist_path)], capture_output=True, check=False)
 
     typer.secho(f"✅ Auto-archiver successfully installed to {plist_path}", fg=typer.colors.GREEN)
-    typer.secho("It will automatically sweep old reports on the 1st of every month.", fg=typer.colors.CYAN)
+    typer.secho(
+        "It will automatically sweep old reports on the 1st of every month.", fg=typer.colors.CYAN
+    )
 
 
 if __name__ == "__main__":

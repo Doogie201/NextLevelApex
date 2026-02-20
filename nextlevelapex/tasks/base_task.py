@@ -1,18 +1,22 @@
 # nextlevelapex/tasks/base_task.py
 
 from collections.abc import Callable
-from typing import Any, List, Literal, Optional, TypedDict
+from typing import Any, Literal, TypedDict
+
 
 class RemediationAction(TypedDict):
     """A discrete action the orchestrator engine should take to heal a task."""
+
     action_type: Literal["shell_cmd", "restart_service", "modify_file", "manual"]
     payload: str
     requires_elevated: bool
 
+
 class RemediationPlan(TypedDict):
     """The collective plan returned by a failing task to heal itself."""
+
     description: str
-    actions: List[RemediationAction]
+    actions: list[RemediationAction]
 
 
 class BaseTask:
@@ -22,7 +26,7 @@ class BaseTask:
     """
 
     # Human-friendly unique name (override if needed)
-    TASK_NAME: Optional[str] = None
+    TASK_NAME: str | None = None
 
     def __init__(self):
         # Optionally add other runtime context as needed
