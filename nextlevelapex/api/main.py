@@ -1,8 +1,10 @@
+import asyncio
 import inspect
+import random
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -36,11 +38,67 @@ app = FastAPI(
 # Allow CORS for Next.js frontend (default port 3000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3003", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# -----------------------------------------------------------------------------
+# WebSocket Telemetry Stream
+# -----------------------------------------------------------------------------
+@app.websocket("/api/ws/telemetry")
+async def websocket_telemetry_endpoint(websocket: WebSocket) -> None:
+    await websocket.accept()
+
+    # Base simulated state to slowly drift
+    state: dict[str, Any] = {
+        "cognitive_load": 32,
+        "flow_velocity": 1.8,
+        "pulse_cadence": 5.5,
+        "sympathetic_tone": "Low",
+        "deep_work_minutes": 252,  # 4h 12m
+    }
+
+    coach_messages = [
+        "I notice minor context switching in the last 15 minutes. Would you like me to initiate a 5-minute cooldown protocol?",
+        "Flow velocity has increased by 0.2x. Optimal coherence maintained.",
+        "Heart rate variability indicates a slight shift towards sympathetic dominance. Deep breathing recommended.",
+        "You've been in a deep work state for over 4 hours. Consider a short break to maintain cognitive sustainability.",
+        "System telemetry healthy. Local processing actively guarding your sovereignty.",
+    ]
+
+    try:
+        while True:
+            # Drift values slightly simulating live data
+            state["cognitive_load"] = max(
+                10, min(90, int(state["cognitive_load"]) + random.randint(-5, 5))
+            )
+            state["flow_velocity"] = round(
+                max(0.5, min(3.0, float(state["flow_velocity"]) + random.uniform(-0.1, 0.1))), 2
+            )
+            state["pulse_cadence"] = round(
+                max(4.0, min(8.0, float(state["pulse_cadence"]) + random.uniform(-0.5, 0.5))), 1
+            )
+
+            # Periodically add a coach event (1 in 10 chance)
+            coach_event = None
+            if random.random() < 0.1:
+                coach_event = random.choice(coach_messages)
+
+            payload = {
+                "type": "telemetry_update",
+                "timestamp": datetime.utcnow().isoformat(),
+                "metrics": state,
+                "coach_alert": coach_event,
+            }
+
+            await websocket.send_json(payload)
+            await asyncio.sleep(2.0)  # Send update every 2 seconds
+
+    except WebSocketDisconnect:
+        print("Client disconnected from telemetry stream")
 
 
 class DiagnoseRequest(BaseModel):

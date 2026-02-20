@@ -3,11 +3,9 @@ Maintenance utilities for NextLevelApex.
 Includes automated report archiving to prevent storage bloat.
 """
 
-import os
 import tarfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
 
 import typer
 
@@ -37,7 +35,7 @@ def archive_old_reports(reports_dir: Path, dry_run: bool = False) -> None:
 
     # 1. Collect and group old reports by month
     # Group format: { "2026_01": [Path(...), Path(...)], "2025_12": [...] }
-    old_reports: Dict[str, List[Path]] = {}
+    old_reports: dict[str, list[Path]] = {}
 
     for file_path in reports_dir.glob("*"):
         if not file_path.is_file() or file_path.suffix not in [".html", ".md"]:
@@ -45,7 +43,7 @@ def archive_old_reports(reports_dir: Path, dry_run: bool = False) -> None:
 
         try:
             # We use modification time to determine file age
-            mtime = os.path.getmtime(file_path)
+            mtime = file_path.stat().st_mtime
             file_date = datetime.fromtimestamp(mtime)
             month_key = file_date.strftime("%Y_%m")
 
@@ -67,25 +65,32 @@ def archive_old_reports(reports_dir: Path, dry_run: bool = False) -> None:
         archive_path = archives_dir / archive_name
 
         if dry_run:
-            typer.secho(f"DRY RUN: Would compress {len(files)} files into {archive_path}", fg=typer.colors.YELLOW)
+            typer.secho(
+                f"DRY RUN: Would compress {len(files)} files into {archive_path}",
+                fg=typer.colors.YELLOW,
+            )
             for f in files:
                 typer.echo(f"  - Would delete: {f.name}")
             continue
 
-        typer.secho(f"Archiving {len(files)} reports into {archive_path.name}...", fg=typer.colors.CYAN)
+        typer.secho(
+            f"Archiving {len(files)} reports into {archive_path.name}...", fg=typer.colors.CYAN
+        )
 
         try:
             # Open a single tarfile and add all old reports for this month
             mode = "w:gz"
-            with tarfile.open(archive_path, mode) as tar:
+            with tarfile.open(str(archive_path), mode) as tar:
                 for file_path in files:
-                    tar.add(file_path, arcname=file_path.name)
+                    tar.add(str(file_path), arcname=file_path.name)
 
             # 3. Clean up the source files after successful compression
             for file_path in files:
                 file_path.unlink()
 
-            typer.secho(f"Successfully archived {len(files)} files for {month_key}.", fg=typer.colors.GREEN)
+            typer.secho(
+                f"Successfully archived {len(files)} files for {month_key}.", fg=typer.colors.GREEN
+            )
 
         except Exception as e:
             log.error(f"Failed to create archive {archive_name}: {e}")
