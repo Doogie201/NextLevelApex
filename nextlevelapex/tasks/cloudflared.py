@@ -131,6 +131,10 @@ def setup_cloudflared(
             messages.append((Severity.ERROR, "brew install cloudflared failed"))
             return TaskResult("Cloudflared DoH", False, changed, messages)
 
+    # 1.5️⃣ Prevent brew service conflicts
+    messages.append((Severity.INFO, "Ensuring default Homebrew service is stopped"))
+    run_command(["brew", "services", "stop", "cloudflared"], dry_run=dry_run, check=False)
+
     # 2️⃣  Render & write LaunchAgent ----------------------------------------------
     if not TEMPLATE.exists():
         messages.append((Severity.ERROR, f"Template missing: {TEMPLATE}"))

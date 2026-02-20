@@ -1,7 +1,6 @@
 ---
 name: CI
-
-on:
+'on':
   push:
     branches: [main]
   pull_request:
@@ -53,7 +52,6 @@ jobs:
             --cov-report=xml:coverage.xml
             --cov-report=term
             --cov-report=html:htmlcov
-
 
       - name: Upload coverage reports to Codecov
         if: always() && matrix.python-version == '3.12'

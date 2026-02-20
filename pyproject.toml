@@ -46,6 +46,9 @@ rich        = "^14"
 jsonschema  = "^4.23.0"
 colorlog    = "^6.8.0"
 jinja2      = ">=3.1,<4"
+fastapi = "^0.129.0"
+uvicorn = "^0.41.0"
+pydantic = "^2.12.5"
 
 [tool.poetry.extras]
 cli = ["typer"]
@@ -158,102 +161,6 @@ mypy_path = ["."]
 module = "tests.*"
 disallow_untyped_defs = false
 warn_return_any = false
-
-# ───────────────────────────── Pytest + Coverage ───────────────────────────
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-xfail_strict = true
-filterwarnings = [
-  "ignore:open_text is deprecated:DeprecationWarning",
-]
-addopts = [
-  "-q",
-  "-n=auto",
-  "--maxfail=1",
-  "--cov=nextlevelapex.utils.sanitizer",
-  "--cov=nextlevelapex.core.registry",
-  "--cov=nextlevelapex.core.smartconfig",
-  "--cov=nextlevelapex.core.types",
-  "--cov=nextlevelapex.tasks.shared",
-  "--cov-report=term-missing:skip-covered",
-  "--cov-config=.coveragerc",
-  "--cov-fail-under=85",
-]
-[tool.coverage.run]
-source   = ["nextlevelapex"]
-branch   = true
-parallel = true
-omit = [
-  # Big integration surfaces you can re-enable as you add tests
-  "nextlevelapex/main2.py",
-  "nextlevelapex/core/report.py",
-  "nextlevelapex/core/diagnostics.py",
-  "nextlevelapex/core/command.py",
-  "nextlevelapex/core/state.py",
-  "nextlevelapex/core/config.py",
-  "nextlevelapex/tasks/brew.py",
-  "nextlevelapex/tasks/launch_agents.py",
-  "nextlevelapex/tasks/dns_stack.py",
-  "nextlevelapex/tasks/network.py",
-  "nextlevelapex/tasks/pihole.py",
-  "nextlevelapex/tasks/optional.py",
-  "nextlevelapex/tasks/system.py",
-  "nextlevelapex/tasks/ollama.py",
-  "nextlevelapex/tasks/cloudflared.py",
-  "nextlevelapex/tasks/dns_sanity.py"
-]
-
-[tool.coverage.report]
-fail_under   = 85
-skip_covered = false
-show_missing = true
-exclude_lines = [
-  "pragma: no cover",
-  "if TYPE_CHECKING:",
-  "if __name__ == \"__main__\":"
-]
-
-# ───────────────────────────── Poe the Poet (task runner) ──────────────────
-[tool.poe.tasks.fmt]
-sequence = [
-  { cmd = "ruff format ." },
-  { cmd = "black ." }
-]
-
-[tool.poe.tasks.lint]
-cmd = "ruff check . --fix"
-
-[tool.poe.tasks.type-install]
-cmd = "mypy --install-types --non-interactive"
-
-[tool.poe.tasks.type]
-cmd = "mypy"
-
-[tool.poe.tasks.test]
-cmd = "pytest"
-
-[tool.poe.tasks.testcov]
-cmd = "pytest --cov"
-
-[tool.poe.tasks.ci]
-sequence = [
-  { ref = "lint" },
-  { ref = "type" },
-  { ref = "test" }
-]
-
-# ───────────────────────────── Commitizen (conventional commits) ───────────
-[tool.commitizen]
-name = "cz_conventional_commits"
-version = "0.1.1"
-tag_format = "v$version"
-update_changelog_on_bump = true
-changelog_file = "CHANGELOG.md"
-version_files = ["pyproject.toml:version"]
-# ----------------------------- nlx typing overrides -----------------------------
-# nlx-mypy-overrides
-[[tool.mypy.overrides]]
-module = "tests.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
@@ -264,7 +171,6 @@ ignore_errors = true
 module = "nextlevelapex.main2"
 ignore_errors = true
 
-# Helpers that are not worth strict typing right now
 [[tool.mypy.overrides]]
 module = "nextlevelapex.core.config"
 disallow_untyped_defs = false
@@ -273,3 +179,5 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "nextlevelapex.utils.sanitizer"
 disallow_untyped_defs = false
+
+# ───────────────────────────── Pytest + Coverage ───────────────────────────

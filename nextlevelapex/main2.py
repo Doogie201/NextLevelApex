@@ -2,15 +2,18 @@
 # nextlevelapex/main.py
 
 import importlib
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable, Dict, List, Optional, Type, Union
 
 import typer
 
-# For reporting, to be implemented next
+from nextlevelapex.core.config import DEFAULT_CONFIG_PATH, generate_default_config, load_config
+from nextlevelapex.core.logger import LoggerProxy
+# Import core state and base_task utilities
 from nextlevelapex.core.report import generate_report
 
 # Import core state and base_task utilities
@@ -24,14 +27,11 @@ from nextlevelapex.core.state import (
     update_file_hashes,
     update_task_health,
 )
-from nextlevelapex.tasks.base_task import BaseTask, get_registered_tasks
+from nextlevelapex.tasks.base_task import BaseTask, RemediationAction, RemediationPlan
+from nextlevelapex.core.registry import get_task_registry
 
-# Generate report(s)
-html_path, md_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
-if html_path:
-    print(f"[REPORT] HTML report written: {html_path}")
-if md_path:
-    print(f"[REPORT] Markdown report written: {md_path}")
+# Type Alias for State definitions to improve readability
+StateDict = Dict[str, Any]
 
 APP_ROOT = Path(__file__).parent
 TASKS_DIR = APP_ROOT / "tasks"
@@ -41,7 +41,7 @@ REPORTS_DIR = APP_ROOT.parent / "reports"
 app = typer.Typer(help="NextLevelApex Orchestrator")
 
 
-def discover_tasks() -> dict[str, Callable]:
+def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
     """
     Dynamically import and register all tasks in tasks/ directory.
     Handles both BaseTask subclasses and function-based tasks.
@@ -71,34 +71,38 @@ def discover_tasks() -> dict[str, Callable]:
         if hasattr(module, "TASK_REGISTRY"):
             tasks.update(module.TASK_REGISTRY)
 
-    # Also add function tasks registered globally (from base_task.py registry)
-    tasks.update(get_registered_tasks())
+    # Also add function tasks registered globally (from core.registry)
+    tasks.update(get_task_registry())
     return tasks
 
 
-def discover_files_for_hashing() -> list[Path]:
+def discover_files_for_hashing() -> List[Path]:
     """
     Returns all config/manifest files to hash for drift detection.
+    Dynamically resolved from APP_ROOT to avoid hardcoded paths.
     """
+    docker_dir = APP_ROOT.parent / "docker"
+    unbound_dir = docker_dir / "unbound"
     files = [
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/orchestrate.sh"),
-        Path(
-            "/Users/marcussmith/Projects/NextLevelApex/docker/unbound/dockerfiles/cloudflared-dig.Dockerfile"
-        ),
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/unbound/state/root.hints"),
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/unbound/state/root.key"),
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/unbound/state/unbound.conf"),
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/unbound/docker-compose.yml"),
-        Path("/Users/marcussmith/Projects/NextLevelApex/docker/unbound/Dockerfile"),
+        docker_dir / "orchestrate.sh",
+        unbound_dir / "dockerfiles" / "cloudflared-dig.Dockerfile",
+        unbound_dir / "state" / "root.hints",
+        unbound_dir / "state" / "root.key",
+        unbound_dir / "state" / "unbound.conf",
+        unbound_dir / "docker-compose.yml",
+        unbound_dir / "Dockerfile",
         # Add other config/manifest files as desired
     ]
+    # Filter only existing files to avoid errors
+    existing_files = [f for f in files if f.exists()]
+
     # Optionally, include all .py files in tasks/core
-    files += list((APP_ROOT / "core").glob("*.py"))
-    files += list((APP_ROOT / "tasks").glob("*.py"))
-    return files
+    existing_files += list((APP_ROOT / "core").glob("*.py"))
+    existing_files += list((APP_ROOT / "tasks").glob("*.py"))
+    return existing_files
 
 
-def ensure_task_state(state: dict[str, Any], task_names: list[str]) -> None:
+def ensure_task_state(state: StateDict, task_names: List[str]) -> None:
     """
     Ensures all discovered tasks are present in state (task_status, health_history, etc.)
     """
@@ -117,7 +121,7 @@ def ensure_task_state(state: dict[str, Any], task_names: list[str]) -> None:
             del state["health_history"][old]
 
 
-def run_task(task_name: str, task_callable, context: dict[str, Any]) -> dict[str, Any]:
+def run_task(task_name: str, task_callable: Union[Type[BaseTask], Callable], context: StateDict) -> StateDict:
     """
     Runs a discovered task, class or function-based.
     Returns standardized result dict.
@@ -125,22 +129,100 @@ def run_task(task_name: str, task_callable, context: dict[str, Any]) -> dict[str
     if isinstance(task_callable, type) and issubclass(task_callable, BaseTask):
         result = task_callable().run(context)
     elif callable(task_callable):
-        result = task_callable(context)
+        raw_result = task_callable(context)
+        if hasattr(raw_result, "success"):
+            status = "PASS" if raw_result.success else "FAIL"
+            msgs = getattr(raw_result, "messages", [])
+
+            # Format messages if it's a list of tuples like (Severity, str)
+            if msgs and isinstance(msgs, list) and isinstance(msgs[0], tuple):
+                details = "\n".join(f"[{m[0].name}] {m[1]}" if hasattr(m[0], 'name') else str(m) for m in msgs)
+            else:
+                details = str(msgs) if msgs else "No details"
+
+            result = {"status": status, "details": details}
+
+            # Carry over arbitrary attributes like remediation_plan if they somehow exist on the tuple
+            if hasattr(raw_result, "remediation_plan"):
+                result["remediation_plan"] = raw_result.remediation_plan
+        else:
+            result = raw_result
     else:
         raise RuntimeError(f"Cannot run task: {task_name}")
     return result
 
 
-@app.command()
+def execute_remediation(action: RemediationAction, dry_run: bool = False) -> bool:
+    """
+    Executes a specific remediation action safely.
+    Returns True if successful, False otherwise.
+    """
+    action_type = action.get("action_type")
+    payload = action.get("payload")
+    req_elevated = action.get("requires_elevated", False)
+
+    if action_type == "shell_cmd":
+        cmd = payload
+        if req_elevated:
+            cmd = f"sudo {cmd}"
+
+        if dry_run:
+            typer.secho(f"    DRY RUN: Would execute `{cmd}`", fg=typer.colors.YELLOW)
+            return True
+
+        try:
+            # Execute with a 30 second timeout to prevent hanging the orchestrator
+            result = subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True, timeout=30)
+            if result.stdout:
+                typer.echo(f"      STDOUT: {result.stdout.strip()}")
+            return True
+        except subprocess.TimeoutExpired:
+            typer.secho("    ACTION TIMED OUT AFTER 30s.", fg=typer.colors.RED)
+            return False
+        except subprocess.CalledProcessError as e:
+            typer.secho(f"    ACTION FAILED (Exit {e.returncode}). STDERR: {e.stderr.strip()}", fg=typer.colors.RED)
+            return False
+
+    elif action_type == "restart_service":
+        cmd = f"sudo systemctl restart {payload}" if sys.platform != "darwin" else f"brew services restart {payload}"
+        if dry_run:
+            typer.secho(f"    DRY RUN: Would restart service `{payload}`", fg=typer.colors.YELLOW)
+            return True
+
+        try:
+            subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True, timeout=15)
+            typer.echo(f"      Restarted service: {payload}")
+            return True
+        except subprocess.CalledProcessError:
+            typer.secho(f"    FAILED TO RESTART SERVICE: {payload}", fg=typer.colors.RED)
+            return False
+
+    elif action_type == "manual":
+        typer.secho(f"    MANUAL INTERVENTION REQUIRED: {payload}", fg=typer.colors.MAGENTA)
+        return False
+
+    else:
+        typer.secho(f"    Unknown action type passed: {action_type}", fg=typer.colors.RED)
+        return False
+
+
+
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     mode: str = typer.Option("run", help="run|test|stress|security"),
     html_report: bool = typer.Option(True, help="Generate HTML report"),
     markdown_report: bool = typer.Option(True, help="Generate Markdown report"),
     dry_run: bool = typer.Option(False, help="Dry run only, no changes made."),
 ):
-    # 1. Load state
+    # Skip main execution if a sub-command (like diagnose or list-tasks) is called
+    if ctx.invoked_subcommand:
+        return
+
+    # 1. Load state and config
     state = load_state(STATE_PATH)
-    now = datetime.utcnow().isoformat()
+    config = load_config()
+    now = datetime.now().isoformat()
 
     # 2. Discover tasks
     discovered_tasks = discover_tasks()
@@ -168,12 +250,18 @@ def main(
             "mode": mode,
             "dry_run": dry_run,
             "state": state,
+            "config": config,
             "now": now,
         }
         try:
             result = run_task(name, task_callable, context)
             status = result.get("status", "UNKNOWN")
-            update_task_health(name, status, result.get("details"), state)
+
+            # Ensure details is a dict before passing to update_task_health
+            details_raw = result.get("details")
+            details_dict = {"message": str(details_raw)} if details_raw is not None else None
+
+            update_task_health(name, status, details_dict, state)
             if status == "PASS":
                 mark_section_complete(name, state)
                 print("    [PASS]")
@@ -189,11 +277,11 @@ def main(
     save_state(state, STATE_PATH, dry_run=dry_run)
 
     # 6. Generate report(s)
-    # html_path, md_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
-    # if html_path:
-    #     print(f"[REPORT] HTML report written: {html_path}")
-    # if md_path:
-    #     print(f"[REPORT] Markdown report written: {md_path}")
+    h_path, m_path = generate_report(state, REPORTS_DIR, as_html=html_report, as_md=markdown_report)
+    if h_path:
+        print(f"[REPORT] HTML report written: {h_path}")
+    if m_path:
+        print(f"[REPORT] Markdown report written: {m_path}")
 
     print("\n[Done] State updated.")
     print("Current health summary:")
@@ -219,8 +307,10 @@ def diagnose(
     context = {
         "mode": "diagnose",
         "state": state,
+        "config": load_config(),
         "now": datetime.utcnow().isoformat(),
         "autofix": autofix,
+        "dry_run": False,
     }
     result = None
     try:
@@ -382,37 +472,85 @@ def show_history(
 
 
 @app.command("auto-fix")
-def auto_fix():
+def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not execute them.")):
     """
-    Attempt to fix failed tasks automatically if recommendations exist.
+    Advanced Meta-Level Healing Protocol.
+    Iterates through failing tasks and actively executes their RemediationPlans.
     """
     state = load_state(STATE_PATH)
     discovered = discover_tasks()
-    fixes = []
-    for t in state.get("failed_sections", []):
+    fixes_applied = 0
+    failures_remaining = 0
+
+    failed_tasks = [t for t, info in state.get("task_status", {}).items() if info.get("status") == "FAIL"]
+
+    if not failed_tasks:
+        typer.secho("All tasks healthy. No remediation needed.", fg=typer.colors.GREEN)
+        return
+
+    for t in failed_tasks:
         task_callable = discovered.get(t)
         if not task_callable:
             continue
-        typer.secho(f"Auto-fixing: {t}", fg=typer.colors.YELLOW, bold=True)
+
+        typer.secho(f"Attempting Healing Protocol for Node: {t}", fg=typer.colors.CYAN, bold=True)
         context = {
-            "mode": "autofix",
+            "mode": "diagnose",
             "state": state,
-            "now": datetime.utcnow().isoformat(),
+            "now": datetime.now().isoformat(),
             "autofix": True,
         }
+
         try:
             result = run_task(t, task_callable, context)
-            rec = result.get("recommendation")
-            if rec:
-                typer.secho(f"  Recommendation: {rec}", fg=typer.colors.GREEN)
-                # Optionally, implement shell execution here if safe/approved!
-                fixes.append((t, rec))
+            plan: Optional[RemediationPlan] = result.get("remediation_plan")
+
+            if not plan:
+                legacy_rec = result.get("recommendation")
+                if legacy_rec:
+                    typer.secho(f"  Legacy Recommendation exists but cannot auto-execute: {legacy_rec}", fg=typer.colors.YELLOW)
+                else:
+                    typer.secho(f"  No remediation plan available for {t}.", fg=typer.colors.RED)
+                failures_remaining += 1
+                continue
+
+            typer.secho(f"  Plan: {plan.get('description', 'Unnamed Execution Block')}", fg=typer.colors.BLUE)
+
+            actions_successful = True
+            for i, action in enumerate(plan.get("actions", [])):
+                typer.secho(f"  [Action {i+1}] Executing {action['action_type']}...", fg=typer.colors.BLUE)
+                if not execute_remediation(action, dry_run):
+                    actions_successful = False
+                    break # Stop executing further actions in this plan if one fails
+
+            if actions_successful and not dry_run:
+                # Post-flight check: Rerun the task context lightly to verify fix
+                typer.secho("  Post-flight validation...", fg=typer.colors.BLUE)
+                post_context = {"mode": "run", "dry_run": False, "state": state, "now": datetime.now().isoformat()}
+                post_result = run_task(t, task_callable, post_context)
+
+                if post_result.get("status") == "PASS":
+                    typer.secho(f"  {t} SUCCESSFULLY HEALED.", fg=typer.colors.GREEN, bold=True)
+                    state["task_status"][t]["status"] = "PASS"
+                    fixes_applied += 1
+                else:
+                    typer.secho(f"  Remediation failed to clear the fault in {t}.", fg=typer.colors.RED)
+                    failures_remaining += 1
+            elif actions_successful and dry_run:
+                typer.secho(f"  Dry-run of plan complete for {t}.", fg=typer.colors.GREEN)
             else:
-                typer.secho(f"  No autofix available for {t}.", fg=typer.colors.RED)
+                failures_remaining += 1
+
         except Exception as e:
-            typer.secho(f"  Error while fixing {t}: {e}", fg=typer.colors.RED)
-    if not fixes:
-        typer.secho("No auto-fixes performed.", fg=typer.colors.BLUE)
+            typer.secho(f"  Critical error during healing of {t}: {e}", fg=typer.colors.RED)
+            failures_remaining += 1
+
+    # Save state if we fixed anything
+    if fixes_applied > 0 and not dry_run:
+        save_state(state, STATE_PATH)
+        typer.secho(f"\nHealing cycle complete. {fixes_applied} nodes restored.", fg=typer.colors.GREEN, bold=True)
+    elif failures_remaining > 0:
+        typer.secho(f"\nHealing cycle incomplete. {failures_remaining} nodes require manual intervention.", fg=typer.colors.RED, bold=True)
 
 
 @app.command("export-state")
@@ -468,7 +606,7 @@ def generate_config_command(
         raise typer.Exit(code=1)
 
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    ok = config_loader.generate_default_config(cfg_path)
+    ok = generate_default_config(cfg_path)
     if ok:
         typer.echo(f"Default config written to {cfg_path}")
     else:
@@ -477,5 +615,4 @@ def generate_config_command(
 
 
 if __name__ == "__main__":
-    app.command()(main)
     app()

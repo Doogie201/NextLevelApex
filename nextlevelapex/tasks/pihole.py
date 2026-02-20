@@ -107,19 +107,21 @@ def setup_pihole(context: TaskContext) -> TaskResult:
             sev is Severity.INFO and "started" in msg.lower() for sev, msg in colima_msgs
         )
 
-    # 2️⃣  Discover the VM gateway IP (host-side)
-    vm_ip = _docker_bridge_gateway(dry_run)
-    if not vm_ip:
-        messages.append((Severity.ERROR, "Could not determine Colima VM IP"))
-        return TaskResult("Pi-hole DNS Sinkhole", False, changed, messages)
+    # 2️⃣  Discover the Colima VM IP (usually 192.168.64.2)
+    colima_ip = None
+    if not dry_run:
+        out = run_command(["colima", "status", "--json"], capture=True, check=False)
+        if out.success and out.stdout:
+            try:
+                colima_info = json.loads(out.stdout)
+                colima_ip = colima_info.get("ip_address")
+            except Exception:
+                pass
+    if not colima_ip:
+        colima_ip = "192.168.64.2"  # fallback default for vz
 
-    host_ip = _host_ip_from_colima(dry_run)
-    if not host_ip:
-        messages.append((Severity.ERROR, "Could not determine host IP from Colima VM"))
-        return TaskResult("Pi-hole DNS Sinkhole", False, changed, messages)
-
-    # Local address on macOS where Pi‑hole will listen
-    local_dns_ip = "127.0.0.1"
+    # local_dns_ip is the interface on the Mac that hits the container proxy reliably
+    local_dns_ip = colima_ip
 
     # 3️⃣  Prepare passwords / env
     pihole_cfg = net_cfg["pihole"]
@@ -149,14 +151,14 @@ def setup_pihole(context: TaskContext) -> TaskResult:
         "-d",
         "--name",
         PIHOLE_CONTAINER,
-        # ⬇️ 1. bind DNS ports to localhost for DNS (TCP + UDP)
+        # ⬇️ 1. bind DNS ports to vm for DNS (TCP + UDP)
         "-p",
         "53:53/tcp",
         "-p",
         "53:53/udp",
-        # ⬇️ 2. expose Pi‑hole WebUI on http://127.0.0.1:8080
+        # ⬇️ 2. expose Pi‑hole WebUI on vm 8080
         "-p",
-        "127.0.0.1:8080:80",
+        "8080:80",
         "--restart",
         "unless-stopped",
         "-v",
@@ -168,12 +170,12 @@ def setup_pihole(context: TaskContext) -> TaskResult:
         "-e",
         f"WEBPASSWORD={web_pass}",
         "-e",
-        "DNSMASQ_LISTENING=all",
+        "FTLCONF_dns_listeningMode=ALL",
         # ⬇️ 3. correct upstream DNS – point to host-side DoH proxy
         "-e",
-        "DNS1=1.1.1.1",
+        "DNS1=host.docker.internal#5053",
         "-e",
-        "DNS2=1.0.0.1",
+        "DNS2=no",
         "pihole/pihole:latest",
     ]
     res = run_command(docker_cmd, dry_run=dry_run, check=False)

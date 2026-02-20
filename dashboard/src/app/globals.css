@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+@theme {
+  --color-run: #388bfd;
+  --color-test: #3fb950;
+  --color-stress: #d29922;
+  --color-security: #f85149;
+}
+
+:root {
+  --background: #06090f;
+  --foreground: #c9d1d9;
+
+  /* Glass and Surface */
+  --surface-base: rgba(13, 17, 23, 0.7);
+  --surface-hover: rgba(22, 27, 34, 0.8);
+  --surface-border: rgba(48, 54, 61, 0.5);
+  --surface-blur: blur(24px);
+
+  /* Status Colors */
+  --status-pass: #3fb950;
+  --status-fail: #f85149;
+  --status-pending: #d29922;
+
+  /* Dynamic Theme Default (Run Mode) */
+  --theme-main: var(--color-run);
+  --theme-glow: rgba(56, 139, 253, 0.15);
+  --theme-badge: rgba(56, 139, 253, 0.1);
+  --theme-gradient: radial-gradient(circle at 50% 0%, rgba(56, 139, 253, 0.15), transparent 50%);
+}
+
+/* Modifiers based on active mode applied to a container */
+[data-theme="test"] {
+  --theme-main: var(--color-test);
+  --theme-glow: rgba(63, 185, 80, 0.15);
+  --theme-badge: rgba(63, 185, 80, 0.1);
+  --theme-gradient: radial-gradient(circle at 50% 0%, rgba(63, 185, 80, 0.15), transparent 50%);
+}
+
+[data-theme="stress"] {
+  --theme-main: var(--color-stress);
+  --theme-glow: rgba(210, 153, 34, 0.15);
+  --theme-badge: rgba(210, 153, 34, 0.1);
+  --theme-gradient: radial-gradient(circle at 50% 0%, rgba(210, 153, 34, 0.15), transparent 50%);
+}
+
+[data-theme="security"] {
+  --theme-main: var(--color-security);
+  --theme-glow: rgba(248, 81, 73, 0.15);
+  --theme-badge: rgba(248, 81, 73, 0.1);
+  --theme-gradient: radial-gradient(circle at 50% 0%, rgba(248, 81, 73, 0.15), transparent 50%);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    sans-serif;
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+  transition: background-color 0.5s ease;
+}
+
+/* Dynamic animated background glow */
+.bg-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 80vh;
+  background: var(--theme-gradient);
+  pointer-events: none;
+  z-index: -1;
+  transition: background 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Base Glass Component */
+.glass {
+  background: var(--surface-base);
+  backdrop-filter: var(--surface-blur);
+  -webkit-backdrop-filter: var(--surface-blur);
+  border: 1px solid var(--surface-border);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.glass-card {
+  @extend .glass;
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  opacity: 0.5;
+}
+
+.glass-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px var(--theme-glow);
+  transform: translateY(-2px);
+}
+
+/* Thematic Buttons */
+.btn-theme {
+  background: var(--theme-glow);
+  color: var(--theme-main);
+  border: 1px solid var(--theme-main);
+  box-shadow: 0 0 15px var(--theme-glow);
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  text-transform: uppercase;
+}
+
+.btn-theme:hover:not(:disabled) {
+  background: var(--theme-main);
+  color: #fff;
+  box-shadow: 0 0 25px var(--theme-glow);
+  transform: scale(1.02);
+}
+
+.btn-theme:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+/* Status Badges */
+.badge-status {
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  backdrop-filter: blur(4px);
+}
+
+.badge-PASS {
+  background-color: rgba(63, 185, 80, 0.1);
+  color: var(--status-pass);
+  border: 1px solid rgba(63, 185, 80, 0.2);
+}
+
+.badge-FAIL {
+  background-color: rgba(248, 81, 73, 0.1);
+  color: var(--status-fail);
+  border: 1px solid rgba(248, 81, 73, 0.2);
+}
+
+.badge-PENDING {
+  background-color: rgba(210, 153, 34, 0.1);
+  color: var(--status-pending);
+  border: 1px solid rgba(210, 153, 34, 0.2);
+}
+
+/* Terminal Styling */
+.terminal-window {
+  background: #010409;
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.terminal-line {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0;
+  opacity: 0.9;
+}
+
+.terminal-prompt {
+  color: var(--theme-main);
+  user-select: none;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 148, 158, 0.5);
+}

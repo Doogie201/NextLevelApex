@@ -235,14 +235,7 @@
           "type": "object",
           "description": "Optional application setups.",
            "properties": {
-               "_comment": {"type": "string"},
-               "nordvpn": {
-                   "type": "object",
-                   "properties": {
-                       "launch_on_setup": {"type": "boolean", "default": true}
-                   },
-                   "additionalProperties": false
-               }
+               "_comment": {"type": "string"}
            },
             "additionalProperties": false
        }
