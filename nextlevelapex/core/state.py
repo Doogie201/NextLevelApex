@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import BaseModel, Field, ValidationError
+
 STATE_SCHEMA_VERSION = "2.0"
 
 DEFAULT_STATE: dict[str, Any] = {
@@ -23,6 +25,33 @@ DEFAULT_STATE: dict[str, Any] = {
 STATE_HISTORY_DEPTH = 10  # How many historic health results to store
 
 
+class TaskStatus(BaseModel):
+    status: str
+    last_update: str | None = None
+    last_healthy: str | None = None
+
+
+class HealthEntry(BaseModel):
+    timestamp: str
+    status: str
+    message: str | None = None
+    error: str | None = None
+    explanation: str | None = None
+    model_config = {"extra": "allow"}
+
+
+class StateSchema(BaseModel):
+    version: str = STATE_SCHEMA_VERSION
+    last_run_status: str = "UNKNOWN"
+    completed_sections: list[str] = Field(default_factory=list)
+    failed_sections: list[str] = Field(default_factory=list)
+    task_status: dict[str, TaskStatus] = Field(default_factory=dict)
+    file_hashes: dict[str, str] = Field(default_factory=dict)
+    health_history: dict[str, list[HealthEntry]] = Field(default_factory=dict)
+    service_versions: dict[str, str] = Field(default_factory=dict)
+    last_report_path: str | None = None
+
+
 def _safe_json_load(path: Path) -> dict[str, Any]:
     try:
         with path.open("r") as f:
@@ -35,20 +64,18 @@ def load_state(path: Path) -> dict[str, Any]:
     if not path.exists():
         return DEFAULT_STATE.copy()
     data = _safe_json_load(path)
-    # Patch in missing keys (schema upgrade safe)
     merged = DEFAULT_STATE.copy()
     merged.update(data)
-    if "health_history" not in merged:
-        merged["health_history"] = {}
-    if "task_status" not in merged:
-        merged["task_status"] = {}
-    if "file_hashes" not in merged:
-        merged["file_hashes"] = {}
-    if "service_versions" not in merged:
-        merged["service_versions"] = {}
-    if "failed_sections" not in merged:
-        merged["failed_sections"] = []
-    return merged
+
+    try:
+        # Strict validation against schema to prevent payload injection
+        validated = StateSchema.model_validate(merged)
+        return validated.model_dump()
+    except ValidationError as e:
+        logging.warning(
+            f"State file failed validation (potential poisoning). Resetting. Error: {e}"
+        )
+        return DEFAULT_STATE.copy()
 
 
 def save_state(data: dict[str, Any], path: Path, dry_run: bool = False) -> bool:
@@ -57,8 +84,17 @@ def save_state(data: dict[str, Any], path: Path, dry_run: bool = False) -> bool:
         if dry_run:
             print("[DRYRUN] Would write state:", json.dumps(data, indent=2))
             return True
-        with path.open("w") as f:
+
+        import os
+
+        # Safely create or truncate the file with strict permissions (0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        mode = 0o600
+        with open(os.open(path, flags, mode), "w") as f:
             json.dump(data, f, indent=2)
+
+        # Guarantee permissions in case the file already existed with wider permissions
+        path.chmod(0o600)
         return True
     except Exception as e:
         logging.exception(f"Failed to write state: {e}")
