@@ -42,23 +42,41 @@ REPORTS_DIR = APP_ROOT.parent / "reports"
 app = typer.Typer(help="NextLevelApex Orchestrator")
 
 
+# Explicit registry of allowed task modules to prevent arbitrary code execution (CWE-94)
+ALLOWED_MODULES = [
+    "brew",
+    "cloudflared",
+    "dev_tools",
+    "dns_helpers",
+    "dns_sanity",
+    "dns_stack",
+    "dummy_healing_task",
+    "launch_agents",
+    "mise",
+    "network",
+    "ollama",
+    "optional",
+    "pihole",
+    "security",
+    "system",
+]
+
+
 def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
     """
-    Dynamically import and register all tasks in tasks/ directory.
+    Dynamically import and register explicitly allowed tasks in tasks/ directory.
     Handles both BaseTask subclasses and function-based tasks.
     Returns dict: { task_name: callable }
     """
     tasks = {}
     sys.path.insert(0, str(TASKS_DIR.parent))  # Ensure import path
 
-    for file in TASKS_DIR.glob("*.py"):
-        if file.name.startswith("__"):
-            continue
-        module_name = f"nextlevelapex.tasks.{file.stem}"
+    for module_name in ALLOWED_MODULES:
+        full_module_name = f"nextlevelapex.tasks.{module_name}"
         try:
-            module = importlib.import_module(module_name)
+            module = importlib.import_module(full_module_name)
         except Exception as e:
-            print(f"[ERROR] Could not import {module_name}: {e}")
+            print(f"[ERROR] Could not import {full_module_name}: {e}")
             continue
 
         # Find all BaseTask subclasses
