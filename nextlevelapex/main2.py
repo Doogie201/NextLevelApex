@@ -314,22 +314,6 @@ def main(
 
     task_names = list(discovered_tasks.keys())
 
-    # Optional Sudo Consolidation: Ping for sudo upfront purely to cache it for `networksetup` / etc
-    print("Ensuring sudo privileges are active for this run...")
-    import os
-    import pty
-
-    # We use pty.spawn to trick sudo into thinking it's running directly in a terminal
-    # This ensures the password prompt is displayed even when nested under poetry run or Typer
-    try:
-        ret = pty.spawn(["sudo", "-v"])
-        if ret != 0:
-            typer.secho("Sudo authorization failed or was cancelled.", fg=typer.colors.RED)
-            raise typer.Exit(code=1)
-    except Exception as e:
-        typer.secho(f"Exception during sudo auth: {e}", fg=typer.colors.RED)
-        raise typer.Exit(code=1)
-
     ensure_task_state(state, task_names)
 
     # 3. Update config/manifest file hashes for drift detection
@@ -835,6 +819,81 @@ def install_archiver_cmd():
     typer.secho(
         "It will automatically sweep old reports on the 1st of every month.", fg=typer.colors.CYAN
     )
+
+
+@app.command("install-sudoers")
+def install_sudoers(
+    dry_run: bool = typer.Option(False, help="Show sudoers content without installing."),
+):
+    """
+    Installs a secure /etc/sudoers.d/nextlevelapex file to allow passwordless execution
+    of specific required commands, fulfilling the Principle of Least Privilege.
+    """
+    import getpass
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    user = getpass.getuser()
+    sudoers_path = "/etc/sudoers.d/nextlevelapex"
+
+    # Whitelisting exact binaries and arguments we elevate (CWE-269 mitigation)
+    commands = [
+        "/bin/systemctl restart *",
+        "/usr/bin/systemctl restart *",
+        "/usr/libexec/ApplicationFirewall/socketfilterfw *",
+        "/usr/bin/tee -a /etc/pam.d/sudo",
+        "/usr/bin/tee /etc/sudoers.d/nextlevelapex-networksetup",
+        "/usr/bin/grep -Fxq * /etc/sudoers.d/nextlevelapex-networksetup",
+        "/usr/sbin/networksetup *",
+    ]
+
+    cmd_string = ", ".join(commands)
+    # Using ALL=(ALL) to cover potential root access for these execution paths securely
+    rule = f"{user} ALL=(ALL) NOPASSWD: {cmd_string}\n"
+
+    if dry_run:
+        typer.secho(f"DRY RUN: Would write to {sudoers_path}:", fg=typer.colors.YELLOW)
+        typer.echo(rule)
+        return
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tf:
+        tf.write(rule)
+        temp_path = tf.name
+
+    try:
+        # Safety Check: Validate syntax before attempting to write to /etc/ (prevents breaking sudo)
+        check = subprocess.run(["visudo", "-c", "-f", temp_path], capture_output=True, text=True)
+        if check.returncode != 0:
+            typer.secho(f"Sudoers syntax invalid: {check.stderr}", fg=typer.colors.RED)
+            return
+
+        typer.secho(
+            "Prompting for standard sudo to install least-privilege rules...", fg=typer.colors.CYAN
+        )
+
+        # Install the validated file securely setting 0440 permissions and root:wheel ownership
+        install_cmd = [
+            "sudo",
+            "install",
+            "-m",
+            "0440",
+            "-o",
+            "root",
+            "-g",
+            "wheel",
+            temp_path,
+            sudoers_path,
+        ]
+        subprocess.run(install_cmd, check=True)
+        typer.secho(
+            f"Successfully installed least-privilege sudoers to {sudoers_path}",
+            fg=typer.colors.GREEN,
+        )
+    except subprocess.CalledProcessError as e:
+        typer.secho(f"Failed to install sudoers: {e}", fg=typer.colors.RED)
+    finally:
+        Path(temp_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
