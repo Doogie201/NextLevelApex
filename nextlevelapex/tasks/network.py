@@ -1,8 +1,6 @@
 # ~/Projects/NextLevelApex/nextlevelapex/tasks/network.py
 
 import json
-import os
-import shlex
 import socket
 
 from nextlevelapex.core.command import run_command
@@ -56,14 +54,6 @@ def setup_networking_tasks(context: TaskContext) -> TaskResult:
                     f"Could not determine host IP from Colima or socket: {e}",
                 )
             )
-
-    if not _ensure_passwordless_networksetup(dry_run):
-        messages.append(
-            (
-                Severity.WARNING,
-                "Could not configure passwordless sudo for networksetup.",
-            )
-        )
 
     return TaskResult("Advanced Networking", success, changed, messages)
 
@@ -128,20 +118,4 @@ def _get_host_ip_from_colima(dry_run: bool = False) -> str | None:
         return "192.168.5.1" if not dry_run else "DRYRUN_HOST_IP"
     return None
 
-
-def _ensure_passwordless_networksetup(dry_run: bool = False) -> bool:
-    sudo_file = "/etc/sudoers.d/nextlevelapex-networksetup"
-    user = os.environ.get("USER", "user")
-    rule = f"{user} ALL=(root) NOPASSWD: /usr/sbin/networksetup -setdnsservers *"
-
-    check = run_command(["sudo", "grep", "-Fxq", rule, sudo_file], check=False, capture=True)
-    if check.returncode == 0:
-        return True
-
-    if dry_run:
-        log.info(f"DRYRUN: Would write rule to {sudo_file}")
-        return True
-
-    write_cmd = f'echo "{rule}" | sudo tee {shlex.quote(sudo_file)} > /dev/null'
-    result = run_command(["bash", "-c", write_cmd], check=False)
-    return result.success
+    return None

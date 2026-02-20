@@ -185,11 +185,25 @@ def execute_remediation(action: RemediationAction, dry_run: bool = False) -> boo
     req_elevated = action.get("requires_elevated", False)
 
     if action_type == "shell_cmd":
-        import shlex
+        # Mitigate CWE-94 arbitrary code execution from state.json poisoning
+        # We strictly map payloads to defined argument vectors to ensure no arbitrary commands can run.
+        ALLOWED_SHELL_CMDS = {
+            "touch /tmp/nextlevelapex_dummy_heal.txt": [
+                "touch",
+                "/tmp/nextlevelapex_dummy_heal.txt",
+            ],
+        }
 
-        cmd_list = shlex.split(payload)
+        if payload not in ALLOWED_SHELL_CMDS:
+            typer.secho(
+                f"    SECURITY ERROR: Disallowed shell_cmd payload intercepted: {payload}",
+                fg=typer.colors.RED,
+            )
+            return False
+
+        cmd_list = ALLOWED_SHELL_CMDS[payload]
         if req_elevated:
-            cmd_list.insert(0, "sudo")
+            cmd_list = ["sudo"] + cmd_list
 
         cmd_str = " ".join(cmd_list)
         if dry_run:
@@ -837,19 +851,25 @@ def install_sudoers(
     user = getpass.getuser()
     sudoers_path = "/etc/sudoers.d/nextlevelapex"
 
-    # Whitelisting exact binaries and arguments we elevate (CWE-269 mitigation)
+    # Using ALL=(ALL) to comprehensively map root execution paths securely without wildcards
+
+    # 1. Detect dynamic active interface to prevent networksetup * wildcard abuse
+    try:
+        active_iface_cmd = (
+            "networksetup -listallnetworkservices | awk '{if(NR>1 && $0!~/^\\*/) print $0; exit}'"
+        )
+        active_iface = subprocess.check_output(active_iface_cmd, shell=True).decode().strip()
+    except Exception:
+        active_iface = "Wi-Fi"
+
+    # Whitelisting EXACT binaries and arguments we elevate (CWE-269 mitigation)
     commands = [
-        "/bin/systemctl restart *",
-        "/usr/bin/systemctl restart *",
-        "/usr/libexec/ApplicationFirewall/socketfilterfw *",
-        "/usr/bin/tee -a /etc/pam.d/sudo",
-        "/usr/bin/tee /etc/sudoers.d/nextlevelapex-networksetup",
-        "/usr/bin/grep -Fxq * /etc/sudoers.d/nextlevelapex-networksetup",
-        "/usr/sbin/networksetup *",
+        "/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on",
+        f"/usr/sbin/networksetup -setdnsservers {active_iface} 127.0.0.1",
+        f"/usr/sbin/networksetup -setdnsservers {active_iface} Empty",
     ]
 
     cmd_string = ", ".join(commands)
-    # Using ALL=(ALL) to cover potential root access for these execution paths securely
     rule = f"{user} ALL=(ALL) NOPASSWD: {cmd_string}\n"
 
     if dry_run:
@@ -862,7 +882,7 @@ def install_sudoers(
         temp_path = tf.name
 
     try:
-        # Safety Check: Validate syntax before attempting to write to /etc/ (prevents breaking sudo)
+        # 2. Safety Check: Validate syntax before attempting to write to /etc/ (prevents breaking sudo)
         check = subprocess.run(["visudo", "-c", "-f", temp_path], capture_output=True, text=True)
         if check.returncode != 0:
             typer.secho(f"Sudoers syntax invalid: {check.stderr}", fg=typer.colors.RED)
@@ -872,7 +892,28 @@ def install_sudoers(
             "Prompting for standard sudo to install least-privilege rules...", fg=typer.colors.CYAN
         )
 
-        # Install the validated file securely setting 0440 permissions and root:wheel ownership
+        # 3. Check macOS sudoers.d compatibility (often missing by default)
+        include_check = subprocess.run(
+            [
+                "sudo",
+                "grep",
+                "-E",
+                "^#includedir /private/etc/sudoers.d|^#includedir /etc/sudoers.d",
+                "/etc/sudoers",
+            ],
+            capture_output=True,
+        )
+        if include_check.returncode != 0:
+            typer.secho(
+                "Adding '#includedir /private/etc/sudoers.d' to /etc/sudoers to enable sudoers.d support...",
+                fg=typer.colors.YELLOW,
+            )
+            subprocess.run(
+                ["sudo", "bash", "-c", "echo '#includedir /private/etc/sudoers.d' >> /etc/sudoers"],
+                check=True,
+            )
+
+        # 4. Install the validated file securely setting 0440 permissions and root:wheel ownership
         install_cmd = [
             "sudo",
             "install",
