@@ -26,7 +26,7 @@ def setup_networking_tasks(context: TaskContext) -> TaskResult:
         messages.append((Severity.INFO, "Networking disabled in config."))
         return TaskResult("Advanced Networking", True, False, messages)
 
-    doh_method = networking_cfg.get("doh_method", "pihole_builtin")
+    networking_cfg.get("doh_method", "pihole_builtin")
     active_iface = _get_active_network_service_name()
     if not active_iface:
         messages.append((Severity.ERROR, "Could not determine active network interface."))
