@@ -330,21 +330,6 @@ def main(
         typer.secho(f"Exception during sudo auth: {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
-    # Fork a daemon thread to keep sudo alive every 60s
-    import threading
-    import time
-
-    def keep_sudo_alive():
-        while True:
-            time.sleep(60)
-            subprocess.run(["sudo", "-n", "-v"], check=False, capture_output=True)
-
-    try:
-        t = threading.Thread(target=keep_sudo_alive, daemon=True)
-        t.start()
-    except Exception:
-        pass  # Ignore threading failures gracefully
-
     ensure_task_state(state, task_names)
 
     # 3. Update config/manifest file hashes for drift detection
