@@ -10,6 +10,7 @@ import {
   Copy,
   Download,
   Keyboard,
+  Link2,
   ListChecks,
   Loader2,
   Play,
@@ -32,6 +33,7 @@ import {
   REDUCED_MOTION_STORAGE_KEY,
   resolveReducedMotionEffective,
 } from "@/engine/reducedMotion";
+import { parseUrlState, toUrlSearch, type UrlSeverityFilter, type UrlViewId } from "@/engine/urlState";
 import {
   classifyCommandOutcome,
   formatCommandLabel,
@@ -48,8 +50,8 @@ import {
   type TaskResult,
 } from "@/engine/viewModel";
 
-type ViewId = "dashboard" | "tasks" | "output";
-type SeverityFilter = "ALL" | CommandOutcome;
+type ViewId = UrlViewId;
+type SeverityFilter = UrlSeverityFilter;
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -165,6 +167,7 @@ export default function Home() {
   const [highContrast, setHighContrast] = useState(false);
   const [reduceMotionOverride, setReduceMotionOverride] = useState<boolean | null>(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [isUrlStateReady, setIsUrlStateReady] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -218,10 +221,12 @@ export default function Home() {
     if (typeof window === "undefined") {
       return;
     }
-    const view = new URLSearchParams(window.location.search).get("view");
-    if (view === "dashboard" || view === "tasks" || view === "output") {
-      setActiveView(view);
-    }
+    const parsed = parseUrlState(window.location.search);
+    setActiveView(parsed.view);
+    setSelectedEventId(parsed.eventId);
+    setSeverityFilter(parsed.severity);
+    setSearchQuery(parsed.q);
+    setIsUrlStateReady(true);
   }, []);
 
   useEffect(() => {
@@ -272,7 +277,6 @@ export default function Home() {
     const loaded = loadCommandHistory(window.localStorage);
     setCommandHistory(loaded);
     if (loaded.length > 0) {
-      setSelectedEventId(loaded[0]?.id ?? null);
       setLastUpdatedAtIso(loaded[0]?.finishedAt ?? loaded[0]?.startedAt ?? null);
     }
   }, []);
@@ -298,6 +302,22 @@ export default function Home() {
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
   }, [isBusy]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isUrlStateReady) {
+      return;
+    }
+    const nextSearch = toUrlSearch({
+      view: activeView,
+      eventId: selectedEventId,
+      severity: severityFilter,
+      q: searchQuery,
+    });
+    const nextQuery = nextSearch.length > 0 ? `?${nextSearch}` : "";
+    if (window.location.search !== nextQuery) {
+      window.history.replaceState(null, "", `${window.location.pathname}${nextQuery}`);
+    }
+  }, [activeView, isUrlStateReady, searchQuery, selectedEventId, severityFilter]);
 
   useEffect(() => {
     if (commandHistory.length === 0) {
@@ -688,6 +708,27 @@ export default function Home() {
     window.URL.revokeObjectURL(url);
     setFriendlyMessage("Downloaded redacted log.");
   }, []);
+
+  const copyCurrentDeepLink = useCallback(async (): Promise<void> => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const search = toUrlSearch({
+      view: activeView,
+      eventId: selectedEventId,
+      severity: severityFilter,
+      q: searchQuery,
+    });
+    const deepLink = `${window.location.origin}${window.location.pathname}${search.length > 0 ? `?${search}` : ""}`;
+
+    try {
+      await navigator.clipboard.writeText(deepLink);
+      setFriendlyMessage("Copied deep link to current view and filters.");
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, [activeView, searchQuery, selectedEventId, severityFilter]);
 
   const handleShortcutDialogKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -1085,6 +1126,14 @@ export default function Home() {
                       <option value="RUNNING">RUNNING</option>
                     </select>
                   </label>
+                  <button
+                    className="btn-muted"
+                    type="button"
+                    onClick={() => void copyCurrentDeepLink()}
+                    aria-label="Copy deep link for current output view"
+                  >
+                    <Link2 className="w-4 h-4" /> Copy Link
+                  </button>
                   <button
                     className="btn-muted"
                     type="button"
