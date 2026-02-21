@@ -6,7 +6,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Contrast,
   Copy,
+  Download,
   ListChecks,
   Loader2,
   Play,
@@ -19,9 +21,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandId } from "@/engine/commandContract";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
+import { buildRedactedEventText, buildRedactedLogText } from "@/engine/outputExport";
 import {
   classifyCommandOutcome,
   formatCommandLabel,
+  groupTaskResults,
   healthBadgeFromDiagnose,
   isStale,
   summarizeCommandResult,
@@ -132,13 +136,17 @@ export default function Home() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [highContrast, setHighContrast] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState(false);
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
+  const [activeElapsedMs, setActiveElapsedMs] = useState(0);
   const [friendlyMessage, setFriendlyMessage] = useState("Run diagnose to evaluate stack health.");
   const [lastUpdatedAtIso, setLastUpdatedAtIso] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeStartedAtRef = useRef<number | null>(null);
 
   const badgeClass = useMemo(() => {
     if (healthBadge === "OK") {
@@ -176,6 +184,21 @@ export default function Home() {
     if (typeof window === "undefined") {
       return;
     }
+    const storedContrast = window.localStorage.getItem("nlx.gui.highContrast");
+    setHighContrast(storedContrast === "true");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem("nlx.gui.highContrast", highContrast ? "true" : "false");
+  }, [highContrast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
     const loaded = loadCommandHistory(window.localStorage);
     setCommandHistory(loaded);
     if (loaded.length > 0) {
@@ -190,6 +213,21 @@ export default function Home() {
     }
     storeCommandHistory(window.localStorage, commandHistory);
   }, [commandHistory]);
+
+  useEffect(() => {
+    if (!isBusy || activeStartedAtRef.current === null) {
+      setActiveElapsedMs(0);
+      return;
+    }
+
+    const tick = (): void => {
+      setActiveElapsedMs(Date.now() - activeStartedAtRef.current!);
+    };
+
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
+  }, [isBusy]);
 
   useEffect(() => {
     if (commandHistory.length === 0) {
@@ -305,9 +343,11 @@ export default function Home() {
     async (commandId: CommandId, taskName?: string): Promise<CommandResponse> => {
       const label = formatCommandLabel(commandId, taskName);
       setActiveCommandLabel(label);
+      setCancelRequested(false);
 
       const eventId = appendCommandStart(commandId, label);
       const startedAtMs = Date.now();
+      activeStartedAtRef.current = startedAtMs;
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -320,6 +360,10 @@ export default function Home() {
 
       finalizeCommand(eventId, startedAtMs, result);
       setActiveCommandLabel("");
+      activeStartedAtRef.current = null;
+      if (result.errorType === "aborted") {
+        setFriendlyMessage("Cancel confirmed. Command stopped safely.");
+      }
       return result;
     },
     [appendCommandStart, callNlx, finalizeCommand],
@@ -327,6 +371,7 @@ export default function Home() {
 
   const cancelRunningCommand = useCallback((): void => {
     abortControllerRef.current?.abort();
+    setCancelRequested(true);
     setFriendlyMessage("Cancel requested. Waiting for command shutdown...");
   }, []);
 
@@ -448,19 +493,7 @@ export default function Home() {
   }, [executeCommand, knownTasks, selectedTasks]);
 
   const copyEventOutput = useCallback(async (event: CommandEvent): Promise<void> => {
-    const payload = [
-      `${event.label}`,
-      `Started: ${formatTimestamp(event.startedAt)}`,
-      event.finishedAt ? `Finished: ${formatTimestamp(event.finishedAt)}` : "Finished: pending",
-      event.durationMs ? `Duration: ${formatDuration(event.durationMs)}` : "Duration: --",
-      `Status: ${event.outcome}`,
-      "",
-      "STDOUT:",
-      event.stdout || "(stdout empty)",
-      "",
-      "STDERR:",
-      event.stderr || "(stderr empty)",
-    ].join("\n");
+    const payload = buildRedactedEventText(event);
 
     try {
       await navigator.clipboard.writeText(payload);
@@ -468,6 +501,23 @@ export default function Home() {
     } catch {
       setFriendlyMessage("Clipboard write failed in this browser context.");
     }
+  }, []);
+
+  const downloadRedactedLog = useCallback((events: CommandEvent[]): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const payload = buildRedactedLogText(events);
+    const blob = new Blob([payload], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const timestamp = new Date().toISOString().replace(/[:]/g, "-");
+    anchor.href = url;
+    anchor.download = `nlx-redacted-log-${timestamp}.txt`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    setFriendlyMessage("Downloaded redacted log.");
   }, []);
 
   const filteredHistory = useMemo(() => {
@@ -500,6 +550,13 @@ export default function Home() {
     return filteredHistory.find((event) => event.id === selectedEventId) ?? filteredHistory[0] ?? null;
   }, [filteredHistory, selectedEventId]);
 
+  const selectedEventGroups = useMemo(() => {
+    if (!selectedEvent || selectedEvent.taskResults.length === 0) {
+      return { bySeverity: [], byTask: [] };
+    }
+    return groupTaskResults(selectedEvent.taskResults);
+  }, [selectedEvent]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -513,7 +570,7 @@ export default function Home() {
   }, [loadConfig, loadTasks, runDiagnose]);
 
   return (
-    <div className="meta-root" data-theme="run">
+    <div className="meta-root" data-theme="run" data-contrast={highContrast ? "high" : "normal"}>
       <div className="aurora-background" aria-hidden="true" />
       <main className="meta-shell">
         <header className="glass-card top-healthbar" aria-live="polite">
@@ -541,16 +598,35 @@ export default function Home() {
           </div>
 
           <div className="health-actions">
-            <button className="btn-theme" onClick={() => void runDiagnose()} disabled={isBusy}>
+            <button className="btn-theme" onClick={() => void runDiagnose()} disabled={isBusy} aria-label="Run diagnose">
               <Activity className="w-4 h-4" /> Run Diagnose
             </button>
-            <button className="btn-theme" onClick={() => void runDryRunSweep()} disabled={isBusy}>
+            <button
+              className="btn-theme"
+              onClick={() => void runDryRunSweep()}
+              disabled={isBusy}
+              aria-label="Run dry-run sweep"
+            >
               <Play className="w-4 h-4" /> Run Dry-Run Sweep
             </button>
             {isBusy && (
-              <button className="btn-muted" onClick={cancelRunningCommand} type="button">
+              <button className="btn-muted" onClick={cancelRunningCommand} type="button" aria-label="Cancel active command">
                 <X className="w-4 h-4" /> Cancel {activeCommandLabel || "Run"}
               </button>
+            )}
+            <button
+              className="btn-muted"
+              onClick={() => setHighContrast((previous) => !previous)}
+              type="button"
+              aria-label="Toggle high contrast mode"
+            >
+              <Contrast className="w-4 h-4" /> Contrast {highContrast ? "ON" : "OFF"}
+            </button>
+            {isBusy && (
+              <span className="run-state-chip" aria-live="polite">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {cancelRequested ? "Cancel requested..." : `Running ${activeCommandLabel} (${formatDuration(activeElapsedMs)})`}
+              </span>
             )}
           </div>
 
@@ -562,6 +638,7 @@ export default function Home() {
             type="button"
             className={`nav-item ${activeView === "dashboard" ? "nav-item-active" : ""}`}
             onClick={() => setActiveView("dashboard")}
+            aria-label="Open dashboard view"
           >
             <Activity className="w-4 h-4" /> Dashboard
           </button>
@@ -569,6 +646,7 @@ export default function Home() {
             type="button"
             className={`nav-item ${activeView === "tasks" ? "nav-item-active" : ""}`}
             onClick={() => setActiveView("tasks")}
+            aria-label="Open tasks view"
           >
             <ListChecks className="w-4 h-4" /> Tasks
           </button>
@@ -576,6 +654,7 @@ export default function Home() {
             type="button"
             className={`nav-item ${activeView === "output" ? "nav-item-active" : ""}`}
             onClick={() => setActiveView("output")}
+            aria-label="Open output view"
           >
             <TerminalSquare className="w-4 h-4" /> Output
           </button>
@@ -639,13 +718,19 @@ export default function Home() {
                 <p className="meta-muted">Task names are sourced from `nlx list-tasks` and validated server-side.</p>
 
                 <div className="task-controls">
-                  <button className="btn-muted" onClick={() => void loadTasks()} disabled={isBusy}>
+                  <button
+                    className="btn-muted"
+                    onClick={() => void loadTasks()}
+                    disabled={isBusy}
+                    aria-label="Refresh task list"
+                  >
                     Refresh Task List
                   </button>
                   <button
                     className="btn-theme"
                     onClick={() => void runDryRunSelected()}
                     disabled={isBusy || selectedTasks.length === 0}
+                    aria-label="Run selected tasks in dry-run mode"
                   >
                     Run Selected Tasks
                   </button>
@@ -716,20 +801,22 @@ export default function Home() {
                 <p className="meta-muted">Filter timeline entries and inspect redacted stdout/stderr per command.</p>
 
                 <div className="output-controls">
-                  <label className="search-control">
+                  <label className="search-control" aria-label="Search redacted output">
                     <Search className="w-4 h-4" />
                     <input
                       type="search"
                       placeholder="Search output"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
+                      aria-label="Search output text"
                     />
                   </label>
-                  <label className="select-control">
+                  <label className="select-control" aria-label="Filter by severity">
                     <span>Severity</span>
                     <select
                       value={severityFilter}
                       onChange={(event) => setSeverityFilter(event.target.value as SeverityFilter)}
+                      aria-label="Severity filter"
                     >
                       <option value="ALL">All</option>
                       <option value="PASS">PASS</option>
@@ -738,62 +825,140 @@ export default function Home() {
                       <option value="RUNNING">RUNNING</option>
                     </select>
                   </label>
+                  <button
+                    className="btn-muted"
+                    type="button"
+                    onClick={() => downloadRedactedLog(filteredHistory)}
+                    disabled={filteredHistory.length === 0}
+                    aria-label="Download redacted log"
+                  >
+                    <Download className="w-4 h-4" /> Download Redacted Log
+                  </button>
                 </div>
+
+                <section className="sticky-run-header" aria-live="polite">
+                  {selectedEvent ? (
+                    <>
+                      <div className="sticky-run-meta">
+                        <span className={`status-pill ${statusClass(selectedEvent.outcome)}`}>{selectedEvent.outcome}</span>
+                        <strong>{selectedEvent.label}</strong>
+                        <span>{formatTimestamp(selectedEvent.startedAt)}</span>
+                        <span>Duration {formatDuration(selectedEvent.durationMs)}</span>
+                      </div>
+                      <div className="sticky-run-actions">
+                        <button
+                          className="copy-btn"
+                          type="button"
+                          onClick={() => void copyEventOutput(selectedEvent)}
+                          aria-label="Copy selected event redacted output"
+                        >
+                          <Copy className="w-4 h-4" /> Copy Redacted
+                        </button>
+                        <button
+                          className="btn-muted"
+                          type="button"
+                          onClick={() => downloadRedactedLog([selectedEvent])}
+                          aria-label="Download selected event redacted output"
+                        >
+                          <Download className="w-4 h-4" /> Download Event
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="meta-muted">Select an event to inspect run details.</p>
+                  )}
+                </section>
 
                 {filteredHistory.length === 0 ? (
                   <p className="meta-muted">No output entries for the selected filter.</p>
                 ) : (
                   <div className="timeline-list" role="list" aria-label="Command timeline">
-                    {filteredHistory.map((event) => (
-                      <article
-                        key={event.id}
-                        className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
-                        role="listitem"
-                        onClick={() => setSelectedEventId(event.id)}
-                      >
-                        <header className="timeline-header">
-                          <div className="timeline-heading">
-                            <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
-                            <strong>{event.label}</strong>
+                    {filteredHistory.map((event) => {
+                      const groupedEvent = groupTaskResults(event.taskResults);
+
+                      return (
+                        <article
+                          key={event.id}
+                          className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
+                          role="listitem"
+                          onClick={() => setSelectedEventId(event.id)}
+                        >
+                          <header className="timeline-header">
+                            <div className="timeline-heading">
+                              <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
+                              <strong>{event.label}</strong>
+                            </div>
+                            <button
+                              className="copy-btn"
+                              type="button"
+                              onClick={() => void copyEventOutput(event)}
+                              aria-label={`Copy redacted output for ${event.label}`}
+                            >
+                              <Copy className="w-4 h-4" /> Copy
+                            </button>
+                          </header>
+
+                          <div className="timeline-meta">
+                            <span>
+                              <Clock3 className="w-4 h-4" /> {formatTimestamp(event.startedAt)}
+                            </span>
+                            <span>Duration {formatDuration(event.durationMs)}</span>
                           </div>
-                          <button className="copy-btn" type="button" onClick={() => void copyEventOutput(event)}>
-                            <Copy className="w-4 h-4" /> Copy
-                          </button>
-                        </header>
 
-                        <div className="timeline-meta">
-                          <span>
-                            <Clock3 className="w-4 h-4" /> {formatTimestamp(event.startedAt)}
-                          </span>
-                          <span>Duration {formatDuration(event.durationMs)}</span>
-                        </div>
+                          <p className="timeline-note">{event.note}</p>
 
-                        <p className="timeline-note">{event.note}</p>
+                          {event.taskResults.length > 0 && (
+                            <div className="grouped-output">
+                              <details className="group-details" open>
+                                <summary>Grouped by Severity</summary>
+                                {groupedEvent.bySeverity.map((group) => (
+                                  <section key={`${event.id}-severity-${group.severity}`} className="group-block">
+                                    <h4>
+                                      <span className={`status-pill ${statusClass(group.severity)}`}>{group.severity}</span>
+                                      <span>{group.items.length} item(s)</span>
+                                    </h4>
+                                    <ul>
+                                      {group.items.map((item, index) => (
+                                        <li key={`${event.id}-${group.severity}-${item.taskName}-${index}`}>
+                                          <strong>{item.taskName}</strong>
+                                          <p>{item.reason}</p>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </section>
+                                ))}
+                              </details>
 
-                        {event.taskResults.length > 0 && (
-                          <ol className="stepper-list">
-                            {event.taskResults.map((step) => (
-                              <li key={`${event.id}-${step.taskName}-${step.status}-${step.reason}`}>
-                                <span className={`status-pill ${statusClass(step.status)}`}>{step.status}</span>
-                                <div>
-                                  <strong>{step.taskName}</strong>
-                                  <p>{step.reason}</p>
-                                </div>
-                              </li>
-                            ))}
-                          </ol>
-                        )}
+                              <details className="group-details">
+                                <summary>Grouped by Task</summary>
+                                {groupedEvent.byTask.map((group) => (
+                                  <section key={`${event.id}-task-${group.taskName}`} className="group-block">
+                                    <h4>{group.taskName}</h4>
+                                    <ul>
+                                      {group.items.map((item, index) => (
+                                        <li key={`${event.id}-${group.taskName}-${item.status}-${index}`}>
+                                          <span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span>
+                                          <p>{item.reason}</p>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </section>
+                                ))}
+                              </details>
+                            </div>
+                          )}
 
-                        <details open>
-                          <summary>STDOUT</summary>
-                          <pre className="terminal-window">{event.stdout || "(stdout empty)"}</pre>
-                        </details>
-                        <details>
-                          <summary>STDERR</summary>
-                          <pre className="terminal-window">{event.stderr || "(stderr empty)"}</pre>
-                        </details>
-                      </article>
-                    ))}
+                          <details open>
+                            <summary>STDOUT</summary>
+                            <pre className="terminal-window">{event.stdout || "(stdout empty)"}</pre>
+                          </details>
+                          <details>
+                            <summary>STDERR</summary>
+                            <pre className="terminal-window">{event.stderr || "(stderr empty)"}</pre>
+                          </details>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
@@ -806,7 +971,11 @@ export default function Home() {
           {isBusy ? (
             <div className="inspector-live">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Running: {activeCommandLabel || "Command"}</span>
+              <span>
+                {cancelRequested
+                  ? "Cancel requested..."
+                  : `Running: ${activeCommandLabel || "Command"} (${formatDuration(activeElapsedMs)})`}
+              </span>
             </div>
           ) : (
             <p className="meta-muted">Idle</p>
@@ -838,6 +1007,32 @@ export default function Home() {
               <p className="meta-muted">Status: {selectedEvent.outcome}</p>
               <p className="meta-muted">Started: {formatTimestamp(selectedEvent.startedAt)}</p>
               <p className="meta-muted">Duration: {formatDuration(selectedEvent.durationMs)}</p>
+              {selectedEvent.taskResults.length > 0 && (
+                <div className="inspector-groups">
+                  <details open>
+                    <summary>Severity groups</summary>
+                    <ul>
+                      {selectedEventGroups.bySeverity.map((group) => (
+                        <li key={`inspector-severity-${group.severity}`}>
+                          <span className={`status-pill ${statusClass(group.severity)}`}>{group.severity}</span>
+                          <span>{group.items.length}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                  <details>
+                    <summary>Task groups</summary>
+                    <ul>
+                      {selectedEventGroups.byTask.map((group) => (
+                        <li key={`inspector-task-${group.taskName}`}>
+                          <strong>{group.taskName}</strong>
+                          <span>{group.items.length}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
             </div>
           ) : (
             <p className="meta-muted">Select a timeline event to inspect details.</p>
