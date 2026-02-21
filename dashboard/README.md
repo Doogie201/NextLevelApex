@@ -11,6 +11,8 @@ This directory is the **single canonical GUI** for NextLevelApex.
   - `nlx --dry-run --no-reports --task <TaskName>`
 - No mutate endpoints are shipped in v1.
 - Output viewer shows redacted stdout/stderr with command timing metadata.
+- Premium v1 layout includes health bar, navigation rail, and inspector panel.
+- Output timeline supports severity filtering, search, and in-browser redacted copy.
 
 ## Run locally
 ```bash
