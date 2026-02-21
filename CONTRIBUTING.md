@@ -14,6 +14,7 @@
 
 - This repository is currently solo-maintained.
 - Pull request approvals are intentionally not required on `main`.
+- If the repo becomes multi-maintainer, we will re-enable required PR reviews and introduce `CODEOWNERS` for path-based ownership.
 - Merges are still gated by required CI status checks, strict up-to-date requirements, and conversation resolution.
 - Use PRs for all changes; do not bypass branch protection with direct pushes.
 
