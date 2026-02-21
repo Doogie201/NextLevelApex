@@ -30,6 +30,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import type { CommandId } from "@/engine/commandContract";
 import { isRunEnvelope } from "@/engine/apiContract";
 import { buildDiagnosticsText } from "@/engine/diagnosticsPayload";
+import { compareRunSessions } from "@/engine/sessionCompare";
 import { buildGuiSettingsExportJson, clearGuiSettings } from "@/engine/guiSettings";
 import { localhostWarning } from "@/engine/hostSafety";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
@@ -80,6 +81,15 @@ import {
   type RunSessionTimeRange,
 } from "@/engine/runSessions";
 import {
+  buildSessionCompareReportBundle,
+  buildSessionReportBundle,
+} from "@/engine/sessionReport";
+import {
+  buildTimelineSummary,
+  groupTimelineEvents,
+  type TimelineGroupMode,
+} from "@/engine/timelineInsights";
+import {
   buildSessionBundleExportJson,
   buildSessionExportJson,
   buildSessionOperatorReport,
@@ -97,7 +107,7 @@ interface TaskRowSummary {
 }
 
 const TASK_VISIBLE_STEP = 200;
-const GUI_BUILD_ID = "phase10";
+const GUI_BUILD_ID = "phase11";
 
 function taskRowId(taskName: string): string {
   return `task-row-${encodeURIComponent(taskName)}`;
@@ -217,10 +227,12 @@ export default function Home() {
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [compareSessionId, setCompareSessionId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [inspectorSection, setInspectorSection] = useState<InspectorSection>("summary");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [timelineGroupMode, setTimelineGroupMode] = useState<TimelineGroupMode>("chronological");
   const [sessionCommandFilter, setSessionCommandFilter] = useState<"ALL" | CommandId>("ALL");
   const [sessionBadgeFilter, setSessionBadgeFilter] = useState<"ALL" | HealthBadge>("ALL");
   const [sessionTimeRange, setSessionTimeRange] = useState<RunSessionTimeRange>("all");
@@ -293,6 +305,7 @@ export default function Home() {
     setActiveView(parsed.view);
     setSelectedEventId(parsed.eventId);
     setSelectedSessionId(parsed.sessionId);
+    setCompareSessionId(parsed.compareSessionId);
     setSeverityFilter(parsed.severity);
     setInspectorSection(parsed.inspectorSection);
     setSearchQuery(parsed.q);
@@ -399,6 +412,7 @@ export default function Home() {
       view: activeView,
       eventId: selectedEventId,
       sessionId: selectedSessionId,
+      compareSessionId,
       severity: severityFilter,
       inspectorSection,
       q: searchQuery,
@@ -412,6 +426,7 @@ export default function Home() {
     inspectorSection,
     isUrlStateReady,
     searchQuery,
+    compareSessionId,
     selectedEventId,
     selectedSessionId,
     severityFilter,
@@ -962,6 +977,7 @@ export default function Home() {
       view: activeView,
       eventId: selectedEventId,
       sessionId: selectedSessionId,
+      compareSessionId,
       severity: severityFilter,
       inspectorSection,
       q: searchQuery,
@@ -974,7 +990,7 @@ export default function Home() {
     } catch {
       setFriendlyMessage("Clipboard write failed in this browser context.");
     }
-  }, [activeView, inspectorSection, searchQuery, selectedEventId, selectedSessionId, severityFilter]);
+  }, [activeView, compareSessionId, inspectorSection, searchQuery, selectedEventId, selectedSessionId, severityFilter]);
 
   const handleShortcutDialogKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -1136,6 +1152,25 @@ export default function Home() {
     return filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   }, [filteredSessions, selectedSessionId]);
 
+  const compareSessionOptions = useMemo(
+    () => sortRunSessions(runSessions).filter((session) => session.id !== selectedSessionId),
+    [runSessions, selectedSessionId],
+  );
+
+  const selectedCompareSession = useMemo(() => {
+    if (!compareSessionId) {
+      return null;
+    }
+    return runSessions.find((session) => session.id === compareSessionId) ?? null;
+  }, [compareSessionId, runSessions]);
+
+  const sessionComparison = useMemo(() => {
+    if (!selectedSession || !selectedCompareSession) {
+      return null;
+    }
+    return compareRunSessions(selectedSession, selectedCompareSession);
+  }, [selectedCompareSession, selectedSession]);
+
   const selectedSessionTaskGroups = useMemo(() => {
     if (!selectedSession || selectedSession.taskResults.length === 0) {
       return { bySeverity: [], byTask: [] };
@@ -1153,6 +1188,16 @@ export default function Home() {
     }
   }, [filteredSessions, selectedSessionId]);
 
+  useEffect(() => {
+    if (!compareSessionId) {
+      return;
+    }
+    const exists = runSessions.some((session) => session.id === compareSessionId);
+    if (!exists || compareSessionId === selectedSessionId) {
+      setCompareSessionId(null);
+    }
+  }, [compareSessionId, runSessions, selectedSessionId]);
+
   const openSession = useCallback((sessionId: string): void => {
     const session = filteredSessions.find((item) => item.id === sessionId) ?? runSessions.find((item) => item.id === sessionId);
     if (!session) {
@@ -1165,6 +1210,16 @@ export default function Home() {
     setInspectorSection("summary");
     setLiveMessage(`Opened session ${session.label}.`);
   }, [filteredSessions, runSessions]);
+
+  const groupedTimeline = useMemo(
+    () => groupTimelineEvents(filteredHistory, timelineGroupMode),
+    [filteredHistory, timelineGroupMode],
+  );
+
+  const timelineSummary = useMemo(() => {
+    const sessionSource = filteredSessions.length > 0 ? filteredSessions : runSessions;
+    return buildTimelineSummary(filteredHistory, sessionSource);
+  }, [filteredHistory, filteredSessions, runSessions]);
 
   const toggleSessionPinned = useCallback((sessionId: string): void => {
     setRunSessions((previous) => togglePinnedSession(previous, sessionId));
@@ -1228,6 +1283,28 @@ export default function Home() {
     downloadTextPayload(`nlx-session-bundle-${timestamp}.json`, buildSessionBundleExportJson(source));
     setFriendlyMessage("Exported filtered session bundle JSON (redacted).");
   }, [downloadTextPayload, filteredSessions, runSessions]);
+
+  const exportDeterministicReportBundle = useCallback((): void => {
+    if (!selectedSession) {
+      setFriendlyMessage("Select a session before generating a report.");
+      return;
+    }
+
+    if (selectedCompareSession) {
+      const bundle = buildSessionCompareReportBundle(selectedSession, selectedCompareSession, GUI_BUILD_ID);
+      const baseName = `nlx-compare-report-${selectedSession.id}-vs-${selectedCompareSession.id}`;
+      downloadTextPayload(`${baseName}.json`, bundle.json);
+      downloadTextPayload(`${baseName}.md`, bundle.markdown);
+      setFriendlyMessage("Generated deterministic compare report bundle (redacted).");
+      return;
+    }
+
+    const bundle = buildSessionReportBundle(selectedSession, GUI_BUILD_ID);
+    const baseName = `nlx-session-report-${selectedSession.id}`;
+    downloadTextPayload(`${baseName}.json`, bundle.json);
+    downloadTextPayload(`${baseName}.md`, bundle.markdown);
+    setFriendlyMessage("Generated deterministic session report bundle (redacted).");
+  }, [downloadTextPayload, selectedCompareSession, selectedSession]);
 
   const copyConsoleDiagnostics = useCallback(async (): Promise<void> => {
     if (typeof navigator === "undefined") {
@@ -1918,6 +1995,21 @@ export default function Home() {
                           />
                           <span>Degraded only</span>
                         </label>
+                        <label className="select-control" aria-label="Compare selected session with another session">
+                          <span>Compare</span>
+                          <select
+                            value={compareSessionId ?? ""}
+                            onChange={(event) => setCompareSessionId(event.target.value || null)}
+                            disabled={compareSessionOptions.length === 0}
+                          >
+                            <option value="">None</option>
+                            {compareSessionOptions.map((session) => (
+                              <option key={session.id} value={session.id}>
+                                {session.label} ({formatTimestamp(session.startedAt)})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
 
                       <div className="sessions-export-center">
@@ -1947,6 +2039,15 @@ export default function Home() {
                           aria-label="Export filtered session bundle"
                         >
                           <Download className="w-4 h-4" /> Bundle JSON
+                        </button>
+                        <button
+                          className="btn-theme"
+                          type="button"
+                          onClick={exportDeterministicReportBundle}
+                          disabled={!selectedSession}
+                          aria-label="Generate deterministic session report bundle"
+                        >
+                          <FileJson2 className="w-4 h-4" /> Generate Report
                         </button>
                       </div>
 
@@ -2050,6 +2151,18 @@ export default function Home() {
                       <option value="RUNNING">RUNNING</option>
                     </select>
                   </label>
+                  <label className="select-control" aria-label="Group timeline by">
+                    <span>Group</span>
+                    <select
+                      value={timelineGroupMode}
+                      onChange={(event) => setTimelineGroupMode(event.target.value as TimelineGroupMode)}
+                      aria-label="Timeline grouping mode"
+                    >
+                      <option value="chronological">Chronological</option>
+                      <option value="severity">Severity</option>
+                      <option value="phase">Phase</option>
+                    </select>
+                  </label>
                   <button
                     className="btn-muted"
                     type="button"
@@ -2068,6 +2181,29 @@ export default function Home() {
                     <Download className="w-4 h-4" /> Download Redacted Log
                   </button>
                 </div>
+
+                <section className="empty-state-card" aria-label="Session summary">
+                  <h3>Session Summary</h3>
+                  <p className="meta-muted">
+                    Events: {timelineSummary.totalEvents} | Duration: {formatDuration(timelineSummary.totalDurationMs)}
+                  </p>
+                  <p className="meta-muted">
+                    Severity: PASS {timelineSummary.severityCounts.PASS} / WARN {timelineSummary.severityCounts.WARN} / FAIL{" "}
+                    {timelineSummary.severityCounts.FAIL} / RUNNING {timelineSummary.severityCounts.RUNNING}
+                  </p>
+                  <p className="meta-muted">
+                    Badges:{" "}
+                    {timelineSummary.badgeDistribution.length === 0
+                      ? "n/a"
+                      : timelineSummary.badgeDistribution.map((entry) => `${entry.badge} ${entry.count}`).join(", ")}
+                  </p>
+                  <p className="meta-muted">
+                    Reasons:{" "}
+                    {timelineSummary.reasonCodeDistribution.length === 0
+                      ? "n/a"
+                      : timelineSummary.reasonCodeDistribution.map((entry) => `${entry.reasonCode} ${entry.count}`).join(", ")}
+                  </p>
+                </section>
 
                 <section ref={outputHeaderRef} tabIndex={-1} className="sticky-run-header" aria-live="polite">
                   {selectedSession ? (
@@ -2111,6 +2247,41 @@ export default function Home() {
                   )}
                 </section>
 
+                {sessionComparison && (
+                  <section className="empty-state-card" aria-label="Session compare summary">
+                    <h3>
+                      Compare: {sessionComparison.baseSessionId} vs {sessionComparison.targetSessionId}
+                    </h3>
+                    <p className="meta-muted">
+                      Metadata changes: command {sessionComparison.metadata.commandId.base} →{" "}
+                      {sessionComparison.metadata.commandId.target}, badge {sessionComparison.metadata.badge.base} →{" "}
+                      {sessionComparison.metadata.badge.target}, reason {sessionComparison.metadata.reasonCode.base} →{" "}
+                      {sessionComparison.metadata.reasonCode.target}
+                    </p>
+                    <p className="meta-muted">
+                      Event delta: {sessionComparison.eventCount.delta} | Severity delta: INFO{" "}
+                      {sessionComparison.severityCount.delta.INFO}, WARN {sessionComparison.severityCount.delta.WARN}, ERROR{" "}
+                      {sessionComparison.severityCount.delta.ERROR}
+                    </p>
+                    <details>
+                      <summary>New errors introduced ({sessionComparison.newErrorsIntroduced.length})</summary>
+                      {sessionComparison.newErrorsIntroduced.length === 0 ? (
+                        <p className="meta-muted">No new error fingerprints introduced.</p>
+                      ) : (
+                        <ul className="session-event-list">
+                          {sessionComparison.newErrorsIntroduced.map((entry) => (
+                            <li key={entry.fingerprint}>
+                              <span>{entry.fingerprint}</span>
+                              <span>{entry.reasonCode}</span>
+                              <p>{entry.message}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </details>
+                  </section>
+                )}
+
                 {filteredHistory.length === 0 ? (
                   <section className="empty-state-card" aria-live="polite" aria-label="Output timeline empty state">
                     <h3>No events captured</h3>
@@ -2125,104 +2296,113 @@ export default function Home() {
                   </section>
                 ) : (
                   <div className="timeline-list" role="list" aria-label="Command timeline">
-                    {filteredHistory.map((event) => {
-                      const groupedEvent = groupTaskResults(event.taskResults);
+                    {groupedTimeline.map((section) => (
+                      <section key={section.key} className="timeline-group-section" aria-label={`Timeline group ${section.label}`}>
+                        {timelineGroupMode !== "chronological" && (
+                          <h3 className="timeline-group-title">
+                            {section.label} ({section.items.length})
+                          </h3>
+                        )}
+                        {section.items.map((event) => {
+                          const groupedEvent = groupTaskResults(event.taskResults);
 
-                      return (
-                        <article
-                          key={event.id}
-                          className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
-                          role="listitem"
-                          tabIndex={0}
-                          aria-current={selectedEvent?.id === event.id ? "true" : undefined}
-                          aria-label={`${event.label} ${event.outcome}. Press Enter to select.`}
-                          onClick={() => setSelectedEventId(event.id)}
-                          onKeyDown={(keyboardEvent) => {
-                            if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
-                              keyboardEvent.preventDefault();
-                              setSelectedEventId(event.id);
-                            }
-                          }}
-                        >
-                          <header className="timeline-header">
-                            <div className="timeline-heading">
-                              <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
-                              <strong>{event.label}</strong>
-                            </div>
-                            <button
-                              className="copy-btn"
-                              type="button"
-                              onClick={(clickEvent) => {
-                                clickEvent.stopPropagation();
-                                void copyEventOutput(event);
+                          return (
+                            <article
+                              key={event.id}
+                              className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
+                              role="listitem"
+                              tabIndex={0}
+                              aria-current={selectedEvent?.id === event.id ? "true" : undefined}
+                              aria-label={`${event.label} ${event.outcome}. Press Enter to select.`}
+                              onClick={() => setSelectedEventId(event.id)}
+                              onKeyDown={(keyboardEvent) => {
+                                if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+                                  keyboardEvent.preventDefault();
+                                  setSelectedEventId(event.id);
+                                }
                               }}
-                              aria-label={`Copy redacted output for ${event.label}`}
                             >
-                              <Copy className="w-4 h-4" /> Copy
-                            </button>
-                          </header>
+                              <header className="timeline-header">
+                                <div className="timeline-heading">
+                                  <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
+                                  <strong>{event.label}</strong>
+                                </div>
+                                <button
+                                  className="copy-btn"
+                                  type="button"
+                                  onClick={(clickEvent) => {
+                                    clickEvent.stopPropagation();
+                                    void copyEventOutput(event);
+                                  }}
+                                  aria-label={`Copy redacted output for ${event.label}`}
+                                >
+                                  <Copy className="w-4 h-4" /> Copy
+                                </button>
+                              </header>
 
-                          <div className="timeline-meta">
-                            <span>
-                              <Clock3 className="w-4 h-4" /> {formatTimestamp(event.startedAt)}
-                            </span>
-                            <span>Duration {formatDuration(event.durationMs)}</span>
-                          </div>
+                              <div className="timeline-meta">
+                                <span>
+                                  <Clock3 className="w-4 h-4" /> {formatTimestamp(event.startedAt)}
+                                </span>
+                                <span>Duration {formatDuration(event.durationMs)}</span>
+                              </div>
 
-                          <p className="timeline-note">{event.note}</p>
+                              <p className="timeline-note">{event.note}</p>
 
-                          {event.taskResults.length > 0 && (
-                            <div className="grouped-output">
-                              <details className="group-details" open>
-                                <summary>Grouped by Severity</summary>
-                                {groupedEvent.bySeverity.map((group) => (
-                                  <section key={`${event.id}-severity-${group.severity}`} className="group-block">
-                                    <h4>
-                                      <span className={`status-pill ${statusClass(group.severity)}`}>{group.severity}</span>
-                                      <span>{group.items.length} item(s)</span>
-                                    </h4>
-                                    <ul>
-                                      {group.items.map((item, index) => (
-                                        <li key={`${event.id}-${group.severity}-${item.taskName}-${index}`}>
-                                          <strong>{item.taskName}</strong>
-                                          <p>{item.reason}</p>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </section>
-                                ))}
+                              {event.taskResults.length > 0 && (
+                                <div className="grouped-output">
+                                  <details className="group-details" open>
+                                    <summary>Grouped by Severity</summary>
+                                    {groupedEvent.bySeverity.map((group) => (
+                                      <section key={`${event.id}-severity-${group.severity}`} className="group-block">
+                                        <h4>
+                                          <span className={`status-pill ${statusClass(group.severity)}`}>{group.severity}</span>
+                                          <span>{group.items.length} item(s)</span>
+                                        </h4>
+                                        <ul>
+                                          {group.items.map((item, index) => (
+                                            <li key={`${event.id}-${group.severity}-${item.taskName}-${index}`}>
+                                              <strong>{item.taskName}</strong>
+                                              <p>{item.reason}</p>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </section>
+                                    ))}
+                                  </details>
+
+                                  <details className="group-details">
+                                    <summary>Grouped by Task</summary>
+                                    {groupedEvent.byTask.map((group) => (
+                                      <section key={`${event.id}-task-${group.taskName}`} className="group-block">
+                                        <h4>{group.taskName}</h4>
+                                        <ul>
+                                          {group.items.map((item, index) => (
+                                            <li key={`${event.id}-${group.taskName}-${item.status}-${index}`}>
+                                              <span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span>
+                                              <p>{item.reason}</p>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </section>
+                                    ))}
+                                  </details>
+                                </div>
+                              )}
+
+                              <details open>
+                                <summary>STDOUT</summary>
+                                <pre className="terminal-window">{event.stdout || "(stdout empty)"}</pre>
                               </details>
-
-                              <details className="group-details">
-                                <summary>Grouped by Task</summary>
-                                {groupedEvent.byTask.map((group) => (
-                                  <section key={`${event.id}-task-${group.taskName}`} className="group-block">
-                                    <h4>{group.taskName}</h4>
-                                    <ul>
-                                      {group.items.map((item, index) => (
-                                        <li key={`${event.id}-${group.taskName}-${item.status}-${index}`}>
-                                          <span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span>
-                                          <p>{item.reason}</p>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </section>
-                                ))}
+                              <details>
+                                <summary>STDERR</summary>
+                                <pre className="terminal-window">{event.stderr || "(stderr empty)"}</pre>
                               </details>
-                            </div>
-                          )}
-
-                          <details open>
-                            <summary>STDOUT</summary>
-                            <pre className="terminal-window">{event.stdout || "(stdout empty)"}</pre>
-                          </details>
-                          <details>
-                            <summary>STDERR</summary>
-                            <pre className="terminal-window">{event.stderr || "(stderr empty)"}</pre>
-                          </details>
-                        </article>
-                      );
-                    })}
+                            </article>
+                          );
+                        })}
+                      </section>
+                    ))}
                   </div>
                 )}
               </motion.div>
