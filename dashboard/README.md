@@ -31,6 +31,8 @@ npm --prefix dashboard run dev -- --hostname 127.0.0.1 --port 4010
 
 Open <http://127.0.0.1:4010>.
 
+For v1 safety, keep the dashboard bound to localhost. Do not run with `--hostname 0.0.0.0`.
+
 ## Read-only mode
 Read-only mode is enabled by default.
 

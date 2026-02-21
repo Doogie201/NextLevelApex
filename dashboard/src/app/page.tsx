@@ -20,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandId } from "@/engine/commandContract";
+import { localhostWarning } from "@/engine/hostSafety";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
 import { buildRedactedEventText, buildRedactedLogText } from "@/engine/outputExport";
 import {
@@ -142,6 +143,7 @@ export default function Home() {
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
   const [activeElapsedMs, setActiveElapsedMs] = useState(0);
   const [friendlyMessage, setFriendlyMessage] = useState("Run diagnose to evaluate stack health.");
+  const [hostWarningMessage, setHostWarningMessage] = useState<string | null>(null);
   const [lastUpdatedAtIso, setLastUpdatedAtIso] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
@@ -186,6 +188,13 @@ export default function Home() {
     }
     const storedContrast = window.localStorage.getItem("nlx.gui.highContrast");
     setHighContrast(storedContrast === "true");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setHostWarningMessage(localhostWarning(window.location.hostname));
   }, []);
 
   useEffect(() => {
@@ -583,6 +592,13 @@ export default function Home() {
               <Shield className="w-4 h-4" /> READ-ONLY {readOnly ? "ON" : "OFF"}
             </div>
           </div>
+
+          {hostWarningMessage && (
+            <div className="host-warning-banner" role="status" aria-live="polite">
+              <AlertTriangle className="w-4 h-4" />
+              <span>{hostWarningMessage}</span>
+            </div>
+          )}
 
           <div className="health-meta-row">
             <span className={`badge-status ${badgeClass}`}>

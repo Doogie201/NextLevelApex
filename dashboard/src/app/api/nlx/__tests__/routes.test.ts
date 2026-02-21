@@ -17,9 +17,15 @@ vi.mock("@/engine/nlxService", () => {
 
 describe("nlx run API route", () => {
   const mockedRun = vi.mocked(runAllowlistedNlxCommand);
+  const originalTimeoutEnv = process.env.NLX_GUI_ROUTE_TIMEOUT_MS;
 
   beforeEach(() => {
     mockedRun.mockReset();
+    if (originalTimeoutEnv === undefined) {
+      delete process.env.NLX_GUI_ROUTE_TIMEOUT_MS;
+    } else {
+      process.env.NLX_GUI_ROUTE_TIMEOUT_MS = originalTimeoutEnv;
+    }
   });
 
   it("rejects non-allowlisted command ids", async () => {
@@ -180,5 +186,81 @@ describe("nlx run API route", () => {
 
     const response = await runPost(request);
     expect(response.status).toBe(499);
+  });
+
+  it("returns 409 when another run is already in progress", async () => {
+    let releaseFirstRun: ((value: Awaited<ReturnType<typeof runAllowlistedNlxCommand>>) => void) | null = null;
+    mockedRun.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseFirstRun = resolve;
+        }),
+    );
+
+    const firstRequest = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunAll" }),
+    });
+    const firstRunPromise = runPost(firstRequest);
+    await Promise.resolve();
+
+    const secondRequest = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunAll" }),
+    });
+
+    const secondResponse = await runPost(secondRequest);
+    const secondBody = (await secondResponse.json()) as { error: string; degraded: boolean };
+    expect(secondResponse.status).toBe(409);
+    expect(secondBody.error).toMatch(/already running/i);
+    expect(secondBody.degraded).toBe(true);
+
+    releaseFirstRun?.({
+      ok: true,
+      commandId: "dryRunAll",
+      exitCode: 0,
+      timedOut: false,
+      errorType: "none",
+      stdout: "",
+      stderr: "",
+      taskResults: [],
+    });
+
+    const firstResponse = await firstRunPromise;
+    expect(firstResponse.status).toBe(200);
+  });
+
+  it("converts route wall-clock aborts into timeout/degraded responses", async () => {
+    process.env.NLX_GUI_ROUTE_TIMEOUT_MS = "1000";
+    mockedRun.mockImplementation(async (_commandId, _taskName, signal) => {
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return {
+        ok: false,
+        commandId: "dryRunAll",
+        exitCode: 130,
+        timedOut: false,
+        errorType: "aborted",
+        stdout: "",
+        stderr: "aborted",
+      };
+    });
+
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunAll" }),
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as { errorType: string; timedOut: boolean; degraded: boolean };
+
+    expect(response.status).toBe(504);
+    expect(body.errorType).toBe("timeout");
+    expect(body.timedOut).toBe(true);
+    expect(body.degraded).toBe(true);
   });
 });
