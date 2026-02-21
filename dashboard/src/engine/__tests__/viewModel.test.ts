@@ -52,6 +52,34 @@ describe("view model helpers", () => {
     expect(summarizeCommandResult(result)).toMatch(/nlx not found/i);
   });
 
+  it("handles deterministic reason codes without optional payload fields", () => {
+    const result = baseResponse({
+      ok: false,
+      commandId: "dryRunAll",
+      badge: "DEGRADED",
+      reasonCode: "SINGLE_FLIGHT",
+      diagnose: undefined,
+      taskResults: undefined,
+      events: undefined,
+    });
+
+    expect(() => classifyCommandOutcome(result)).not.toThrow();
+    expect(healthBadgeFromDiagnose(result)).toBe("DEGRADED");
+    expect(summarizeCommandResult(result)).toMatch(/already running/i);
+  });
+
+  it("tolerates empty event arrays for timeline rendering paths", () => {
+    const result = baseResponse({
+      commandId: "dryRunAll",
+      diagnose: undefined,
+      events: [],
+      taskResults: [],
+    });
+
+    expect(() => summarizeCommandResult(result)).not.toThrow();
+    expect(classifyCommandOutcome(result)).toBe("PASS");
+  });
+
   it("detects stale timestamps", () => {
     const now = Date.parse("2026-02-21T20:00:00.000Z");
     expect(isStale("2026-02-21T19:40:00.000Z", now, 10 * 60 * 1000)).toBe(true);

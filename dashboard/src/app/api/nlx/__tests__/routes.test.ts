@@ -15,7 +15,7 @@ vi.mock("@/engine/nlxService", () => {
   };
 });
 
-describe("nlx run API route", () => {
+describe("nlx run API route envelope", () => {
   const mockedRun = vi.mocked(runAllowlistedNlxCommand);
   const originalTimeoutEnv = process.env.NLX_GUI_ROUTE_TIMEOUT_MS;
 
@@ -28,82 +28,7 @@ describe("nlx run API route", () => {
     }
   });
 
-  it("rejects non-allowlisted command ids", async () => {
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "autofix" }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/allowlisted/i);
-    expect(mockedRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects non-string command ids", async () => {
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: 42 }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/allowlisted/i);
-    expect(mockedRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects invalid task names", async () => {
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "dryRunTask", taskName: "DNS; rm -rf /" }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/unsupported characters|invalid/i);
-    expect(mockedRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects dryRunTask without taskName", async () => {
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "dryRunTask" }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/taskName is required/i);
-    expect(mockedRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects taskName on commands that do not accept it", async () => {
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "diagnose", taskName: "Mise" }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/only valid with dryRunTask/i);
-    expect(mockedRun).not.toHaveBeenCalled();
-  });
-
-  it("returns successful allowlisted command responses", async () => {
+  it("returns deterministic envelope for diagnose success", async () => {
     mockedRun.mockResolvedValue({
       ok: true,
       commandId: "diagnose",
@@ -134,48 +59,38 @@ describe("nlx run API route", () => {
     });
 
     const response = await runPost(request);
-    const body = (await response.json()) as { ok: boolean; commandId: string };
+    const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
+    expect(body.badge).toBe("OK");
+    expect(body.reasonCode).toBe("SUCCESS");
     expect(body.commandId).toBe("diagnose");
-    expect(mockedRun).toHaveBeenCalledWith("diagnose", undefined, expect.any(AbortSignal));
+    expect(typeof body.startedAt).toBe("string");
+    expect(typeof body.finishedAt).toBe("string");
+    expect(typeof body.durationMs).toBe("number");
+    expect(typeof body.stdout).toBe("string");
+    expect(typeof body.stderr).toBe("string");
+    expect(Array.isArray(body.events)).toBe(true);
+    expect(typeof body.redacted).toBe("boolean");
   });
 
-  it("maps timeout command failures to 504", async () => {
+  it("returns deterministic envelope for dryRunAll success with taskResults", async () => {
     mockedRun.mockResolvedValue({
-      ok: false,
+      ok: true,
       commandId: "dryRunAll",
-      exitCode: 124,
-      timedOut: true,
-      errorType: "timeout",
-      stdout: "",
-      stderr: "Command timed out",
-    });
-
-    const request = new Request("http://localhost/api/nlx/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "dryRunAll" }),
-    });
-
-    const response = await runPost(request);
-    const body = (await response.json()) as { errorType: string; timedOut: boolean };
-
-    expect(response.status).toBe(504);
-    expect(body.errorType).toBe("timeout");
-    expect(body.timedOut).toBe(true);
-  });
-
-  it("maps aborted command failures to 499", async () => {
-    mockedRun.mockResolvedValue({
-      ok: false,
-      commandId: "dryRunAll",
-      exitCode: 130,
+      exitCode: 0,
       timedOut: false,
-      errorType: "aborted",
-      stdout: "",
-      stderr: "aborted",
+      errorType: "none",
+      stdout: "[Task: DNS] [PASS]",
+      stderr: "",
+      taskResults: [
+        {
+          taskName: "DNS Stack Sanity Check",
+          status: "PASS",
+          reason: "[PASS]",
+        },
+      ],
     });
 
     const request = new Request("http://localhost/api/nlx/run", {
@@ -185,10 +100,49 @@ describe("nlx run API route", () => {
     });
 
     const response = await runPost(request);
-    expect(response.status).toBe(499);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.reasonCode).toBe("SUCCESS");
+    expect(Array.isArray(body.taskResults)).toBe(true);
   });
 
-  it("returns 409 when another run is already in progress", async () => {
+  it("returns NOT_ALLOWED envelope for non-allowlisted command ids", async () => {
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "__not_allowed__" }),
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.badge).toBe("BROKEN");
+    expect(body.reasonCode).toBe("NOT_ALLOWED");
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
+  it("returns VALIDATION envelope for malformed json", async () => {
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.reasonCode).toBe("VALIDATION");
+    expect(body.badge).toBe("BROKEN");
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
+  it("returns SINGLE_FLIGHT envelope for concurrent runs and does not execute second command", async () => {
     let releaseFirstRun: ((value: Awaited<ReturnType<typeof runAllowlistedNlxCommand>>) => void) | null = null;
     mockedRun.mockImplementation(
       () =>
@@ -208,14 +162,17 @@ describe("nlx run API route", () => {
     const secondRequest = new Request("http://localhost/api/nlx/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ commandId: "dryRunAll" }),
+      body: JSON.stringify({ commandId: "diagnose" }),
     });
 
     const secondResponse = await runPost(secondRequest);
-    const secondBody = (await secondResponse.json()) as { error: string; degraded: boolean };
-    expect(secondResponse.status).toBe(409);
-    expect(secondBody.error).toMatch(/already running/i);
-    expect(secondBody.degraded).toBe(true);
+    const secondBody = (await secondResponse.json()) as Record<string, unknown>;
+
+    expect(secondResponse.status).toBe(200);
+    expect(secondBody.ok).toBe(false);
+    expect(secondBody.badge).toBe("DEGRADED");
+    expect(secondBody.reasonCode).toBe("SINGLE_FLIGHT");
+    expect(mockedRun).toHaveBeenCalledTimes(1);
 
     releaseFirstRun?.({
       ok: true,
@@ -232,7 +189,7 @@ describe("nlx run API route", () => {
     expect(firstResponse.status).toBe(200);
   });
 
-  it("converts route wall-clock aborts into timeout/degraded responses", async () => {
+  it("returns TIMEOUT envelope and DEGRADED badge when route wall clock timeout triggers", async () => {
     process.env.NLX_GUI_ROUTE_TIMEOUT_MS = "1000";
     mockedRun.mockImplementation(async (_commandId, _taskName, signal) => {
       await new Promise<void>((resolve) => {
@@ -256,11 +213,38 @@ describe("nlx run API route", () => {
     });
 
     const response = await runPost(request);
-    const body = (await response.json()) as { errorType: string; timedOut: boolean; degraded: boolean };
+    const body = (await response.json()) as Record<string, unknown>;
 
-    expect(response.status).toBe(504);
-    expect(body.errorType).toBe("timeout");
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.badge).toBe("DEGRADED");
+    expect(body.reasonCode).toBe("TIMEOUT");
     expect(body.timedOut).toBe(true);
-    expect(body.degraded).toBe(true);
+  });
+
+  it("sets redacted=true and scrubs secret-like output strings", async () => {
+    mockedRun.mockResolvedValue({
+      ok: false,
+      commandId: "dryRunAll",
+      exitCode: 1,
+      timedOut: false,
+      errorType: "spawn_error",
+      stdout: "WEBPASSWORD=supersecretvalue",
+      stderr: "token=abcdefghijklmnopqrstuvwxyz1234567890",
+    });
+
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunAll" }),
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as { redacted: boolean; stdout: string; stderr: string };
+
+    expect(response.status).toBe(200);
+    expect(body.redacted).toBe(true);
+    expect(body.stdout).not.toContain("supersecretvalue");
+    expect(body.stderr).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
   });
 });

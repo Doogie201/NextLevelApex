@@ -20,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandId } from "@/engine/commandContract";
+import { isRunEnvelope } from "@/engine/apiContract";
 import { localhostWarning } from "@/engine/hostSafety";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
 import { buildRedactedEventText, buildRedactedLogText } from "@/engine/outputExport";
@@ -73,54 +74,56 @@ function statusClass(status: CommandOutcome | TaskResult["status"]): string {
 }
 
 function normalizeCommandResponse(commandId: CommandId, httpStatus: number, payload: unknown): CommandResponse {
-  if (!payload || typeof payload !== "object") {
+  if (!isRunEnvelope(payload)) {
+    const fallbackError =
+      payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string"
+        ? (payload as { error: string }).error
+        : `Unexpected response payload (HTTP ${httpStatus}).`;
     return {
       ok: false,
       commandId,
+      badge: "BROKEN",
+      reasonCode: "UNKNOWN",
       exitCode: 1,
       timedOut: false,
       errorType: "spawn_error",
       stdout: "",
-      stderr: `Unexpected response payload (HTTP ${httpStatus}).`,
+      stderr: fallbackError,
+      events: [],
+      redacted: false,
+      error: fallbackError,
       httpStatus,
     };
   }
 
-  const raw = payload as Record<string, unknown>;
-  const hasStructuredResponse = typeof raw.commandId === "string";
-
-  if (!hasStructuredResponse) {
-    const errorMessage = typeof raw.error === "string" ? raw.error : `Request failed (HTTP ${httpStatus}).`;
-    return {
-      ok: false,
-      commandId,
-      exitCode: 1,
-      timedOut: false,
-      errorType: "spawn_error",
-      stdout: "",
-      stderr: errorMessage,
-      error: errorMessage,
-      httpStatus,
-    };
-  }
+  const reasonToErrorType = (): CommandErrorType => {
+    if (payload.errorType && typeof payload.errorType === "string") {
+      return payload.errorType as CommandErrorType;
+    }
+    if (payload.reasonCode === "TIMEOUT") {
+      return "timeout";
+    }
+    return "spawn_error";
+  };
 
   return {
-    ok: raw.ok === true,
+    ok: payload.ok,
     commandId,
-    exitCode: typeof raw.exitCode === "number" ? raw.exitCode : 1,
-    timedOut: raw.timedOut === true,
-    errorType: typeof raw.errorType === "string" ? (raw.errorType as CommandErrorType) : "spawn_error",
-    stdout: typeof raw.stdout === "string" ? raw.stdout : "",
-    stderr: typeof raw.stderr === "string" ? raw.stderr : "",
-    taskNames: Array.isArray(raw.taskNames)
-      ? (raw.taskNames.filter((entry) => typeof entry === "string") as string[])
+    badge: payload.badge,
+    reasonCode: payload.reasonCode,
+    exitCode: typeof payload.exitCode === "number" ? payload.exitCode : payload.ok ? 0 : 1,
+    timedOut: payload.timedOut === true || payload.reasonCode === "TIMEOUT",
+    errorType: reasonToErrorType(),
+    stdout: payload.stdout,
+    stderr: payload.stderr,
+    events: payload.events,
+    redacted: payload.redacted,
+    taskNames: Array.isArray(payload.taskNames)
+      ? (payload.taskNames.filter((entry) => typeof entry === "string") as string[])
       : [],
-    taskResults: Array.isArray(raw.taskResults) ? (raw.taskResults as TaskResult[]) : [],
-    diagnose:
-      typeof raw.diagnose === "object" && raw.diagnose !== null
-        ? (raw.diagnose as CommandResponse["diagnose"])
-        : undefined,
-    error: typeof raw.error === "string" ? raw.error : undefined,
+    taskResults: payload.taskResults ?? [],
+    diagnose: payload.diagnose,
+    error: payload.ok ? undefined : payload.stderr || `${payload.reasonCode} (${httpStatus})`,
     httpStatus,
   };
 }

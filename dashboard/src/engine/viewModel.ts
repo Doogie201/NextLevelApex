@@ -17,6 +17,14 @@ export interface TaskResult {
 }
 
 export type HealthBadge = "OK" | "DEGRADED" | "BROKEN";
+export type CommandReasonCode =
+  | "SUCCESS"
+  | "VALIDATION"
+  | "NOT_ALLOWED"
+  | "TIMEOUT"
+  | "SINGLE_FLIGHT"
+  | "EXEC_ERROR"
+  | "UNKNOWN";
 
 export type CommandErrorType =
   | "missing_nlx"
@@ -30,11 +38,15 @@ export type CommandErrorType =
 export interface CommandResponse {
   ok: boolean;
   commandId: CommandId;
+  badge?: HealthBadge;
+  reasonCode?: CommandReasonCode;
   exitCode: number;
   timedOut: boolean;
   errorType: CommandErrorType;
   stdout: string;
   stderr: string;
+  events?: Array<{ ts: string; level: "debug" | "info" | "warn" | "error"; msg: string }>;
+  redacted?: boolean;
   taskNames?: string[];
   taskResults?: TaskResult[];
   diagnose?: {
@@ -96,6 +108,18 @@ export function classifyCommandOutcome(result: CommandResponse): CommandOutcome 
 
 export function summarizeCommandResult(result: CommandResponse): string {
   if (!result.ok) {
+    if (result.reasonCode === "SINGLE_FLIGHT") {
+      return "A command is already running. Wait for completion or cancel active execution.";
+    }
+    if (result.reasonCode === "NOT_ALLOWED") {
+      return "Requested command is not allowlisted.";
+    }
+    if (result.reasonCode === "VALIDATION") {
+      return "Invalid command request payload.";
+    }
+    if (result.reasonCode === "TIMEOUT") {
+      return "Command timed out before completion.";
+    }
     if (result.errorType === "missing_nlx") {
       return "nlx not found. Install dependencies and verify `poetry run nlx diagnose`.";
     }
@@ -131,6 +155,9 @@ export function summarizeCommandResult(result: CommandResponse): string {
 }
 
 export function healthBadgeFromDiagnose(result: CommandResponse): HealthBadge {
+  if (result.badge) {
+    return result.badge;
+  }
   if (!result.ok) {
     if (result.errorType === "missing_nlx" || result.errorType === "timeout" || result.errorType === "nonzero_exit") {
       return "DEGRADED";
