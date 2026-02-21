@@ -6,9 +6,6 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import nextlevelapex.main as main_entry
-import nextlevelapex.main2 as main2
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -45,6 +42,8 @@ def test_module_main_legacy_run_alias_keeps_help_working():
 
 
 def test_main_shim_forwards_legacy_run_args(monkeypatch):
+    import nextlevelapex.main as main_entry
+
     captured: dict[str, object] = {}
 
     def fake_app(*, prog_name: str, args: list[str]) -> None:
@@ -60,7 +59,7 @@ def test_main_shim_forwards_legacy_run_args(monkeypatch):
 
 
 def test_main_shim_has_no_orchestrator_implementation():
-    src = Path(main_entry.__file__).read_text()
+    src = (REPO_ROOT / "nextlevelapex" / "main.py").read_text()
     forbidden_markers = (
         "def discover_tasks(",
         "def run_task(",
@@ -96,6 +95,8 @@ def test_cli_help_equivalence_nlx_and_main2_module():
 
 
 def test_main2_dry_run_only_known_task_dispatches_without_attrerror(monkeypatch):
+    import nextlevelapex.main2 as main2
+
     calls: list[dict] = []
 
     def fake_task(ctx: dict) -> dict:

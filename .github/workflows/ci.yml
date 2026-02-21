@@ -33,6 +33,11 @@ jobs:
           poetry config virtualenvs.create false
           poetry install --no-interaction --no-ansi
 
+      - name: 🚦 CLI smoke dry-run (safe subset)
+        run: |
+          poetry run nlx --help
+          poetry run nlx --dry-run --no-reports --task Mise --task Security
+
       - name: 🧼 Lint with Ruff
         run: poetry run ruff check .
 
