@@ -79,32 +79,16 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def atomic_write_json_0600(data: dict[str, Any], path: Path) -> bool:
-    import os
-    import tempfile
+    import logging
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from nextlevelapex.core.io import atomic_write_text
+
     try:
-        # Create a secure temp file in the same directory to guarantee atomic os.replace
-        fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".tmp_state_", text=False)
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-
-        # Enforce strict 0600 permissions
-        Path(temp_path).chmod(0o600)
-
-        # Atomically replace the target file
-        Path(temp_path).replace(path)
+        content = json.dumps(data, indent=2)
+        atomic_write_text(path, content, perms=0o600)
         return True
     except Exception as e:
         logging.exception(f"Failed atomic write to {path}: {e}")
-        # Cleanup temp file on failure
-        if 'temp_path' in locals():
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                Path(temp_path).unlink()
         return False
 
 

@@ -14,7 +14,7 @@ from nextlevelapex.core.task import TaskContext
 # Re-export for tests importing from core.diagnostics
 from nextlevelapex.utils.sanitizer import trim_large_fields  # re-export for tests
 
-__all__ = ['trim_large_fields']
+__all__ = ["trim_large_fields"]
 
 
 # Re-export for tests that import from core.diagnostics

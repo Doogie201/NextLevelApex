@@ -50,8 +50,8 @@ def get_health_detail(state: dict[str, Any], depth: int = 5) -> str:
                 json.dumps(entry.get("details", {}), indent=2) if "details" in entry else ""
             )
 
-            safe_ts = _trunc(entry['timestamp'], 64)
-            safe_st = _trunc(entry['status'], 16)
+            safe_ts = _trunc(entry["timestamp"], 64)
+            safe_st = _trunc(entry["status"], 16)
             safe_det = _trunc(raw_details, 8192)
 
             output.append(f"- {safe_ts}: **{safe_st}** {safe_det}")
@@ -68,20 +68,19 @@ def generate_markdown_report(state: dict[str, Any], out_dir: Path) -> Path:
     detail = get_health_detail(state, depth=10)
     versions = state.get("service_versions", {})
 
-    with latest.open("w") as f:
-        f.write("# NextLevelApex Health Report\n")
-        f.write(f"Generated: {now} UTC\n\n")
-        f.write("## Service Versions\n")
-        f.write("```\n")
-        json.dump(versions, f, indent=2)
-        f.write("\n```\n\n")
-        f.write("## Summary Table\n")
-        f.write(summary)
-        f.write("\n\n## Task Details\n")
-        f.write(detail)
-    # Save a timestamped copy for history
-    latest.replace(stamped)
-    latest.write_text((stamped).read_text())
+    content = "# NextLevelApex Health Report\n"
+    content += f"Generated: {now} UTC\n\n"
+    content += "## Service Versions\n```\n"
+    content += json.dumps(versions, indent=2)
+    content += "\n```\n\n## Summary Table\n"
+    content += summary
+    content += "\n\n## Task Details\n"
+    content += detail
+
+    from nextlevelapex.core.io import atomic_write_text
+
+    atomic_write_text(latest, content)
+    atomic_write_text(stamped, content)
     return stamped
 
 
@@ -147,10 +146,10 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
         html_content += "</ul>"
     html_content += "</body></html>"
 
-    latest.write_text(html_content)
-    # Save a timestamped copy for history
-    latest.replace(stamped)
-    latest.write_text((stamped).read_text())
+    from nextlevelapex.core.io import atomic_write_text
+
+    atomic_write_text(latest, html_content)
+    atomic_write_text(stamped, html_content)
     return stamped
 
 

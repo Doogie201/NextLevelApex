@@ -231,11 +231,11 @@ def trigger_diagnose(req: DiagnoseRequest) -> dict[str, Any]:
 
             actions_successful = True
             for i, action in enumerate(plan.get("actions", [])):
-                logs.append(f"Executing step {i+1}: {action['action_type']}")
+                logs.append(f"Executing step {i + 1}: {action['action_type']}")
                 success = execute_remediation(action)
                 if not success:
                     actions_successful = False
-                    logs.append(f"Step {i+1} failed to execute.")
+                    logs.append(f"Step {i + 1} failed to execute.")
                     break
 
             if actions_successful:
