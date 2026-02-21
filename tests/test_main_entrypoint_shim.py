@@ -1,7 +1,9 @@
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import nextlevelapex.main as main_entry
@@ -13,6 +15,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def _run_module(module: str, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", module, *args],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_cmd(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(args),
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
@@ -39,12 +51,48 @@ def test_main_shim_forwards_legacy_run_args(monkeypatch):
         captured["prog_name"] = prog_name
         captured["args"] = args
 
-    monkeypatch.setattr(main_entry, "app", fake_app)
+    monkeypatch.setattr(main_entry, "_load_canonical_app", lambda: fake_app)
 
     code = main_entry.main(["run", "--dry-run", "--no-reports"])
     assert code == 0
     assert captured["prog_name"] == "python -m nextlevelapex.main"
     assert captured["args"] == ["--dry-run", "--no-reports"]
+
+
+def test_main_shim_has_no_orchestrator_implementation():
+    src = Path(main_entry.__file__).read_text()
+    forbidden_markers = (
+        "def discover_tasks(",
+        "def run_task(",
+        "@app.command",
+        "@app.callback",
+        "mark_section_complete(",
+        "update_task_health(",
+    )
+    for marker in forbidden_markers:
+        assert marker not in src
+
+
+def test_cli_help_equivalence_nlx_and_main2_module():
+    if shutil.which("nlx") is None:
+        pytest.skip("nlx script not available in PATH")
+
+    nlx_help = _run_cmd("nlx", "--help")
+    main2_help = _run_module("nextlevelapex.main2", "--help")
+
+    assert nlx_help.returncode == 0
+    assert main2_help.returncode == 0
+
+    key_tokens = (
+        "NextLevelApex Orchestrator",
+        "install-sudoers",
+        "export-state",
+        "auto-fix",
+        "task-info",
+    )
+    for token in key_tokens:
+        assert token in nlx_help.stdout
+        assert token in main2_help.stdout
 
 
 def test_main2_dry_run_only_known_task_dispatches_without_attrerror(monkeypatch):
