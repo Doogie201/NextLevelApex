@@ -62,3 +62,20 @@ This document tracks all AppSec remediation workflows, red-team diff reviews, an
 - Resolved lingering `sys.modules` caching artifacts causing sporadic evaluation errors during Pytest's `importlib` loading loops. Verified explicitly that testing isolation correctly restores the execution engine.
 - Result array executing `poetry run pytest` yielding **40/40 passing** validations.
 - Result array executing `poetry run ruff check .` yielding zero lint flaws due to isolated dependency graph reloading structures.
+
+## [2026-02-20] Phase 4: Sudoers Raw Append Remediation
+
+### Addressed Issues
+- **Issue G (High): Raw file append exposing `/etc/sudoers` to corruption:** The `install-sudoers` command utilized a blind `bash -c echo >> /etc/sudoers` append operation to add the `includedir` directive. This was extremely dangerous as network interruptions, signal interruptions, or concurrent file access during the unguarded append could corrupt `/etc/sudoers`, permanently locking the root account.
+- Refactored `nextlevelapex/main2.py:install_sudoers` to safely halt automatic execution if the directive is missing, replacing the raw append with an interactive prompt instructing the user to safely inject the line via `sudo visudo`.
+
+### Red-Team Diff Review
+- **Subprocess Paths**: Eliminated a blind shell execution (`subprocess.run(["sudo", "bash", "-c", ... ">> /etc/sudoers"])`) entirely.
+- **Dynamic Imports**: None modified.
+- **File Write Paths**: Removed the most dangerous write target (`/etc/sudoers`) from automated manipulation.
+- **Templating / Rendering**: None modified.
+- **Privilege Expansion**: The attack surface for an attacker to hijack the daemon memory and execute arbitrary strings onto the end of the root authoritative permission file has been entirely removed.
+
+### Testing Evidence
+- Result array executing `poetry run pytest` yielding **40/40 passing** validations.
+- Result array executing `poetry run ruff check .` yielding zero lint flaws.

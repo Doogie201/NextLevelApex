@@ -904,14 +904,22 @@ def install_sudoers(
         )
         if include_check.returncode != 0:
             typer.secho(
-                "Adding '#includedir /private/etc/sudoers.d' to /etc/sudoers to enable sudoers.d support...",
+                "ERROR: Your /etc/sudoers file does not include the sudoers.d directory.",
+                fg=typer.colors.RED,
+            )
+            typer.secho(
+                "For safety, this application will not automatically modify the root /etc/sudoers file.",
                 fg=typer.colors.YELLOW,
             )
-            subprocess.run(
-                ["sudo", "bash", "-c", "echo '#includedir /private/etc/sudoers.d' >> /etc/sudoers"],
-                check=True,
+            typer.secho(
+                "Please run 'sudo visudo' in your terminal and seamlessly append the following line to the end of the file:",
+                fg=typer.colors.WHITE,
             )
-
+            typer.secho(
+                "\n#includedir /private/etc/sudoers.d\n", fg=typer.colors.MAGENTA, bold=True
+            )
+            typer.secho("Once complete, re-run this command.", fg=typer.colors.WHITE)
+            raise typer.Exit(code=1)
         # 4. Install the validated file securely setting 0440 permissions and root:wheel ownership
         install_cmd = [
             "sudo",
