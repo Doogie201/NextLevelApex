@@ -13,6 +13,7 @@ from typing import Annotated, Any, Dict, List, Optional, Type, Union
 import typer
 
 from nextlevelapex.core.config import DEFAULT_CONFIG_PATH, generate_default_config, load_config
+from nextlevelapex.core.dns_diagnose import collect_dns_summary, render_dns_summary
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import get_task_registry
 
@@ -528,9 +529,16 @@ def main(
 
 @app.command("diagnose")
 def diagnose(
-    task_name: str = typer.Argument(..., help="Task to diagnose"),
+    task_name: Optional[str] = typer.Argument(
+        None, help="Task to diagnose. If omitted, prints one-line DNS stack summary."
+    ),
     autofix: bool = typer.Option(False, help="Try recommended fix automatically (if possible)"),
 ):
+    if task_name is None:
+        summary = collect_dns_summary()
+        typer.echo(render_dns_summary(summary))
+        raise typer.Exit(code=summary.exit_code)
+
     state = load_state(STATE_PATH)
     discovered_tasks = discover_tasks()
     if task_name not in discovered_tasks:
