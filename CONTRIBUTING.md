@@ -39,6 +39,13 @@ poetry run pytest -q
 
 If you change security-sensitive code paths (`install-sudoers`, remediation execution, task discovery, state/report writes), add or update tests in `tests/core/`.
 
+## Coverage Gate Policy
+
+- CI enforces a conservative baseline floor with `coverage report --fail-under=40`.
+- `codecov.yml` currently uses `target: auto` for project/patch and `if_not_found: success` for patch status.
+- Reason: bootstrap period while establishing a stable base commit coverage history on Codecov.
+- Revisit owner/timing: release manager must tighten thresholds and restore fully blocking static targets on the first release after baseline coverage is available on `main`.
+
 ## Pull Request Standards
 
 Each PR should include:
