@@ -330,16 +330,16 @@ def main(
 
     ensure_task_state(state, task_names)
 
-    # 3. Update config/manifest file hashes for drift detection
+    # 3. Check config/manifest file hashes for drift detection
     files = discover_files_for_hashing()
-    prev_hashes = state.get("file_hashes", {}).copy()
+    hash_drift = any(file_hash_changed(state, f) for f in files)
+
+    # 4. Now that drift is evaluated, safely update the tracked hashes in state
     update_file_hashes(state, files)
 
-    # 4. Run tasks as needed
+    # 5. Run tasks as needed
     for name, task_callable in discovered_tasks.items():
         print(f"\n[Task: {name}]")
-        # Skip if already healthy & no config drift
-        hash_drift = any(file_hash_changed(state, f) for f in files)
         last_status = state["task_status"].get(name, {}).get("status")
         needs_run = (last_status != "PASS") or hash_drift or mode in ("test", "stress", "security")
         if not needs_run:
