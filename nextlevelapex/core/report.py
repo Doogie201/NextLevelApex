@@ -84,13 +84,6 @@ def generate_markdown_report(state: dict[str, Any], out_dir: Path) -> Path:
     return stamped
 
 
-def _trunc(val: Any, max_len: int) -> str:
-    s = str(val)
-    if len(s) > max_len:
-        return s[:max_len] + "...[TRUNCATED]"
-    return s
-
-
 def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
     now = datetime.utcnow().replace(microsecond=0).isoformat().replace(":", "-")
     out_dir.mkdir(parents=True, exist_ok=True)

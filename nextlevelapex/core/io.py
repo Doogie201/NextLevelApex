@@ -1,46 +1,74 @@
+import contextlib
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 
+def _fsync_directory(directory: Path) -> None:
+    """
+    Best-effort fsync of the containing directory so the rename metadata is durable.
+    Supported on Darwin/Linux; intentionally silent on failure.
+    """
+    platform_name = str(sys.platform)
+    if not platform_name.startswith(("darwin", "linux")):
+        return
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+
+    try:
+        dir_fd = os.open(str(directory), flags)
+    except OSError:
+        return
+
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
 def atomic_write_text(path: Path | str, content: str, perms: int | None = None) -> None:
     """
-    Writes content to a temporary file, fsyncs it, and then replaces the target
-    atomically. Handles fsyncing the directory on POSIX platforms.
+    Atomically write text content:
+    1) write temp file in destination directory
+    2) flush + fsync temp file
+    3) optional chmod
+    4) os.replace(temp, final)
+    5) best-effort fsync destination directory
     """
-    path = Path(path).resolve()
-    dir_path = path.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
+    final_path = Path(path)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write to a mkstemp in the exact same directory to ensure they
-    # are on the same filesystem (which makes os.replace atomic).
-    fd, tmp_path = tempfile.mkstemp(dir=dir_path, text=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=str(final_path.parent),
+        prefix=f".{final_path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(temp_name)
+
     try:
-        with open(fd, "w") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
+        try:
+            temp_file = os.fdopen(fd, "w", encoding="utf-8")
+        except Exception:
+            os.close(fd)
+            raise
+
+        with temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
 
         if perms is not None:
-            Path(tmp_path).chmod(perms)
+            os.chmod(temp_path, perms)  # noqa: PTH101
 
-        Path(tmp_path).replace(path)
-
-        # Best effort attempt to fsync the directory to persist the directory entry rename
-        if hasattr(os, "O_DIRECTORY"):
-            try:
-                dir_fd = os.open(dir_path, os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
-
+        os.replace(temp_path, final_path)  # noqa: PTH105
+        _fsync_directory(final_path.parent)
     except Exception:
-        # Clean up the temp file if anything fails
-        import contextlib
-
         with contextlib.suppress(OSError):
-            Path(tmp_path).unlink()
+            temp_path.unlink()
         raise

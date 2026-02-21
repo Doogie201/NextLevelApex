@@ -190,9 +190,10 @@ def _truncate(val: Any, max_len: int = 8192) -> str:
             val = json.dumps(val, default=str)
         except Exception:
             val = str(val)
-    if len(val) > max_len:
-        return val[:max_len] + "...[TRUNCATED]"
-    return val
+    safe_val = str(val)
+    if len(safe_val) > max_len:
+        return safe_val[:max_len] + "...[TRUNCATED]"
+    return safe_val
 
 
 def update_task_health(
