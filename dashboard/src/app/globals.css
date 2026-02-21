@@ -591,6 +591,30 @@ textarea:focus-visible,
   flex-wrap: wrap;
 }
 
+.empty-state-card {
+  border: 1px dashed rgba(149, 158, 201, 0.4);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(8, 14, 28, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-state-card h3 {
+  margin: 0;
+  color: #f4f8ff;
+  font-size: 0.95rem;
+}
+
+.empty-state-actions,
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .sessions-list {
   display: flex;
   flex-direction: column;
@@ -1012,6 +1036,24 @@ details summary {
   font-family: "IBM Plex Mono", "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.76rem;
   text-align: center;
+}
+
+.help-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.help-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.help-section h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #f0f5ff;
 }
 
 .reduce-motion .aurora-background,

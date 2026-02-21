@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  CircleHelp,
   Clock3,
   Contrast,
   Copy,
@@ -28,6 +29,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 
 import type { CommandId } from "@/engine/commandContract";
 import { isRunEnvelope } from "@/engine/apiContract";
+import { buildDiagnosticsText } from "@/engine/diagnosticsPayload";
+import { buildGuiSettingsExportJson, clearGuiSettings } from "@/engine/guiSettings";
 import { localhostWarning } from "@/engine/hostSafety";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
 import { evaluateShortcut, initialShortcutState, type ShortcutState } from "@/engine/keyboardShortcuts";
@@ -94,6 +97,7 @@ interface TaskRowSummary {
 }
 
 const TASK_VISIBLE_STEP = 200;
+const GUI_BUILD_ID = "phase10";
 
 function taskRowId(taskName: string): string {
   return `task-row-${encodeURIComponent(taskName)}`;
@@ -208,6 +212,7 @@ export default function Home() {
   const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [taskVisibleLimit, setTaskVisibleLimit] = useState(TASK_VISIBLE_STEP);
+  const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
@@ -228,6 +233,7 @@ export default function Home() {
   const [isBusy, setIsBusy] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [consoleHelpOpen, setConsoleHelpOpen] = useState(false);
   const [shortcutState, setShortcutState] = useState<ShortcutState>(() => initialShortcutState());
   const [liveMessage, setLiveMessage] = useState("Ready.");
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
@@ -248,6 +254,9 @@ export default function Home() {
   const shortcutCloseRef = useRef<HTMLButtonElement | null>(null);
   const shortcutDialogRef = useRef<HTMLDivElement | null>(null);
   const shortcutOpenerRef = useRef<HTMLElement | null>(null);
+  const consoleHelpCloseRef = useRef<HTMLButtonElement | null>(null);
+  const consoleHelpDialogRef = useRef<HTMLDivElement | null>(null);
+  const consoleHelpOpenerRef = useRef<HTMLElement | null>(null);
 
   const effectiveReducedMotion = useMemo(
     () => resolveReducedMotionEffective(reduceMotionOverride, prefersReducedMotion),
@@ -450,6 +459,7 @@ export default function Home() {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
       shortcutOpenerRef.current = document.activeElement;
     }
+    setConsoleHelpOpen(false);
     setShortcutsOpen(true);
     setLiveMessage("Keyboard shortcuts opened.");
   }, []);
@@ -460,6 +470,21 @@ export default function Home() {
     shortcutOpenerRef.current?.focus();
   }, []);
 
+  const openConsoleHelp = useCallback((): void => {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      consoleHelpOpenerRef.current = document.activeElement;
+    }
+    setShortcutsOpen(false);
+    setConsoleHelpOpen(true);
+    setLiveMessage("Console help opened.");
+  }, []);
+
+  const closeConsoleHelp = useCallback((): void => {
+    setConsoleHelpOpen(false);
+    setLiveMessage("Console help closed.");
+    consoleHelpOpenerRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!shortcutsOpen) {
       return;
@@ -468,7 +493,22 @@ export default function Home() {
   }, [shortcutsOpen]);
 
   useEffect(() => {
+    if (!consoleHelpOpen) {
+      return;
+    }
+    consoleHelpCloseRef.current?.focus();
+  }, [consoleHelpOpen]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (consoleHelpOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeConsoleHelp();
+        }
+        return;
+      }
+
       const result = evaluateShortcut(shortcutState, {
         key: event.key,
         nowMs: Date.now(),
@@ -518,7 +558,16 @@ export default function Home() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeView, closeKeyboardShortcuts, openKeyboardShortcuts, setViewByShortcut, shortcutState, shortcutsOpen]);
+  }, [
+    activeView,
+    closeConsoleHelp,
+    closeKeyboardShortcuts,
+    consoleHelpOpen,
+    openKeyboardShortcuts,
+    setViewByShortcut,
+    shortcutState,
+    shortcutsOpen,
+  ]);
 
   const callNlx = useCallback(
     async (commandId: CommandId, taskName?: string, signal?: AbortSignal): Promise<CommandResponse> => {
@@ -712,13 +761,16 @@ export default function Home() {
   const loadTasks = useCallback(async (): Promise<void> => {
     const result = await executeCommand("listTasks");
     if (!result.ok) {
-      setFriendlyMessage(summarizeCommandResult(result));
+      const message = summarizeCommandResult(result);
+      setTaskLoadError(message);
+      setFriendlyMessage(message);
       return;
     }
 
     const taskNames = result.taskNames ?? [];
     setKnownTasks(taskNames);
     setSelectedTasks((previous) => previous.filter((task) => taskNames.includes(task)));
+    setTaskLoadError(null);
   }, [executeCommand]);
 
   const runDiagnose = useCallback(async (): Promise<void> => {
@@ -966,6 +1018,47 @@ export default function Home() {
     [closeKeyboardShortcuts],
   );
 
+  const handleConsoleHelpDialogKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeConsoleHelp();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const container = consoleHelpDialogRef.current;
+      if (!container) {
+        return;
+      }
+
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+      if (focusables.length === 0) {
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    },
+    [closeConsoleHelp],
+  );
+
   const motionTransition = useMemo(
     () => (effectiveReducedMotion ? { duration: 0 } : { duration: 0.22 }),
     [effectiveReducedMotion],
@@ -1135,6 +1228,74 @@ export default function Home() {
     downloadTextPayload(`nlx-session-bundle-${timestamp}.json`, buildSessionBundleExportJson(source));
     setFriendlyMessage("Exported filtered session bundle JSON (redacted).");
   }, [downloadTextPayload, filteredSessions, runSessions]);
+
+  const copyConsoleDiagnostics = useCallback(async (): Promise<void> => {
+    if (typeof navigator === "undefined") {
+      return;
+    }
+    const pinnedCount = runSessions.filter((session) => session.pinned).length;
+    const payload = buildDiagnosticsText({
+      guiBuild: GUI_BUILD_ID,
+      userAgent: navigator.userAgent,
+      readOnly,
+      highContrast,
+      reducedMotion: effectiveReducedMotion,
+      sessionCount: runSessions.length,
+      pinnedCount,
+      activeView,
+      selectedSessionId,
+    });
+    try {
+      await navigator.clipboard.writeText(payload);
+      setFriendlyMessage("Copied diagnostics summary.");
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, [activeView, effectiveReducedMotion, highContrast, readOnly, runSessions, selectedSessionId]);
+
+  const clearGuiSettingsWithConfirm = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!window.confirm("Clear GUI settings (contrast, reduced motion, and session filters)?")) {
+      return;
+    }
+    clearGuiSettings(window.localStorage);
+    setHighContrast(false);
+    setReduceMotionOverride(null);
+    setSessionsPanelOpen(true);
+    setSessionCommandFilter("ALL");
+    setSessionBadgeFilter("ALL");
+    setSessionTimeRange("all");
+    setSessionDegradedOnly(false);
+    setFriendlyMessage("Cleared GUI settings.");
+  }, []);
+
+  const exportGuiSettings = useCallback((): void => {
+    const payload = buildGuiSettingsExportJson({
+      highContrast,
+      reduceMotionOverride,
+      sessionsPanelOpen,
+      sessionFilters: {
+        commandId: sessionCommandFilter,
+        badge: sessionBadgeFilter,
+        degradedOnly: sessionDegradedOnly,
+        timeRange: sessionTimeRange,
+      },
+    });
+    const timestamp = new Date().toISOString().replace(/[:]/g, "-");
+    downloadTextPayload(`nlx-gui-settings-${timestamp}.json`, payload);
+    setFriendlyMessage("Exported GUI settings JSON.");
+  }, [
+    downloadTextPayload,
+    highContrast,
+    reduceMotionOverride,
+    sessionBadgeFilter,
+    sessionCommandFilter,
+    sessionDegradedOnly,
+    sessionTimeRange,
+    sessionsPanelOpen,
+  ]);
 
   const taskRows = useMemo<TaskRowSummary[]>(() => {
     const latest = new Map<string, TaskRowSummary>();
@@ -1433,6 +1594,16 @@ export default function Home() {
             >
               <Keyboard className="w-4 h-4" /> Shortcuts
             </button>
+            <button
+              className="btn-muted"
+              type="button"
+              aria-label="Open console help"
+              aria-haspopup="dialog"
+              aria-expanded={consoleHelpOpen}
+              onClick={openConsoleHelp}
+            >
+              <CircleHelp className="w-4 h-4" /> Console Help
+            </button>
             {isBusy && (
               <span ref={runStatusRef} tabIndex={-1} className="run-state-chip" aria-live="polite">
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1558,12 +1729,45 @@ export default function Home() {
                   </label>
                 </div>
 
+                {taskLoadError && (
+                  <section className="empty-state-card" aria-live="polite" aria-label="Task loading failure guidance">
+                    <h3>Cannot load tasks</h3>
+                    <p className="meta-muted">{taskLoadError}</p>
+                    <p className="meta-muted">
+                      Task discovery failed. Check `nlx list-tasks` availability, then retry task loading or run diagnose.
+                    </p>
+                    <div className="empty-state-actions">
+                      <button className="btn-muted" type="button" onClick={() => void loadTasks()} disabled={isBusy}>
+                        Refresh Task List
+                      </button>
+                      <button className="btn-theme" type="button" onClick={() => void runDiagnose()} disabled={isBusy}>
+                        <Activity className="w-4 h-4" /> Run Diagnose
+                      </button>
+                    </div>
+                  </section>
+                )}
+
                 <p className="meta-muted" aria-live="polite">
                   Showing {visibleTaskRows.length} of {filteredTaskRows.length} task(s).
                 </p>
                 <p className="meta-muted">Latest task result rows: {taskResults.length}</p>
 
-                {filteredTaskRows.length === 0 ? (
+                {!taskLoadError && knownTasks.length === 0 ? (
+                  <section className="empty-state-card" aria-live="polite" aria-label="Task list empty state">
+                    <h3>No tasks loaded yet</h3>
+                    <p className="meta-muted">
+                      Run a refresh to load tasks from NLX. If it remains empty, run diagnose and inspect the output panel.
+                    </p>
+                    <div className="empty-state-actions">
+                      <button className="btn-muted" type="button" onClick={() => void loadTasks()} disabled={isBusy}>
+                        Refresh Task List
+                      </button>
+                      <button className="btn-theme" type="button" onClick={() => void runDiagnose()} disabled={isBusy}>
+                        <Activity className="w-4 h-4" /> Run Diagnose
+                      </button>
+                    </div>
+                  </section>
+                ) : filteredTaskRows.length === 0 ? (
                   <p className="meta-muted">No tasks match the current search query.</p>
                 ) : (
                   <div
@@ -1746,8 +1950,26 @@ export default function Home() {
                         </button>
                       </div>
 
-                      {filteredSessions.length === 0 ? (
-                        <p className="meta-muted">No run sessions match the current filters.</p>
+                      {runSessions.length === 0 ? (
+                        <section className="empty-state-card" aria-live="polite" aria-label="Run sessions empty state">
+                          <h3>No run sessions yet</h3>
+                          <p className="meta-muted">
+                            Sessions are created after running diagnose or a dry-run command.
+                          </p>
+                          <div className="empty-state-actions">
+                            <button className="btn-theme" type="button" onClick={() => void runDiagnose()} disabled={isBusy}>
+                              <Activity className="w-4 h-4" /> Run Diagnose
+                            </button>
+                            <button className="btn-muted" type="button" onClick={() => void runDryRunSweep()} disabled={isBusy}>
+                              <Play className="w-4 h-4" /> Run Dry-Run Sweep
+                            </button>
+                          </div>
+                        </section>
+                      ) : filteredSessions.length === 0 ? (
+                        <section className="empty-state-card" aria-live="polite" aria-label="Run sessions filtered empty state">
+                          <h3>No sessions match filters</h3>
+                          <p className="meta-muted">Adjust command, badge, range, or degraded-only filters to continue.</p>
+                        </section>
                       ) : (
                         <div
                           ref={sessionsListRef}
@@ -1877,6 +2099,12 @@ export default function Home() {
                           <Download className="w-4 h-4" /> Download Event
                         </button>
                       </div>
+                      {selectedSession.events.length === 0 && (
+                        <p className="meta-muted">
+                          No events captured for this session. This can happen when runs are canceled, timeout early, or return no
+                          timeline events.
+                        </p>
+                      )}
                     </>
                   ) : (
                     <p className="meta-muted">Select an event to inspect run details.</p>
@@ -1884,7 +2112,17 @@ export default function Home() {
                 </section>
 
                 {filteredHistory.length === 0 ? (
-                  <p className="meta-muted">No output entries for the selected filter.</p>
+                  <section className="empty-state-card" aria-live="polite" aria-label="Output timeline empty state">
+                    <h3>No events captured</h3>
+                    <p className="meta-muted">
+                      {selectedSession
+                        ? "The selected session has no matching timeline events for current filters."
+                        : "Run diagnose or dry-run to populate timeline events."}
+                    </p>
+                    <p className="meta-muted">
+                      Common causes: command timeout, cancellation, or filters/search excluding current output.
+                    </p>
+                  </section>
                 ) : (
                   <div className="timeline-list" role="list" aria-label="Command timeline">
                     {filteredHistory.map((event) => {
@@ -2246,6 +2484,63 @@ export default function Home() {
                 <span>Navigate sessions (Output view)</span>
               </li>
             </ul>
+          </div>
+        </div>
+      )}
+
+      {consoleHelpOpen && (
+        <div className="shortcut-overlay" role="presentation">
+          <div
+            ref={consoleHelpDialogRef}
+            className="shortcut-dialog glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="console-help-title"
+            onKeyDown={handleConsoleHelpDialogKeyDown}
+          >
+            <header className="shortcut-header">
+              <h2 id="console-help-title" className="section-title">
+                Console Help
+              </h2>
+              <button ref={consoleHelpCloseRef} className="btn-muted" type="button" onClick={closeConsoleHelp}>
+                <X className="w-4 h-4" /> Close
+              </button>
+            </header>
+
+            <div className="help-body">
+              <section className="help-section">
+                <h3>How Runs Work</h3>
+                <ul className="shortcut-list">
+                  <li>
+                    <span>Single-flight: only one command can run at a time. Additional requests return busy guidance.</span>
+                  </li>
+                  <li>
+                    <span>Timeouts map to DEGRADED so the UI stays deterministic without crashing.</span>
+                  </li>
+                  <li>
+                    <span>Outputs shown and exported from the GUI are redacted before render and persistence.</span>
+                  </li>
+                </ul>
+              </section>
+
+              <section className="help-section">
+                <h3>Local Storage</h3>
+                <p className="meta-muted">
+                  Sessions are stored in browser localStorage for quick restore. Use clear controls below to reset local GUI state.
+                </p>
+                <div className="settings-actions">
+                  <button className="btn-muted" type="button" onClick={() => void copyConsoleDiagnostics()}>
+                    <Copy className="w-4 h-4" /> Copy Diagnostics
+                  </button>
+                  <button className="btn-muted" type="button" onClick={exportGuiSettings}>
+                    <Download className="w-4 h-4" /> Export Settings
+                  </button>
+                  <button className="btn-muted" type="button" onClick={clearGuiSettingsWithConfirm}>
+                    <Trash2 className="w-4 h-4" /> Clear Settings
+                  </button>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
       )}
