@@ -1,0 +1,30 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+
+:root {
+  --bg-1: #04131c;
+  --bg-2: #0e2a39;
+  --surface: rgba(5, 21, 30, 0.78);
+  --surface-border: rgba(102, 208, 255, 0.24);
+  --text-1: #effaff;
+  --text-2: #acd0e2;
+  --accent-cyan: #44d6ff;
+  --accent-amber: #ffb554;
+  --ok: #49cf8d;
+  --degraded: #ffb454;
+  --broken: #ff6c5c;
+
+  --font-display: "Space Grotesk", "Avenir Next", sans-serif;
+  --font-body: "Manrope", "Avenir Next", sans-serif;
+
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --motion-fast: 120ms;
+  --motion-base: 220ms;
+  --motion-slow: 420ms;
+}

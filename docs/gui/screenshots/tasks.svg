@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#0a1e2d"/>
+  <text x="70" y="90" fill="#effaff" font-size="42" font-family="Space Grotesk, sans-serif">NextLevelApex GUI</text>
+  <rect x="70" y="150" width="1140" height="470" rx="20" fill="#103043" stroke="#59d8ff" stroke-opacity="0.4"/>
+  <text x="110" y="220" fill="#effaff" font-size="34" font-family="Space Grotesk, sans-serif">Tasks</text>
+  <rect x="110" y="256" width="190" height="56" rx="10" fill="#3dc0e7"/>
+  <text x="136" y="292" fill="#052030" font-size="22" font-family="Manrope, sans-serif">Refresh Task List</text>
+  <rect x="322" y="256" width="170" height="56" rx="10" fill="#50e2bc"/>
+  <text x="355" y="292" fill="#052030" font-size="22" font-family="Manrope, sans-serif">Run Dry-Run</text>
+  <rect x="110" y="340" width="540" height="64" rx="10" fill="#0b1f2d" stroke="#2e6b86"/>
+  <text x="130" y="380" fill="#e9faff" font-size="24" font-family="Manrope, sans-serif">DNS Stack Sanity Check</text>
+  <text x="110" y="452" fill="#a9d2e4" font-size="24" font-family="Manrope, sans-serif">Latest task result: PASS</text>
+</svg>
