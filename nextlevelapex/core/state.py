@@ -79,32 +79,16 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def atomic_write_json_0600(data: dict[str, Any], path: Path) -> bool:
-    import os
-    import tempfile
+    import logging
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from nextlevelapex.core.io import atomic_write_text
+
     try:
-        # Create a secure temp file in the same directory to guarantee atomic os.replace
-        fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".tmp_state_", text=False)
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-
-        # Enforce strict 0600 permissions
-        Path(temp_path).chmod(0o600)
-
-        # Atomically replace the target file
-        Path(temp_path).replace(path)
+        content = json.dumps(data, indent=2)
+        atomic_write_text(path, content, perms=0o600)
         return True
     except Exception as e:
         logging.exception(f"Failed atomic write to {path}: {e}")
-        # Cleanup temp file on failure
-        if 'temp_path' in locals():
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                Path(temp_path).unlink()
         return False
 
 
@@ -144,6 +128,28 @@ def compute_file_history_hash(path: Path) -> str | None:
         return None
 
 
+def compute_file_hashes(paths: list[Path]) -> dict[str, str]:
+    """Pure function to compute hashes for a list of files."""
+    hashes = {}
+    for path in paths:
+        h = compute_file_history_hash(path)
+        if h:
+            hashes[str(path)] = h
+    return hashes
+
+
+def check_drift(prev_hashes: dict[str, str], current_hashes: dict[str, str]) -> bool:
+    """
+    Pure function to compare two hash dictionaries.
+    Returns True if any tracked file from prev_hashes changed or is missing,
+    or if a new file appeared in current_hashes.
+    """
+    if set(prev_hashes.keys()) != set(current_hashes.keys()):
+        return True
+
+    return any(current_hashes.get(path) != old_hash for path, old_hash in prev_hashes.items())
+
+
 def update_file_hashes(state: dict[str, Any], files: list[Path]) -> dict[str, Any]:
     hashes = {}
     for file in files:
@@ -177,6 +183,18 @@ def mark_section_failed(section: str, state: dict[str, Any]) -> None:
     state["completed_sections"] = [s for s in state.get("completed_sections", []) if s != section]
 
 
+def _truncate(val: Any, max_len: int = 8192) -> str:
+    """Safely convert any object to string and truncate predictably with marker."""
+    if not isinstance(val, str):
+        try:
+            val = json.dumps(val, default=str)
+        except Exception:
+            val = str(val)
+    if len(val) > max_len:
+        return val[:max_len] + "...[TRUNCATED]"
+    return val
+
+
 def update_task_health(
     task: str,
     status: str,
@@ -188,12 +206,20 @@ def update_task_health(
         return
     if "health_history" not in state:
         state["health_history"] = {}
+
+    task = _truncate(task, 128)
+    status = _truncate(status, 16)
+
     if task not in state["health_history"]:
         state["health_history"][task] = []
     history = state["health_history"][task]
-    entry = {"timestamp": now, "status": status}
+
+    entry = {"timestamp": _truncate(now, 64), "status": status}
     if details:
-        entry.update(details)
+        # Sanitize dictionary values against DoS memory bloating
+        safe_details = {str(k)[:128]: _truncate(v, 8192) for k, v in details.items()}
+        entry.update(safe_details)
+
     history.append(entry)
     # Keep only last N results
     state["health_history"][task] = history[-STATE_HISTORY_DEPTH:]

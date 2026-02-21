@@ -89,8 +89,23 @@ def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
         if hasattr(module, "TASK_REGISTRY"):
             tasks.update(module.TASK_REGISTRY)
 
-    # Also add function tasks registered globally (from core.registry)
-    tasks.update(get_task_registry())
+    # Add function tasks from global registry, gated by strict exact-match provenance
+    import logging
+
+    for task_name, fn in get_task_registry().items():
+        module_name = getattr(fn, "__module__", "") or ""
+        valid = False
+        for allowed in ALLOWED_MODULES:
+            if module_name == f"nextlevelapex.tasks.{allowed}":
+                valid = True
+                break
+        if valid:
+            tasks[task_name] = fn
+        else:
+            logging.warning(
+                f"SECURITY WARNING: Rejecting registry task '{task_name}' outside ALLOWED_MODULES. Module: {module_name}"
+            )
+
     return tasks
 
 
@@ -329,12 +344,17 @@ def main(
 
     ensure_task_state(state, task_names)
 
-    # 3. Check config/manifest file hashes for drift detection
-    files = discover_files_for_hashing()
-    hash_drift = any(file_hash_changed(state, f) for f in files)
+    # 3. Check config/manifest file hashes for drift detection using pure single-pass logic
+    from nextlevelapex.core.state import check_drift, compute_file_hashes
 
-    # 4. Now that drift is evaluated, safely update the tracked hashes in state
-    update_file_hashes(state, files)
+    files = discover_files_for_hashing()
+
+    prev_hashes = state.get("file_hashes", {})
+    current_hashes = compute_file_hashes(files)
+    hash_drift = check_drift(prev_hashes, current_hashes)
+
+    # 4. Now that drift is evaluated purely, safely update the tracked hashes in state
+    state["file_hashes"] = current_hashes
 
     # 5. Run tasks as needed
     for name, task_callable in discovered_tasks.items():
@@ -689,10 +709,10 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
 
 @app.command("export-state")
 def export_state(
-    fmt: str = typer.Option("json", help="Export format: json, yaml, csv"),
+    fmt: str = typer.Option("json", help="Export format: json, csv (YAML removed for security)"),
 ):
     """
-    Export orchestrator state as JSON, YAML, or CSV.
+    Export orchestrator state as JSON or CSV.
     """
     state = load_state(STATE_PATH)
     path = REPORTS_DIR / f"state-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.{fmt}"
@@ -702,10 +722,11 @@ def export_state(
         with path.open("w") as f:
             json.dump(state, f, indent=2)
     elif fmt == "yaml":
-        import yaml
-
-        with path.open("w") as f:
-            yaml.dump(state, f)
+        typer.secho(
+            "ERROR: YAML export requires optional dependency; not enabled in hardened build.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
     elif fmt == "csv":
         import csv
 
@@ -837,6 +858,10 @@ def install_archiver_cmd():
 @app.command("install-sudoers")
 def install_sudoers(
     dry_run: bool = typer.Option(False, help="Show sudoers content without installing."),
+    interface: str = typer.Option(
+        None,
+        help="Explicit network interface for DNS commands (required). Use to avoid dynamic detection risks.",
+    ),
 ):
     """
     Installs a secure /etc/sudoers.d/nextlevelapex file to allow passwordless execution
@@ -852,20 +877,52 @@ def install_sudoers(
 
     # Using ALL=(ALL) to comprehensively map root execution paths securely without wildcards
 
-    # 1. Detect dynamic active interface to prevent networksetup * wildcard abuse
+    # 1. Safely gather valid interfaces via subprocess.run (no shell=True)
     try:
-        active_iface_cmd = (
-            "networksetup -listallnetworkservices | awk '{if(NR>1 && $0!~/^\\*/) print $0; exit}'"
+        check = subprocess.run(
+            ["networksetup", "-listallnetworkservices"], capture_output=True, text=True, check=True
         )
-        active_iface = subprocess.check_output(active_iface_cmd, shell=True).decode().strip()
-    except Exception:
-        active_iface = "Wi-Fi"
+        lines = check.stdout.strip().splitlines()
+        # Skip the first informational line and any disabled lines
+        valid_interfaces = [
+            line.strip() for line in lines[1:] if line.strip() and not line.startswith("*")
+        ]
+    except Exception as e:
+        typer.secho(f"Failed to list network services safely: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    if not interface:
+        typer.secho(
+            "ERROR: --interface argument is required for safe sudoers installation. Do NOT guess.",
+            fg=typer.colors.RED,
+        )
+        typer.echo(f"Available services: {', '.join(valid_interfaces)}")
+        raise typer.Exit(code=1)
+
+    if interface not in valid_interfaces:
+        typer.secho(
+            f"ERROR: Interface '{interface}' is not a valid active network service.",
+            fg=typer.colors.RED,
+        )
+        typer.echo(f"Available services: {', '.join(valid_interfaces)}")
+        raise typer.Exit(code=1)
+
+    # Reject newlines, commas, backslashes, quotes just to be defensively safe
+    if any(c in interface for c in ["\n", "\r", ",", "\"", "'", "\\"]):
+        typer.secho(
+            f"ERROR: Interface '{interface}' contains characters unsafe for sudoers.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    # Sudoers requires escaping spaces in command arguments with a backslash
+    escaped_iface = interface.replace(" ", "\\ ")
 
     # Whitelisting EXACT binaries and arguments we elevate (CWE-269 mitigation)
     commands = [
         "/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on",
-        f"/usr/sbin/networksetup -setdnsservers {active_iface} 127.0.0.1",
-        f"/usr/sbin/networksetup -setdnsservers {active_iface} Empty",
+        f"/usr/sbin/networksetup -setdnsservers {escaped_iface} 127.0.0.1",
+        f"/usr/sbin/networksetup -setdnsservers {escaped_iface} Empty",
     ]
 
     cmd_string = ", ".join(commands)
@@ -920,6 +977,7 @@ def install_sudoers(
             )
             typer.secho("Once complete, re-run this command.", fg=typer.colors.WHITE)
             raise typer.Exit(code=1)
+
         # 4. Install the validated file securely setting 0440 permissions and root:wheel ownership
         install_cmd = [
             "sudo",

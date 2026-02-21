@@ -133,12 +133,14 @@ def _enable_touchid_sudo(cfg: dict, dry_run: bool) -> TaskResult:
         )
         return result
 
-    shell_cmd = (
-        f"printf '%s' {shlex.quote(pam_line)} | "
-        f"sudo /usr/bin/tee -a {shlex.quote(str(PAM_SUDO_FILE))} >/dev/null"
-    )
     try:
-        subprocess.run(shell_cmd, shell=True, check=True, text=True, capture_output=True)
+        subprocess.run(
+            ["sudo", "/usr/bin/tee", "-a", str(PAM_SUDO_FILE)],
+            input=pam_line,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
         result.changed = True
         result.messages.append((Severity.INFO, "Added Touch-ID sudo rule"))
     except subprocess.CalledProcessError as exc:
