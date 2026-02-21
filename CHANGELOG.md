@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project uses semantic versionin
 
 ## [Unreleased]
 
+- No changes yet.
+
+## [0.1.3] - 2026-02-21
+
+Release tracking: [PR #66].
+
 ### Security
 - Hardened `install-sudoers` behavior:
   - macOS-only gate
@@ -27,3 +33,8 @@ The format is based on Keep a Changelog and this project uses semantic versionin
 
 ### CI
 - Corrected multiline pytest coverage invocation in GitHub Actions CI.
+- Aligned CI matrix to supported Python versions (`3.11`, `3.12`).
+- Enforced a conservative baseline coverage floor while retaining non-regression checks.
+
+[0.1.3]: https://github.com/Doogie201/NextLevelApex/releases/tag/v0.1.3
+[PR #66]: https://github.com/Doogie201/NextLevelApex/pull/66
