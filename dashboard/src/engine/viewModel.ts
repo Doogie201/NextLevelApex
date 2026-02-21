@@ -61,6 +61,16 @@ export interface CommandEvent {
   taskResults: TaskResult[];
 }
 
+export interface SeverityGroup {
+  severity: TaskResult["status"];
+  items: TaskResult[];
+}
+
+export interface TaskGroup {
+  taskName: string;
+  items: TaskResult[];
+}
+
 export function classifyCommandOutcome(result: CommandResponse): CommandOutcome {
   if (!result.ok) {
     return "FAIL";
@@ -159,4 +169,46 @@ export function isStale(lastUpdatedAtIso: string | null, nowMs: number, staleAft
   }
 
   return nowMs - parsed > staleAfterMs;
+}
+
+const SEVERITY_ORDER: Record<TaskResult["status"], number> = {
+  FAIL: 0,
+  WARN: 1,
+  UNKNOWN: 2,
+  SKIP: 3,
+  PASS: 4,
+};
+
+export function groupTaskResults(taskResults: TaskResult[]): {
+  bySeverity: SeverityGroup[];
+  byTask: TaskGroup[];
+} {
+  const severityMap = new Map<TaskResult["status"], TaskResult[]>();
+  const taskMap = new Map<string, TaskResult[]>();
+
+  for (const result of taskResults) {
+    const severityBucket = severityMap.get(result.status) ?? [];
+    severityBucket.push(result);
+    severityMap.set(result.status, severityBucket);
+
+    const taskBucket = taskMap.get(result.taskName) ?? [];
+    taskBucket.push(result);
+    taskMap.set(result.taskName, taskBucket);
+  }
+
+  const bySeverity = Array.from(severityMap.entries())
+    .map(([severity, items]) => ({
+      severity,
+      items: [...items].sort((a, b) => a.taskName.localeCompare(b.taskName)),
+    }))
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
+  const byTask = Array.from(taskMap.entries())
+    .map(([taskName, items]) => ({
+      taskName,
+      items: [...items].sort((a, b) => SEVERITY_ORDER[a.status] - SEVERITY_ORDER[b.status]),
+    }))
+    .sort((a, b) => a.taskName.localeCompare(b.taskName));
+
+  return { bySeverity, byTask };
 }

@@ -1,5 +1,6 @@
 import {
   classifyCommandOutcome,
+  groupTaskResults,
   healthBadgeFromDiagnose,
   isStale,
   summarizeCommandResult,
@@ -55,5 +56,22 @@ describe("view model helpers", () => {
     const now = Date.parse("2026-02-21T20:00:00.000Z");
     expect(isStale("2026-02-21T19:40:00.000Z", now, 10 * 60 * 1000)).toBe(true);
     expect(isStale("2026-02-21T19:59:00.000Z", now, 10 * 60 * 1000)).toBe(false);
+  });
+
+  it("groups mixed task lines by severity and task deterministically", () => {
+    const grouped = groupTaskResults([
+      { taskName: "Mise", status: "PASS", reason: "ok" },
+      { taskName: "Cloudflared", status: "FAIL", reason: "timeout" },
+      { taskName: "Cloudflared", status: "WARN", reason: "slow" },
+      { taskName: "DNS Stack Sanity Check", status: "WARN", reason: "degraded" },
+    ]);
+
+    expect(grouped.bySeverity.map((entry) => entry.severity)).toEqual(["FAIL", "WARN", "PASS"]);
+    expect(grouped.byTask.map((entry) => entry.taskName)).toEqual([
+      "Cloudflared",
+      "DNS Stack Sanity Check",
+      "Mise",
+    ]);
+    expect(grouped.byTask[0]?.items.map((item) => item.status)).toEqual(["FAIL", "WARN"]);
   });
 });
