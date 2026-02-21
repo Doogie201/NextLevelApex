@@ -11,17 +11,30 @@ def markdown_escape(text: str) -> str:
     return str(text).replace("|", "\\|")
 
 
+def _trunc(val: Any, max_len: int) -> str:
+    """Predictable truncation to align reports with state ingestion."""
+    s = str(val)
+    if len(s) > max_len:
+        return s[:max_len] + "...[TRUNCATED]"
+    return s
+
+
 def get_health_summary(state: dict[str, Any]) -> str:
     lines = [
         "| Task | Status | Last Healthy | Trend |",
         "|------|--------|-------------|-------|",
     ]
     for task, status in state.get("task_status", {}).items():
-        last_healthy = status.get("last_healthy", "--")
+        # Truncate to align with Phase 2 bounds (defense in depth)
+        safe_task = _trunc(task, 128)
+        safe_status = _trunc(status["status"], 16)
+        last_healthy = _trunc(status.get("last_healthy", "--"), 64)
+
         recent = state.get("health_history", {}).get(task, [])
-        trend = " ".join([e["status"][0] for e in recent[-5:]]) if recent else "-"
+        trend = _trunc(" ".join([e["status"][0] for e in recent[-5:]]) if recent else "-", 16)
+
         lines.append(
-            f"| {markdown_escape(task)} | {markdown_escape(status['status'])} | {markdown_escape(last_healthy)} | {trend} |"
+            f"| {markdown_escape(safe_task)} | {markdown_escape(safe_status)} | {markdown_escape(last_healthy)} | {trend} |"
         )
     return "\n".join(lines)
 
@@ -29,10 +42,19 @@ def get_health_summary(state: dict[str, Any]) -> str:
 def get_health_detail(state: dict[str, Any], depth: int = 5) -> str:
     output = []
     for task, history in state.get("health_history", {}).items():
-        output.append(f"### Task: `{task}`\n")
+        safe_task = _trunc(task, 128)
+        output.append(f"### Task: `{safe_task}`\n")
+
         for entry in history[-depth:]:
-            details = json.dumps(entry.get("details", {}), indent=2) if "details" in entry else ""
-            output.append(f"- {entry['timestamp']}: **{entry['status']}** {details}")
+            raw_details = (
+                json.dumps(entry.get("details", {}), indent=2) if "details" in entry else ""
+            )
+
+            safe_ts = _trunc(entry['timestamp'], 64)
+            safe_st = _trunc(entry['status'], 16)
+            safe_det = _trunc(raw_details, 8192)
+
+            output.append(f"- {safe_ts}: **{safe_st}** {safe_det}")
         output.append("")
     return "\n".join(output)
 

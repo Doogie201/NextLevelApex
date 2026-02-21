@@ -344,12 +344,17 @@ def main(
 
     ensure_task_state(state, task_names)
 
-    # 3. Check config/manifest file hashes for drift detection
-    files = discover_files_for_hashing()
-    hash_drift = any(file_hash_changed(state, f) for f in files)
+    # 3. Check config/manifest file hashes for drift detection using pure single-pass logic
+    from nextlevelapex.core.state import check_drift, compute_file_hashes
 
-    # 4. Now that drift is evaluated, safely update the tracked hashes in state
-    update_file_hashes(state, files)
+    files = discover_files_for_hashing()
+
+    prev_hashes = state.get("file_hashes", {})
+    current_hashes = compute_file_hashes(files)
+    hash_drift = check_drift(prev_hashes, current_hashes)
+
+    # 4. Now that drift is evaluated purely, safely update the tracked hashes in state
+    state["file_hashes"] = current_hashes
 
     # 5. Run tasks as needed
     for name, task_callable in discovered_tasks.items():
