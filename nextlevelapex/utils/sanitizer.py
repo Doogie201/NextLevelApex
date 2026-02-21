@@ -1,10 +1,7 @@
 from typing import Any
 
 from nextlevelapex.core.logger import LoggerProxy
-from nextlevelapex.core.smartconfig import (
-    get_bloat_limit,
-    is_bloat_protection_enabled,
-)
+from nextlevelapex.core.smartconfig import get_bloat_limit, is_bloat_protection_enabled
 
 log = LoggerProxy(__name__)
 

@@ -79,8 +79,7 @@ def archive_old_reports(reports_dir: Path, dry_run: bool = False) -> None:
 
         try:
             # Open a single tarfile and add all old reports for this month
-            mode = "w:gz"
-            with tarfile.open(str(archive_path), mode) as tar:
+            with tarfile.open(str(archive_path), "w:gz") as tar:
                 for file_path in files:
                     tar.add(str(file_path), arcname=file_path.name)
 
