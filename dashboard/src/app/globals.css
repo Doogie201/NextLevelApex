@@ -140,6 +140,19 @@ body {
   flex-wrap: wrap;
 }
 
+.host-warning-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 210, 117, 0.45);
+  background: rgba(255, 210, 117, 0.12);
+  color: #ffe4a8;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
 .health-actions {
   display: flex;
   align-items: center;
