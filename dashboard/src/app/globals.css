@@ -45,6 +45,50 @@ body {
   overflow: hidden;
 }
 
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  transform: translateY(-140%);
+  z-index: 60;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(143, 194, 255, 0.9);
+  color: #eff5ff;
+  background: #081225;
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid rgba(143, 194, 255, 0.96);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px rgba(7, 12, 28, 0.9);
+}
+
 .aurora-background {
   position: fixed;
   inset: 0;
@@ -386,8 +430,12 @@ body {
   background: transparent;
   border: none;
   color: #f3f6ff;
-  outline: none;
   font-size: 0.9rem;
+}
+
+.search-control:focus-within {
+  border-color: rgba(143, 194, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(70, 128, 255, 0.24);
 }
 
 .select-control {
@@ -436,6 +484,11 @@ body {
 
 .timeline-item:hover {
   border-color: rgba(170, 185, 238, 0.44);
+}
+
+.timeline-item:focus-visible {
+  border-color: rgba(143, 194, 255, 0.86);
+  background: rgba(70, 128, 255, 0.15);
 }
 
 .timeline-item-active {
@@ -570,17 +623,6 @@ details summary {
   cursor: not-allowed;
 }
 
-.btn-theme:focus-visible,
-.btn-muted:focus-visible,
-.copy-btn:focus-visible,
-.nav-item:focus-visible,
-input:focus-visible,
-select:focus-visible,
-summary:focus-visible {
-  outline: 2px solid rgba(143, 194, 255, 0.9);
-  outline-offset: 2px;
-}
-
 .badge-status {
   display: inline-flex;
   align-items: center;
@@ -673,6 +715,81 @@ summary:focus-visible {
   color: #91f0bc;
   border: 1px solid rgba(83, 215, 158, 0.4);
   background: rgba(83, 215, 158, 0.13);
+}
+
+.shortcut-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(2, 6, 18, 0.68);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.shortcut-dialog {
+  width: min(520px, 96vw);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shortcut-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shortcut-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.shortcut-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: rgba(221, 229, 252, 0.94);
+}
+
+.shortcut-list kbd {
+  min-width: 58px;
+  border-radius: 8px;
+  border: 1px solid rgba(149, 158, 201, 0.45);
+  background: rgba(8, 13, 26, 0.78);
+  padding: 4px 8px;
+  color: #eff5ff;
+  font-family: "IBM Plex Mono", "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.76rem;
+  text-align: center;
+}
+
+.reduce-motion .aurora-background,
+.reduce-motion .aurora-background::after {
+  animation: none !important;
+  transform: none !important;
+}
+
+.reduce-motion * {
+  transition-duration: 0ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-background,
+  .aurora-background::after {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 ::-webkit-scrollbar {
