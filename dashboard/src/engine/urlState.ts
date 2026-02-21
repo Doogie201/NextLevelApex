@@ -6,6 +6,7 @@ export interface UrlState {
   view: UrlViewId;
   eventId: string | null;
   sessionId: string | null;
+  compareSessionId: string | null;
   severity: UrlSeverityFilter;
   inspectorSection: UrlInspectorSection;
   q: string;
@@ -15,6 +16,7 @@ const DEFAULT_URL_STATE: UrlState = {
   view: "dashboard",
   eventId: null,
   sessionId: null,
+  compareSessionId: null,
   severity: "ALL",
   inspectorSection: "summary",
   q: "",
@@ -68,12 +70,14 @@ export function parseUrlState(search: string): UrlState {
   const viewValue = params.get("view");
   const eventValue = params.get("event");
   const sessionValue = params.get("session");
+  const compareValue = params.get("compare");
   const qValue = params.get("q");
 
   return {
     view: viewValue && VIEW_VALUES.has(viewValue as UrlViewId) ? (viewValue as UrlViewId) : DEFAULT_URL_STATE.view,
     eventId: eventValue && eventValue.trim().length > 0 ? eventValue.trim() : null,
     sessionId: sessionValue && sessionValue.trim().length > 0 ? sessionValue.trim() : null,
+    compareSessionId: compareValue && compareValue.trim().length > 0 ? compareValue.trim() : null,
     severity: parseSeverity(params.get("severity")),
     inspectorSection: parseInspectorSection(params.get("panel")),
     q: qValue ?? "",
@@ -88,6 +92,9 @@ export function toUrlSearch(state: UrlState): string {
   }
   if (state.sessionId) {
     params.set("session", state.sessionId);
+  }
+  if (state.compareSessionId) {
+    params.set("compare", state.compareSessionId);
   }
   if (state.severity !== "ALL") {
     params.set("severity", serializeSeverity(state.severity));

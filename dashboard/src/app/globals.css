@@ -739,6 +739,20 @@ textarea:focus-visible,
   padding-right: 6px;
 }
 
+.timeline-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timeline-group-title {
+  margin: 4px 0 0;
+  font-size: 0.88rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(194, 203, 235, 0.78);
+}
+
 .timeline-item {
   border: 1px solid rgba(149, 158, 201, 0.22);
   border-radius: 14px;
