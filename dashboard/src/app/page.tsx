@@ -1,469 +1,324 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Terminal, ShieldAlert, Cpu, Play, CheckCircle2, XCircle, Clock, Zap, Target, FileText, Settings, RefreshCw, Archive, Info, Download } from "lucide-react";
-import clsx from "clsx";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, CheckCircle2, Play, Shield } from "lucide-react";
 
-const MODE_META = {
-  run: { icon: Play, label: "RUN", desc: "Standard workflow execution", color: "var(--color-run)" },
-  test: { icon: Target, label: "TEST", desc: "Validation & verification passes", color: "var(--color-test)" },
-  stress: { icon: Zap, label: "STRESS", desc: "High-load volume testing", color: "var(--color-stress)" },
-  security: { icon: ShieldAlert, label: "SECURITY", desc: "Vulnerability & hardening scans", color: "var(--color-security)" },
-};
-
-interface TaskInfo {
-  status: string;
-  last_update?: string;
+interface DiagnoseSummary {
+  dnsMode: string;
+  resolver: string;
+  pihole: string;
+  piholeUpstream: string;
+  cloudflared: string;
+  plaintextDns: string;
+  notes: string;
 }
 
-interface TaskDetail {
-  name: string;
-  docstring: string;
-  status: { status?: string; last_update?: string };
-  history: Array<{ status: string; timestamp: string }>;
+interface TaskResult {
+  taskName: string;
+  status: "PASS" | "FAIL" | "WARN" | "SKIP" | "UNKNOWN";
+  reason: string;
+}
+
+interface CommandResponse {
+  ok: boolean;
+  commandId: string;
+  exitCode: number;
+  timedOut: boolean;
+  errorType: string;
+  stdout: string;
+  stderr: string;
+  taskNames?: string[];
+  taskResults?: TaskResult[];
+  diagnose?: {
+    summary: DiagnoseSummary;
+    badge: "OK" | "DEGRADED" | "BROKEN";
+  };
+  error?: string;
+}
+
+type BadgeStatus = "OK" | "DEGRADED" | "BROKEN";
+
+function formatNow(): string {
+  return new Date().toLocaleString();
 }
 
 export default function Home() {
-  const [tasks, setTasks] = useState<Record<string, TaskInfo>>({});
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [mode, setMode] = useState<keyof typeof MODE_META>("run");
-  const [logs, setLogs] = useState<{ id: number; text: string; time: string }[]>([]);
-  const logCounter = useRef(0);
-  const terminalEndRef = useRef<HTMLDivElement>(null);
-
-  // New states for extended CLI mapping
-  const [dryRun, setDryRun] = useState(false);
-  const [noReports, setNoReports] = useState(false);
+  const [readOnly, setReadOnly] = useState(true);
+  const [healthBadge, setHealthBadge] = useState<BadgeStatus>("BROKEN");
+  const [diagnoseSummary, setDiagnoseSummary] = useState<DiagnoseSummary | null>(null);
+  const [knownTasks, setKnownTasks] = useState<string[]>([]);
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
-  const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null);
+  const [lastRunAt, setLastRunAt] = useState<string>("never");
+  const [isBusy, setIsBusy] = useState(false);
+  const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
+  const [friendlyMessage, setFriendlyMessage] = useState("Run diagnose to evaluate stack health.");
+  const [rawStdout, setRawStdout] = useState("");
+  const [rawStderr, setRawStderr] = useState("");
 
-  const addLog = (text: string) => {
-    const now = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric", second: "numeric" });
-    setLogs((prev) => [...prev, { id: logCounter.current++, text, time: now }]);
-  };
-
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch("http://localhost:8000/api/tasks");
-      const data = await res.json();
-      setTasks(data.tasks || {});
-      setLoading(false);
-    } catch {
-      addLog("ERROR: Failed to fetch tasks geometry from APEX core.");
-      setLoading(false);
+  const badgeClass = useMemo(() => {
+    if (healthBadge === "OK") {
+      return "badge-PASS";
     }
-  };
+    if (healthBadge === "DEGRADED") {
+      return "badge-PENDING";
+    }
+    return "badge-FAIL";
+  }, [healthBadge]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    fetchTasks();
-    addLog("System initialized. Awaiting commands...");
+  const callNlx = useCallback(async (commandId: string, taskName?: string): Promise<CommandResponse> => {
+    const response = await fetch("/api/nlx/run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ commandId, taskName }),
+    });
+
+    const data = (await response.json()) as CommandResponse;
+
+    if (!response.ok) {
+      const message = data.error ?? data.stderr ?? `Command '${commandId}' failed.`;
+      throw new Error(message);
+    }
+
+    return data;
   }, []);
 
-  useEffect(() => {
-    // Auto-scroll terminal
-    terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+  const loadConfig = useCallback(async (): Promise<void> => {
+    const response = await fetch("/api/gui/config", { method: "GET" });
+    const payload = (await response.json()) as { readOnly: boolean };
+    setReadOnly(payload.readOnly);
+  }, []);
 
-  const handleRunAll = async () => {
-    setRunning(true);
-    addLog(`INIT: Executing Global Run [Mode: ${mode.toUpperCase()}]`);
-    addLog(`PARAMS: DryRun=${dryRun}, NoReports=${noReports}, Filters=${selectedTasks.length > 0 ? selectedTasks.join(',') : 'None'}`);
+  const loadTasks = useCallback(async (): Promise<void> => {
+    const result = await callNlx("listTasks");
+    const taskNames = result.taskNames ?? [];
+    setKnownTasks(taskNames);
+    setSelectedTasks((prev) => prev.filter((task) => taskNames.includes(task)));
+  }, [callNlx]);
 
+  const runDiagnose = useCallback(async (): Promise<void> => {
+    setIsBusy(true);
+    setFriendlyMessage("Running diagnose command...");
     try {
-      const payload = {
-          mode: mode,
-          dry_run: dryRun,
-          no_reports: noReports,
-          task_filters: selectedTasks.length > 0 ? selectedTasks : null
-      };
+      const result = await callNlx("diagnose");
+      setRawStdout(result.stdout);
+      setRawStderr(result.stderr);
 
-      const res = await fetch("http://localhost:8000/api/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      addLog(`SUCCESS: Run cycle completed with status [${data.status}]`);
-      await fetchTasks();
-    } catch {
-      addLog("CRITICAL: Connection severed to orchestrator core.");
-    }
-    setRunning(false);
-  };
-
-  const handleGlobalAction = async (endpoint: string, payload: Record<string, unknown> = {}) => {
-    addLog(`ACTION: Triggering ${endpoint}...`);
-    try {
-      const res = await fetch(`http://localhost:8000/api/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      addLog(`RESULT: [${endpoint}] ${data.message || data.status}`);
-      if (endpoint === 'reset' || endpoint === 'autofix') {
-         await fetchTasks();
+      if (!result.diagnose) {
+        setHealthBadge("BROKEN");
+        setFriendlyMessage("Diagnose output was missing required fields.");
+        return;
       }
-    } catch {
-      addLog(`CRITICAL: Failed action ${endpoint}`);
+
+      setDiagnoseSummary(result.diagnose.summary);
+      setHealthBadge(result.diagnose.badge);
+      setFriendlyMessage(
+        result.diagnose.badge === "OK"
+          ? "DNS stack appears healthy and private."
+          : "DNS stack is degraded. Review notes and dry-run output.",
+      );
+      setLastRunAt(formatNow());
+    } catch (error) {
+      setHealthBadge("BROKEN");
+      const message = error instanceof Error ? error.message : "Diagnose command failed.";
+      setFriendlyMessage(message);
+      setRawStderr(message);
+      setRawStdout("");
+    } finally {
+      setIsBusy(false);
     }
-  };
+  }, [callNlx]);
 
-  const showTaskInfo = async (taskName: string) => {
+  const runDryRunSweep = useCallback(async (): Promise<void> => {
+    setIsBusy(true);
+    setFriendlyMessage("Running full dry-run sweep...");
     try {
-      const res = await fetch(`http://localhost:8000/api/tasks/${taskName}`);
-      const data = await res.json();
-      setSelectedTaskDetail(data);
-    } catch {
-      addLog(`CRITICAL: Failed to load info for ${taskName}`);
+      const result = await callNlx("dryRunAll");
+      setTaskResults(result.taskResults ?? []);
+      setRawStdout(result.stdout);
+      setRawStderr(result.stderr);
+      setLastRunAt(formatNow());
+      setFriendlyMessage("Dry-run sweep complete.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Dry-run sweep failed.";
+      setFriendlyMessage(message);
+      setRawStderr(message);
+      setRawStdout("");
+    } finally {
+      setIsBusy(false);
     }
-  };
+  }, [callNlx]);
 
-  const toggleTaskSelection = (name: string) => {
-      if (selectedTasks.includes(name)) {
-          setSelectedTasks(prev => prev.filter(t => t !== name));
-      } else {
-          setSelectedTasks(prev => [...prev, name]);
-      }
-  };
-
-  const handleDiagnose = async (taskName: string) => {
-    addLog(`DIAGNOSTIC: Probing ${taskName} sequence...`);
-    try {
-      const res = await fetch("http://localhost:8000/api/diagnose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task_name: taskName, autofix: false }),
-      });
-      const data = await res.json();
-      addLog(`DIAGNOSTIC: [${taskName}] Returned status: ${data.status}`);
-      if (data.status === "error") {
-        addLog(`FAULT TRACE: ${data.message}`);
-      }
-    } catch {
-      addLog("CRITICAL: Failed to run diagnostic telemetry.");
+  const runDryRunSelected = useCallback(async (): Promise<void> => {
+    if (selectedTasks.length === 0) {
+      setFriendlyMessage("Select at least one task first.");
+      return;
     }
-  };
 
-  const handleHeal = async (taskName: string) => {
-    addLog(`HEALING PROTOCOL: Initiated for ${taskName}...`);
+    setIsBusy(true);
+    setFriendlyMessage(`Running dry-run for ${selectedTasks.length} task(s)...`);
+
+    const aggregated: TaskResult[] = [];
+    const stdoutBlocks: string[] = [];
+    const stderrBlocks: string[] = [];
+
     try {
-      const res = await fetch("http://localhost:8000/api/diagnose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task_name: taskName, autofix: true }),
-      });
-      const data = await res.json();
-
-      if (data.status === "success" && data.result?.healing_logs) {
-        data.result.healing_logs.forEach((logStr: string) => {
-            addLog(`HEAL [${taskName}]: ${logStr}`);
-        });
-
-        if (data.result.status === "PASS") {
-             addLog(`HEAL SUCCESS: Node restored.`);
-             await fetchTasks();
+      for (const taskName of selectedTasks) {
+        const result = await callNlx("dryRunTask", taskName);
+        if (result.taskResults && result.taskResults.length > 0) {
+          aggregated.push(...result.taskResults);
         } else {
-             addLog(`HEAL FAILED: Manual intervention required.`);
+          aggregated.push({
+            taskName,
+            status: result.ok ? "UNKNOWN" : "FAIL",
+            reason: result.ok ? "No task status marker emitted." : "Command did not complete successfully.",
+          });
         }
-      } else {
-         addLog(`HEALING PROTOCOL: Backend returned status ${data.status}`);
+        stdoutBlocks.push(result.stdout);
+        if (result.stderr) {
+          stderrBlocks.push(result.stderr);
+        }
       }
-    } catch {
-      addLog("CRITICAL: Failed to execute healing protocol.");
-    }
-  };
 
-  const ActiveIcon = MODE_META[mode].icon;
+      setTaskResults(aggregated);
+      setRawStdout(stdoutBlocks.join("\n\n").trim());
+      setRawStderr(stderrBlocks.join("\n\n").trim());
+      setLastRunAt(formatNow());
+      setFriendlyMessage("Selected task dry-run complete.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Selected task run failed.";
+      setFriendlyMessage(message);
+      setRawStderr(message);
+      setRawStdout(stdoutBlocks.join("\n\n").trim());
+    } finally {
+      setIsBusy(false);
+    }
+  }, [callNlx, selectedTasks]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        await loadConfig();
+        await Promise.all([runDiagnose(), loadTasks()]);
+      } catch {
+        setFriendlyMessage("Failed to initialize GUI diagnostics.");
+      }
+    })();
+  }, [loadConfig, loadTasks, runDiagnose]);
 
   return (
-    <div data-theme={mode} className="min-h-screen relative overflow-hidden font-sans text-sm selection:bg-[var(--theme-main)] selection:text-white pb-20">
+    <div className="min-h-screen relative overflow-hidden font-sans text-sm pb-20" data-theme="run">
       <div className="bg-glow" />
-
-      {/* Decorative cyber grid overlay */}
-      <div className="absolute inset-0 z-[-1] opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.5) 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
-
-      <main className="max-w-7xl mx-auto px-6 pt-12 flex flex-col gap-10">
-
-        {/* HEADER */}
-        <motion.header
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6"
-        >
-          <div className="flex gap-4 items-center">
-            <div className="w-14 h-14 rounded-2xl glass flex items-center justify-center border-[var(--theme-main)] shadow-[0_0_20px_var(--theme-glow)]">
-              <Cpu className="text-[var(--theme-main)] w-8 h-8" />
-            </div>
+      <main className="max-w-6xl mx-auto px-6 pt-12 flex flex-col gap-6">
+        <header className="glass-card p-6 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="text-4xl font-extrabold tracking-tight text-white m-0 leading-tight">NextLevelApex</h1>
-              <p className="text-[var(--theme-main)] tracking-widest uppercase text-xs font-bold mt-1 opacity-80">Orchestration & Telemetry Matrix</p>
+              <h1 className="text-3xl font-bold text-white">NextLevelApex Dashboard</h1>
+              <p className="text-white/70 mt-1">
+                Canonical GUI (v1 read-only) for local diagnose and dry-run observability.
+              </p>
+            </div>
+            <div className="badge-status badge-PASS" title="Read-only mode is enforced by server config">
+              <Shield className="w-4 h-4" /> READ-ONLY: {readOnly ? "ON" : "OFF"}
             </div>
           </div>
 
-          <div className="glass p-2 rounded-xl flex items-center gap-4 border-white/10 w-full lg:w-auto overflow-hidden relative">
-
-            {/* Mode Selector */}
-            <div className="flex bg-black/40 p-1 rounded-lg">
-              {(Object.keys(MODE_META) as Array<keyof typeof MODE_META>).map((m) => {
-                const Icon = MODE_META[m].icon;
-                const isActive = mode === m;
-                return (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    disabled={running}
-                    className={clsx(
-                      "flex items-center gap-2 px-4 py-2 rounded-md transition-all font-semibold uppercase text-xs tracking-wider",
-                      isActive ? "bg-[var(--theme-badge)] text-[var(--theme-main)] shadow-sm" : "text-white/50 hover:text-white hover:bg-white/5"
-                    )}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {isActive && <motion.span layoutId="mode-label">{m}</motion.span>}
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              onClick={handleRunAll}
-              disabled={running}
-              className="btn-theme shrink-0 flex items-center gap-2 pr-6"
-            >
-              {running ? (
-                <>
-                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 2, ease: "linear" }}>
-                    <Activity className="w-4 h-4" />
-                  </motion.div>
-                  Executing...
-                </>
-              ) : (
-                <>
-                  <ActiveIcon className="w-4 h-4" />
-                  EXECUTE
-                </>
-              )}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className={`badge-status ${badgeClass}`}>
+              {healthBadge === "OK" && <CheckCircle2 className="w-4 h-4" />}
+              {healthBadge !== "OK" && <AlertTriangle className="w-4 h-4" />}
+              {healthBadge}
+            </span>
+            <span className="text-white/70">Last run: {lastRunAt}</span>
+            <button className="btn-theme" onClick={() => void runDiagnose()} disabled={isBusy}>
+              <Activity className="w-4 h-4" /> Run Diagnose
+            </button>
+            <button className="btn-theme" onClick={() => void runDryRunSweep()} disabled={isBusy}>
+              <Play className="w-4 h-4" /> Run Dry-Run Sweep
             </button>
           </div>
-        </motion.header>
 
-        {/* CONTROLS PANELS */}
-        <div className="flex flex-col lg:flex-row gap-4">
-          {/* RUN CONFIG */}
-          <div className="glass flex items-center gap-6 p-4 rounded-xl border-white/10 w-full lg:w-1/3 text-white/80">
-            <h3 className="font-bold text-white text-xs tracking-wider uppercase flex-shrink-0 mr-4">Run Config</h3>
-            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer hover:text-white">
-              <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} className="accent-[var(--theme-main)]" />
-              DRY RUN
-            </label>
-            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer hover:text-white">
-              <input type="checkbox" checked={noReports} onChange={e => setNoReports(e.target.checked)} className="accent-[var(--theme-main)]" />
-              NO REPORTS
-            </label>
-            <div className="text-xs font-semibold text-[var(--theme-main)]">
-              {selectedTasks.length > 0 ? `${selectedTasks.length} FILTERED` : "ALL TARGETS"}
+          <p className="text-white/80">{friendlyMessage}</p>
+          {diagnoseSummary && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-white/85">
+              <div><strong>DNS Mode:</strong> {diagnoseSummary.dnsMode}</div>
+              <div><strong>Resolver:</strong> {diagnoseSummary.resolver}</div>
+              <div><strong>Pi-hole:</strong> {diagnoseSummary.pihole}</div>
+              <div><strong>Cloudflared:</strong> {diagnoseSummary.cloudflared}</div>
+              <div><strong>Upstream:</strong> {diagnoseSummary.piholeUpstream}</div>
+              <div><strong>Plaintext DNS:</strong> {diagnoseSummary.plaintextDns}</div>
             </div>
+          )}
+        </header>
+
+        <section className="glass-card p-6 flex flex-col gap-4">
+          <h2 className="text-xl font-semibold text-white">Run Selected Tasks (Dry-Run Only)</h2>
+          <p className="text-white/70">Task names come from <code>nlx list-tasks</code> and are validated server-side.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-56 overflow-auto pr-2">
+            {knownTasks.map((task) => (
+              <label key={task} className="flex items-center gap-2 text-white/90">
+                <input
+                  type="checkbox"
+                  checked={selectedTasks.includes(task)}
+                  onChange={(event) => {
+                    setSelectedTasks((prev) =>
+                      event.target.checked ? [...prev, task] : prev.filter((entry) => entry !== task),
+                    );
+                  }}
+                />
+                {task}
+              </label>
+            ))}
           </div>
 
-          {/* GLOBAL ACTIONS MATRIX */}
-          <div className="glass flex items-center justify-around p-4 rounded-xl border-white/10 w-full flex-wrap gap-2 text-xs uppercase font-extrabold text-white/60 tracking-wider">
-             <button onClick={() => handleGlobalAction('report')} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><FileText className="w-4 h-4 text-blue-400" /> Report</button>
-             <button onClick={() => handleGlobalAction('autofix', {dry_run: dryRun})} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><Cpu className="w-4 h-4 text-green-400" /> Autofix</button>
-             <button onClick={() => handleGlobalAction('reset', {only_failed: false, backup: true})} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><RefreshCw className="w-4 h-4 text-purple-400" /> Reset State</button>
-             <button onClick={() => handleGlobalAction('export', {fmt: 'json'})} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><Download className="w-4 h-4 text-orange-400" /> Export</button>
-             <button onClick={() => handleGlobalAction('config/generate')} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><Settings className="w-4 h-4 text-slate-400" /> Config</button>
-             <button onClick={() => handleGlobalAction('maintenance/archive')} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><Archive className="w-4 h-4 text-yellow-400" /> Archive</button>
-             <button onClick={() => handleGlobalAction('maintenance/install-archiver')} className="flex items-center gap-1.5 hover:text-white hover:bg-white/10 p-2 rounded transition-all"><Clock className="w-4 h-4 text-teal-400" /> Cron Install</button>
+          <div className="flex gap-3 flex-wrap">
+            <button className="btn-theme" onClick={() => void loadTasks()} disabled={isBusy}>
+              Refresh Task List
+            </button>
+            <button className="btn-theme" onClick={() => void runDryRunSelected()} disabled={isBusy || selectedTasks.length === 0}>
+              Run Selected Tasks
+            </button>
           </div>
-        </div>
+        </section>
 
-        {/* MODE DESCRIPTION CALLOUT */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          key={mode}
-          className="glass border-[var(--theme-main)] border-opacity-30 p-4 rounded-xl flex gap-3 items-center"
-        >
-          <ActiveIcon className="text-[var(--theme-main)] w-5 h-5 flex-shrink-0" />
-          <p className="text-white/80"><strong className="text-white uppercase tracking-wide mr-2">{mode} MODE:</strong> {MODE_META[mode].desc}</p>
-        </motion.div>
-
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:h-[600px]">
-
-          {/* TASKS MATRIX */}
-          <section className="lg:col-span-7 flex flex-col gap-4">
-            <h2 className="text-lg font-bold text-white uppercase tracking-widest flex items-center gap-2 opacity-90">
-              <Activity className="w-4 h-4 text-[var(--theme-main)]" />
-              Node Matrix
-            </h2>
-
-            <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-3 pb-8">
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="glass-card h-20 animate-pulse bg-white/5" />
-                ))
-              ) : Object.keys(tasks).length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center opacity-40 glass-card">
-                  <Activity className="w-12 h-12 mb-4" />
-                  <p>NO NODES DISCOVERED</p>
-                </div>
-              ) : (
-                <AnimatePresence>
-                  {Object.entries(tasks).map(([name, info]: [string, TaskInfo], i) => (
-                    <motion.div
-                      key={name}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      className={clsx(
-                        "glass-card p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 group transition-all",
-                        selectedTasks.includes(name) ? "border-[var(--theme-main)] bg-[var(--theme-main)]/5" : ""
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                           type="checkbox"
-                           checked={selectedTasks.includes(name)}
-                           onChange={() => toggleTaskSelection(name)}
-                           className="w-4 h-4 rounded bg-white/10 border-white/20 accent-[var(--theme-main)] cursor-pointer"
-                        />
-                        <div>
-                          <h3 className="font-bold text-base text-white mb-1 group-hover:text-[var(--theme-main)] transition-colors flex items-center gap-2">
-                             {name}
-                             <button onClick={() => showTaskInfo(name)} className="text-white/30 hover:text-white transition-colors" title="Task Info">
-                                <Info className="w-3.5 h-3.5" />
-                             </button>
-                          </h3>
-                          <p className="text-xs text-white/40 flex items-center gap-1 font-mono">
-                            <Clock className="w-3 h-3" />
-                            {info.last_update ? new Date(info.last_update as string).toLocaleString() : "TBD"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <span className={`badge-status badge-${info.status}`}>
-                          {info.status === "PASS" && <CheckCircle2 className="w-4 h-4" />}
-                          {info.status === "FAIL" && <XCircle className="w-4 h-4" />}
-                          {info.status === "PENDING" && <Activity className="w-4 h-4" />}
-                          {info.status as string}
-                        </span>
-
-                        {info.status === "FAIL" && (
-                          <button
-                            onClick={() => handleHeal(name)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide bg-[var(--theme-security)]/20 text-[var(--theme-security)] hover:bg-[var(--theme-security)] hover:text-white transition-all border border-[var(--theme-security)]/40"
-                          >
-                            Heal
-                          </button>
-                        )}
-
-                        <button
-                          onClick={() => handleDiagnose(name)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide bg-white/5 text-white hover:bg-[var(--theme-main)] hover:text-white transition-all border border-white/10 group-hover:border-[var(--theme-main)]"
-                        >
-                          Diagnose
-                        </button>
-                      </div>
-                    </motion.div>
+        <section className="glass-card p-6 flex flex-col gap-4">
+          <h2 className="text-xl font-semibold text-white">Dry-Run Results</h2>
+          {taskResults.length === 0 ? (
+            <p className="text-white/70">No task output yet.</p>
+          ) : (
+            <div className="overflow-auto">
+              <table className="w-full text-left text-white/90">
+                <thead>
+                  <tr className="text-white/60 text-xs uppercase">
+                    <th className="py-2">Task</th>
+                    <th className="py-2">Status</th>
+                    <th className="py-2">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taskResults.map((result) => (
+                    <tr key={`${result.taskName}-${result.status}-${result.reason}`} className="border-t border-white/10 align-top">
+                      <td className="py-2 pr-3">{result.taskName}</td>
+                      <td className="py-2 pr-3">{result.status}</td>
+                      <td className="py-2">{result.reason}</td>
+                    </tr>
                   ))}
-                </AnimatePresence>
-              )}
+                </tbody>
+              </table>
             </div>
-          </section>
+          )}
 
-          {/* TASK DETAILS MODAL / HOVERVIEW */}
-          <AnimatePresence>
-             {selectedTaskDetail && (
-                <motion.div
-                   initial={{ opacity: 0, scale: 0.95 }}
-                   animate={{ opacity: 1, scale: 1 }}
-                   exit={{ opacity: 0, scale: 0.95 }}
-                   className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-md"
-                   onClick={() => setSelectedTaskDetail(null)}
-                >
-                   <div
-                      className="glass border-[var(--theme-main)] border flex flex-col max-w-2xl w-full max-h-[85vh] rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]"
-                      onClick={e => e.stopPropagation()}
-                   >
-                       <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
-                           <h2 className="text-2xl font-black text-[var(--theme-main)] tracking-widest">{selectedTaskDetail.name}</h2>
-                           <button onClick={() => setSelectedTaskDetail(null)} className="text-white/50 hover:text-white"><XCircle className="w-6 h-6" /></button>
-                       </div>
-                       <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-6">
-                           <div>
-                               <h3 className="text-[10px] font-black tracking-[0.2em] text-white/40 mb-2 uppercase">Docstring</h3>
-                               <div className="font-mono text-sm text-white/80 bg-black/40 p-4 rounded-lg whitespace-pre-wrap border border-white/5 leading-relaxed">
-                                   {selectedTaskDetail.docstring}
-                               </div>
-                           </div>
-                           <div className="grid grid-cols-2 gap-4">
-                               <div className="bg-black/40 p-4 rounded-lg border border-white/5">
-                                   <h3 className="text-[10px] font-black tracking-[0.2em] text-white/40 mb-2 uppercase">Current Status</h3>
-                                   <p className={`font-bold text-lg badge-${selectedTaskDetail.status.status || 'PENDING'}`}>{selectedTaskDetail.status.status || 'PENDING'}</p>
-                                   <p className="text-xs text-white/50 mt-1">{selectedTaskDetail.status.last_update ? new Date(selectedTaskDetail.status.last_update).toLocaleString() : 'Never run'}</p>
-                               </div>
-                           </div>
-                           <div>
-                               <h3 className="text-[10px] font-black tracking-[0.2em] text-white/40 mb-2 uppercase">Health Trend</h3>
-                               <div className="flex gap-2 p-4 bg-black/40 rounded-lg border border-white/5 flex-wrap">
-                                   {selectedTaskDetail.history && selectedTaskDetail.history.length > 0 ? (
-                                       selectedTaskDetail.history.map((h, i: number) => (
-                                           <div key={i} className={clsx("w-6 h-6 rounded-md border flex items-center justify-center text-[10px] font-bold cursor-help", h.status === 'PASS' ? 'bg-green-500/20 border-green-500/50 text-green-400' : h.status === 'FAIL' ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-gray-500/20 border-gray-500/50')} title={new Date(h.timestamp as string).toLocaleString()}>
-                                              {h.status === 'PASS' ? 'P' : h.status === 'FAIL' ? 'F' : '-'}
-                                           </div>
-                                       ))
-                                   ) : (
-                                       <span className="text-white/30 text-xs italic">No historical data found.</span>
-                                   )}
-                               </div>
-                           </div>
-                       </div>
-                   </div>
-                </motion.div>
-             )}
-          </AnimatePresence>
-
-          {/* TERMINAL UI */}
-          <section className="lg:col-span-5 flex flex-col gap-4">
-             <h2 className="text-lg font-bold text-white uppercase tracking-widest flex items-center gap-2 opacity-90">
-              <Terminal className="w-4 h-4 text-[var(--theme-main)]" />
-              Live Telemetry
-            </h2>
-            <div className="terminal-window flex-1 p-4 overflow-y-auto flex flex-col relative">
-              <div className="sticky top-0 bg-[#010409]/90 backdrop-blur-sm pb-2 mb-2 border-b border-white/5 z-10 flex text-[10px] text-white/30 tracking-widest font-bold uppercase">
-                <span className="w-24">Timestamp</span>
-                <span>Event Log</span>
-              </div>
-
-              <AnimatePresence initial={false}>
-                {logs.map((log) => (
-                  <motion.div
-                    key={log.id}
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="terminal-line"
-                  >
-                    <span className="text-white/30 text-[11px] w-24 shrink-0 flex-none leading-[1.6]">
-                      [{log.time}]
-                    </span>
-                    <span className="text-white/70 leading-[1.6]">
-                      <span className="terminal-prompt mr-2">❯</span>
-                      {log.text}
-                    </span>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-              <div ref={terminalEndRef} className="h-2" />
-            </div>
-          </section>
-
-        </div>
+          <details open>
+            <summary className="cursor-pointer text-white/85">Raw Output (redacted)</summary>
+            <pre className="terminal-window p-4 mt-2 whitespace-pre-wrap">{rawStdout || "(stdout empty)"}</pre>
+          </details>
+          <details>
+            <summary className="cursor-pointer text-white/85">Raw Errors (redacted)</summary>
+            <pre className="terminal-window p-4 mt-2 whitespace-pre-wrap">{rawStderr || "(stderr empty)"}</pre>
+          </details>
+        </section>
       </main>
     </div>
   );
