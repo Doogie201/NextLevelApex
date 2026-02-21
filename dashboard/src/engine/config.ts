@@ -5,18 +5,3 @@ export function isReadOnlyMode(): boolean {
   }
   return value.toLowerCase() !== "false";
 }
-
-export const MUTATING_ACTIONS = new Set([
-  "run",
-  "autofix",
-  "reset",
-  "export",
-  "install",
-  "install-sudoers",
-  "networksetup",
-  "docker-rm",
-  "colima",
-  "launchctl",
-  "archive",
-  "install-archiver",
-]);
