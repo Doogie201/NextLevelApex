@@ -1,5 +1,7 @@
 import pytest
 
+import nextlevelapex.tasks.brew
+import nextlevelapex.tasks.ollama  # noqa: F401
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.tasks.brew import ensure_brew_shellenv_task, install_brew_task
@@ -47,6 +49,10 @@ def test_brew_tasks(monkeypatch):
 
 def test_registry_contains_tasks():
     """Make sure our @task decorators actually registered them."""
+    import importlib
+
+    importlib.import_module("nextlevelapex.tasks.brew")
+    importlib.import_module("nextlevelapex.tasks.ollama")
     from nextlevelapex.main2 import discover_tasks
 
     discover_tasks()

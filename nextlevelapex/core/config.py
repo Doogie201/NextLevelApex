@@ -1,6 +1,7 @@
 # ~/Projects/NextLevelApex/nextlevelapex/core/config.py
 
 import json
+import sys
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -10,9 +11,14 @@ from jsonschema import Draft7Validator
 
 from nextlevelapex.core.logger import LoggerProxy
 
-# Load our JSON Schema as a Python dict
-with resources.open_text("nextlevelapex.schema", "config.v1.schema.json") as f:
-    SCHEMA = json.load(f)
+try:
+    schema_path = resources.files("nextlevelapex.schema").joinpath("config.v1.schema.json")
+    with schema_path.open("r", encoding="utf-8") as f:
+        SCHEMA = json.load(f)
+except (json.JSONDecodeError, OSError) as e:
+    # Log the error but we can't use LoggerProxy yet because it might not be fully initialized
+    print(f"CRITICAL: Failed to load configuration schema: {e}", file=sys.stderr)
+    raise RuntimeError(f"Application cannot start without a valid schema: {e}") from e
 
 log = LoggerProxy(__name__)
 

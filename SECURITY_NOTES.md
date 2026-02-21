@@ -43,3 +43,22 @@ This document tracks all AppSec remediation workflows, red-team diff reviews, an
   - Validated that obfuscated structures missing a `__module__` attribute trigger the correct rejection.
 - Executed `poetry run pytest` yielding **39/39 passing** validations.
 - `discover_tasks` integration across the suite modified to explicitly load from the centralized CLI harness instead of assuming the global state mutation. All tests passed.
+
+## [2026-02-20] Phase 3: Reporting Strictness & Parameter Traversal Guard
+
+### Addressed Issues
+- **Issue C (Medium): Reporting XSS Injection:** The HTML reporting function concatenated raw JSON task details and `trend` strings directly into the DOM tree structure. Hardened `nextlevelapex/core/report.py` to recursively `html.escape()` task names, status strings, and JSON dictionary values to neutralize potentially malicious data emitted from a hijacked subsystem.
+- **Issue D (Medium/Low): Schema Path Traversal & Unhandled File I/O:** The JSON Schema configuration verification was utilizing `json.loads` natively against unstructured paths. Replaced unbounded string passing with the native `importlib.resources.files` to strictly scope the load within package data bounds, mitigating DoS via path exhaustion. Added robust generic schema fallback when `json.JSONDecodeError` triggers.
+
+### Red-Team Diff Review
+- **Subprocess Paths**: None modified.
+- **Dynamic Imports**: Transitioned from legacy static file strings to `importlib.resources.files()` for predictable namespace scoping.
+- **File Write Paths**: None modified.
+- **Templating / Rendering**: Added `html.escape()` wrapper for raw variable ingestion in report outputs.
+- **Privilege Expansion**: None modified.
+
+### Testing Evidence
+- Executed XSS poison unit tests inside `tests/core/test_report_xss.py`. Demonstrated `> < script` tags and structural injections reliably convert into encoded entities (`&lt;script&gt;`).
+- Resolved lingering `sys.modules` caching artifacts causing sporadic evaluation errors during Pytest's `importlib` loading loops. Verified explicitly that testing isolation correctly restores the execution engine.
+- Result array executing `poetry run pytest` yielding **40/40 passing** validations.
+- Result array executing `poetry run ruff check .` yielding zero lint flaws due to isolated dependency graph reloading structures.
