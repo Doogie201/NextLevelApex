@@ -78,46 +78,76 @@ def load_state(path: Path) -> dict[str, Any]:
         return DEFAULT_STATE.copy()
 
 
-def save_state(data: dict[str, Any], path: Path, dry_run: bool = False) -> bool:
+def atomic_write_json_0600(data: dict[str, Any], path: Path) -> bool:
+    import os
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if dry_run:
-            print("[DRYRUN] Would write state:", json.dumps(data, indent=2))
-            return True
-
-        import os
-
-        # Safely create or truncate the file with strict permissions (0o600)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        mode = 0o600
-        with open(os.open(path, flags, mode), "w") as f:
+        # Create a secure temp file in the same directory to guarantee atomic os.replace
+        fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".tmp_state_", text=False)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
 
-        # Guarantee permissions in case the file already existed with wider permissions
-        path.chmod(0o600)
+        # Enforce strict 0600 permissions
+        Path(temp_path).chmod(0o600)
+
+        # Atomically replace the target file
+        Path(temp_path).replace(path)
         return True
     except Exception as e:
-        logging.exception(f"Failed to write state: {e}")
+        logging.exception(f"Failed atomic write to {path}: {e}")
+        # Cleanup temp file on failure
+        if 'temp_path' in locals():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                Path(temp_path).unlink()
         return False
 
 
-def hash_file(path: Path) -> str | None:
+def save_state(data: dict[str, Any], path: Path, dry_run: bool = False) -> bool:
+    if dry_run:
+        print("[DRYRUN] Would write state:", json.dumps(data, indent=2))
+        return True
+
+    return atomic_write_json_0600(data, path)
+
+
+def compute_file_history_hash(path: Path) -> str | None:
+    """Pure function to compute SHA256 file hash without state mutation."""
+    import os
+
     if not path.exists() or not path.is_file():
         return None
+
+    # Reject symlinks if we want strict tracing (defense in depth)
+    if path.is_symlink():
+        logging.warning(f"Refusing to hash symlink: {path}")
+        return None
+
     hasher = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            buf = f.read(4096)
-            if not buf:
-                break
-            hasher.update(buf)
-    return "sha256:" + hasher.hexdigest()
+    try:
+        # Open with O_NOFOLLOW to prevent TOCTOU symlink races
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as f:
+            while True:
+                buf = f.read(4096)
+                if not buf:
+                    break
+                hasher.update(buf)
+        return "sha256:" + hasher.hexdigest()
+    except Exception as e:
+        logging.warning(f"Failed to hash {path} securely: {e}")
+        return None
 
 
 def update_file_hashes(state: dict[str, Any], files: list[Path]) -> dict[str, Any]:
     hashes = {}
     for file in files:
-        file_hash = hash_file(file)
+        file_hash = compute_file_history_hash(file)
         if file_hash:
             hashes[str(file)] = file_hash
     state["file_hashes"] = hashes
@@ -125,7 +155,7 @@ def update_file_hashes(state: dict[str, Any], files: list[Path]) -> dict[str, An
 
 
 def file_hash_changed(state: dict[str, Any], file: Path) -> bool:
-    current_hash = hash_file(file)
+    current_hash = compute_file_history_hash(file)
     previous_hash = state["file_hashes"].get(str(file))
     return bool(current_hash != previous_hash)
 
