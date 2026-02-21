@@ -69,7 +69,6 @@ def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
     Returns dict: { task_name: callable }
     """
     tasks = {}
-    sys.path.insert(0, str(TASKS_DIR.parent))  # Ensure import path
 
     for module_name in ALLOWED_MODULES:
         full_module_name = f"nextlevelapex.tasks.{module_name}"

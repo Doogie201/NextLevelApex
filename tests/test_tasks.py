@@ -1,7 +1,7 @@
 import pytest
 
+from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import get_task_registry
 from nextlevelapex.tasks.brew import ensure_brew_shellenv_task, install_brew_task
 from nextlevelapex.tasks.ollama import setup_ollama_task
 
@@ -47,6 +47,9 @@ def test_brew_tasks(monkeypatch):
 
 def test_registry_contains_tasks():
     """Make sure our @task decorators actually registered them."""
+    from nextlevelapex.main2 import discover_tasks
+
+    discover_tasks()
     tasks = get_task_registry()
     names = [getattr(fn, "_task_name", None) for fn in tasks.values()]
 
