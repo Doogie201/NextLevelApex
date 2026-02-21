@@ -25,6 +25,11 @@
 - Branches are auto-deleted after merge.
 - Force-pushes and branch deletion are disabled on `main`.
 
+## CLI Entrypoint Policy
+
+- Canonical CLI entrypoint is `nextlevelapex.main2` (script: `poetry run nlx`).
+- `nextlevelapex.main` is maintained only as a compatibility shim for legacy `python -m` usage.
+
 ## Commit Conventions
 
 Use small, reviewable commits with clear intent. Conventional Commit style is preferred:

@@ -24,8 +24,7 @@ from nextlevelapex.core.logger import LoggerProxy
 
 # ── Local imports ───────────────────────────────────────────────────────────
 from nextlevelapex.core.registry import task
-from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import TaskContext
+from nextlevelapex.core.task import Severity, TaskContext, TaskResult
 
 log = LoggerProxy(__name__)
 

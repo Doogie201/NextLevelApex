@@ -5,8 +5,7 @@ from pathlib import Path
 from nextlevelapex.core.command import run_command
 from nextlevelapex.core.logger import LoggerProxy
 from nextlevelapex.core.registry import task
-from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import TaskContext
+from nextlevelapex.core.task import Severity, TaskContext, TaskResult
 
 log = LoggerProxy(__name__)
 
