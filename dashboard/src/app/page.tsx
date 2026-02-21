@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Contrast,
   Copy,
@@ -49,9 +50,24 @@ import {
   type HealthBadge,
   type TaskResult,
 } from "@/engine/viewModel";
+import { buildTaskDetailsSummary } from "@/engine/taskDetailsExport";
+import { moveTaskSelection, nextVisibleTaskLimit } from "@/engine/taskSelection";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
+interface TaskRowSummary {
+  taskName: string;
+  status: TaskResult["status"];
+  reason: string;
+  lastRunAt: string | null;
+  outputSnippet: string;
+}
+
+const TASK_VISIBLE_STEP = 200;
+
+function taskRowId(taskName: string): string {
+  return `task-row-${encodeURIComponent(taskName)}`;
+}
 
 function isTypingElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -159,6 +175,9 @@ export default function Home() {
   const [diagnoseSummary, setDiagnoseSummary] = useState<DiagnoseSummary | null>(null);
   const [knownTasks, setKnownTasks] = useState<string[]>([]);
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
+  const [selectedTaskName, setSelectedTaskName] = useState<string | null>(null);
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [taskVisibleLimit, setTaskVisibleLimit] = useState(TASK_VISIBLE_STEP);
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -186,6 +205,7 @@ export default function Home() {
   const healthBadgeRef = useRef<HTMLSpanElement | null>(null);
   const outputHeaderRef = useRef<HTMLElement | null>(null);
   const outputSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const tasksSearchInputRef = useRef<HTMLInputElement | null>(null);
   const shortcutCloseRef = useRef<HTMLButtonElement | null>(null);
   const shortcutDialogRef = useRef<HTMLDivElement | null>(null);
   const shortcutOpenerRef = useRef<HTMLElement | null>(null);
@@ -626,20 +646,21 @@ export default function Home() {
     }
   }, [executeCommand]);
 
-  const runDryRunSelected = useCallback(async (): Promise<void> => {
-    if (selectedTasks.length === 0) {
+  const runDryRunSelected = useCallback(async (tasksOverride?: string[]): Promise<void> => {
+    const tasksToRun = tasksOverride ?? selectedTasks;
+    if (tasksToRun.length === 0) {
       setFriendlyMessage("Select at least one task first.");
       return;
     }
 
     setActiveView("output");
     setIsBusy(true);
-    setFriendlyMessage(`Running dry-run for ${selectedTasks.length} task(s)...`);
+    setFriendlyMessage(`Running dry-run for ${tasksToRun.length} task(s)...`);
 
     const aggregated: TaskResult[] = [];
 
     try {
-      for (const taskName of selectedTasks) {
+      for (const taskName of tasksToRun) {
         if (!knownTasks.includes(taskName)) {
           aggregated.push({
             taskName,
@@ -707,6 +728,58 @@ export default function Home() {
     anchor.click();
     window.URL.revokeObjectURL(url);
     setFriendlyMessage("Downloaded redacted log.");
+  }, []);
+
+  const copySelectedTaskDetails = useCallback(async (task: TaskRowSummary): Promise<void> => {
+    const payload = buildTaskDetailsSummary({
+      taskName: task.taskName,
+      status: task.status,
+      reason: task.reason,
+      lastRunAt: task.lastRunAt,
+      outputSnippet: task.outputSnippet,
+    });
+
+    try {
+      await navigator.clipboard.writeText(payload);
+      setFriendlyMessage(`Copied redacted task details for ${task.taskName}.`);
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, []);
+
+  const handleTaskSelectionToggle = useCallback((taskName: string, checked: boolean): void => {
+    setSelectedTasks((previous) =>
+      checked ? [...new Set([...previous, taskName])] : previous.filter((entry) => entry !== taskName),
+    );
+  }, []);
+
+  const handleRunSelectedFromKeyboard = useCallback((): void => {
+    if (isBusy) {
+      return;
+    }
+
+    const fallbackTask = selectedTaskName ? [selectedTaskName] : [];
+    const tasksToRun = selectedTasks.length > 0 ? selectedTasks : fallbackTask;
+    if (tasksToRun.length === 0) {
+      setFriendlyMessage("Select at least one task first.");
+      return;
+    }
+
+    if (selectedTasks.length === 0 && fallbackTask.length === 1) {
+      setSelectedTasks([fallbackTask[0]]);
+    }
+
+    void runDryRunSelected(tasksToRun);
+  }, [isBusy, runDryRunSelected, selectedTaskName, selectedTasks]);
+
+  const clearTaskSelection = useCallback((): void => {
+    setSelectedTaskName(null);
+    setLiveMessage("Task selection cleared.");
+  }, []);
+
+  const focusTaskSearch = useCallback((): void => {
+    tasksSearchInputRef.current?.focus();
+    tasksSearchInputRef.current?.select();
   }, []);
 
   const copyCurrentDeepLink = useCallback(async (): Promise<void> => {
@@ -821,6 +894,151 @@ export default function Home() {
     }
     return groupTaskResults(selectedEvent.taskResults);
   }, [selectedEvent]);
+
+  const taskRows = useMemo<TaskRowSummary[]>(() => {
+    const latest = new Map<string, TaskRowSummary>();
+
+    for (const event of commandHistory) {
+      for (const taskResult of event.taskResults) {
+        if (latest.has(taskResult.taskName)) {
+          continue;
+        }
+
+        const snippetSource = (event.stderr || event.stdout || event.note || "").trim();
+        latest.set(taskResult.taskName, {
+          taskName: taskResult.taskName,
+          status: taskResult.status,
+          reason: taskResult.reason,
+          lastRunAt: event.finishedAt ?? event.startedAt,
+          outputSnippet: snippetSource.slice(0, 280),
+        });
+      }
+    }
+
+    return knownTasks.map((taskName) => {
+      const existing = latest.get(taskName);
+      if (existing) {
+        return existing;
+      }
+      return {
+        taskName,
+        status: "UNKNOWN",
+        reason: "No dry-run result yet.",
+        lastRunAt: null,
+        outputSnippet: "",
+      };
+    });
+  }, [commandHistory, knownTasks]);
+
+  const filteredTaskRows = useMemo(() => {
+    const needle = taskSearchQuery.trim().toLowerCase();
+    if (!needle) {
+      return taskRows;
+    }
+
+    return taskRows.filter(
+      (row) => row.taskName.toLowerCase().includes(needle) || row.reason.toLowerCase().includes(needle),
+    );
+  }, [taskRows, taskSearchQuery]);
+
+  const visibleTaskRows = useMemo(
+    () => filteredTaskRows.slice(0, taskVisibleLimit),
+    [filteredTaskRows, taskVisibleLimit],
+  );
+
+  const selectedTaskRow = useMemo(() => {
+    if (!selectedTaskName) {
+      return visibleTaskRows[0] ?? filteredTaskRows[0] ?? null;
+    }
+    return filteredTaskRows.find((row) => row.taskName === selectedTaskName) ?? null;
+  }, [filteredTaskRows, selectedTaskName, visibleTaskRows]);
+
+  useEffect(() => {
+    setTaskVisibleLimit(TASK_VISIBLE_STEP);
+  }, [taskSearchQuery, knownTasks.length]);
+
+  useEffect(() => {
+    if (activeView !== "tasks") {
+      return;
+    }
+
+    if (filteredTaskRows.length === 0) {
+      setSelectedTaskName(null);
+      return;
+    }
+
+    if (!selectedTaskName || !filteredTaskRows.some((row) => row.taskName === selectedTaskName)) {
+      setSelectedTaskName(filteredTaskRows[0].taskName);
+    }
+  }, [activeView, filteredTaskRows, selectedTaskName]);
+
+  useEffect(() => {
+    const onTasksKeyDown = (event: KeyboardEvent): void => {
+      if (activeView !== "tasks" || shortcutsOpen) {
+        return;
+      }
+
+      const typingTarget = isTypingElement(event.target);
+      const hasModifier = event.metaKey || event.ctrlKey || event.altKey;
+
+      if (event.key === "/" && !typingTarget && !hasModifier) {
+        event.preventDefault();
+        focusTaskSearch();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (typingTarget) {
+          if (event.target instanceof HTMLElement) {
+            event.target.blur();
+          }
+          setLiveMessage("Task search input blurred.");
+          return;
+        }
+
+        if (selectedTaskName) {
+          event.preventDefault();
+          clearTaskSelection();
+        }
+        return;
+      }
+
+      if (typingTarget || hasModifier) {
+        return;
+      }
+
+      const visibleNames = visibleTaskRows.map((row) => row.taskName);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const nextTask = moveTaskSelection(
+          visibleNames,
+          selectedTaskName,
+          event.key === "ArrowDown" ? "next" : "prev",
+        );
+        if (nextTask) {
+          setSelectedTaskName(nextTask);
+          setLiveMessage(`Selected task ${nextTask}.`);
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleRunSelectedFromKeyboard();
+      }
+    };
+
+    window.addEventListener("keydown", onTasksKeyDown);
+    return () => window.removeEventListener("keydown", onTasksKeyDown);
+  }, [
+    activeView,
+    clearTaskSelection,
+    focusTaskSearch,
+    handleRunSelectedFromKeyboard,
+    selectedTaskName,
+    shortcutsOpen,
+    visibleTaskRows,
+  ]);
 
   useEffect(() => {
     void (async () => {
@@ -1034,57 +1252,88 @@ export default function Home() {
                   >
                     Run Selected Tasks
                   </button>
+                  <label className="search-control" aria-label="Search tasks">
+                    <Search className="w-4 h-4" />
+                    <input
+                      ref={tasksSearchInputRef}
+                      type="search"
+                      placeholder="Search tasks"
+                      value={taskSearchQuery}
+                      onChange={(event) => setTaskSearchQuery(event.target.value)}
+                      aria-label="Search tasks"
+                    />
+                  </label>
                 </div>
 
-                <div className="task-grid">
-                  {knownTasks.map((task) => (
-                    <label key={task} className="task-option">
-                      <input
-                        type="checkbox"
-                        checked={selectedTasks.includes(task)}
-                        onChange={(event) => {
-                          setSelectedTasks((previous) =>
-                            event.target.checked
-                              ? [...previous, task]
-                              : previous.filter((entry) => entry !== task),
-                          );
-                        }}
-                      />
-                      <span>{task}</span>
-                    </label>
-                  ))}
-                </div>
+                <p className="meta-muted" aria-live="polite">
+                  Showing {visibleTaskRows.length} of {filteredTaskRows.length} task(s).
+                </p>
+                <p className="meta-muted">Latest task result rows: {taskResults.length}</p>
 
-                <div className="task-table-wrap">
-                  <table className="task-table">
-                    <thead>
-                      <tr>
-                        <th>Task</th>
-                        <th>Status</th>
-                        <th>Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {taskResults.length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="empty-cell">
-                            No task output yet.
-                          </td>
-                        </tr>
-                      ) : (
-                        taskResults.map((result) => (
-                          <tr key={`${result.taskName}-${result.status}-${result.reason}`}>
-                            <td>{result.taskName}</td>
-                            <td>
-                              <span className={`status-pill ${statusClass(result.status)}`}>{result.status}</span>
-                            </td>
-                            <td>{result.reason}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                {filteredTaskRows.length === 0 ? (
+                  <p className="meta-muted">No tasks match the current search query.</p>
+                ) : (
+                  <div
+                    className="task-list"
+                    role="listbox"
+                    aria-label="Task list"
+                    aria-activedescendant={selectedTaskRow ? taskRowId(selectedTaskRow.taskName) : undefined}
+                  >
+                    {visibleTaskRows.map((task) => {
+                      const isRowSelected = selectedTaskRow?.taskName === task.taskName;
+                      const selectedForRun = selectedTasks.includes(task.taskName);
+                      return (
+                        <div
+                          key={task.taskName}
+                          className={`task-row-shell ${isRowSelected ? "task-row-shell-active" : ""}`}
+                        >
+                          <button
+                            id={taskRowId(task.taskName)}
+                            type="button"
+                            role="option"
+                            aria-selected={isRowSelected}
+                            className="task-row-button"
+                            onClick={() => setSelectedTaskName(task.taskName)}
+                          >
+                            <div className="task-row-header">
+                              <strong>{task.taskName}</strong>
+                              <span className={`status-pill ${statusClass(task.status)}`}>{task.status}</span>
+                            </div>
+                            <p className="task-row-reason">{task.reason}</p>
+                            <div className="task-row-meta">
+                              <span>Last run: {task.lastRunAt ? formatTimestamp(task.lastRunAt) : "n/a"}</span>
+                              <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                            </div>
+                          </button>
+                          <label className="task-row-select">
+                            <input
+                              type="checkbox"
+                              checked={selectedForRun}
+                              onChange={(event) => handleTaskSelectionToggle(task.taskName, event.target.checked)}
+                              aria-label={`Include ${task.taskName} in dry-run selection`}
+                            />
+                            <span>Run</span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {visibleTaskRows.length < filteredTaskRows.length && (
+                  <button
+                    className="btn-muted"
+                    type="button"
+                    onClick={() =>
+                      setTaskVisibleLimit((previous) =>
+                        nextVisibleTaskLimit(previous, filteredTaskRows.length, TASK_VISIBLE_STEP),
+                      )
+                    }
+                    aria-label="Show more tasks"
+                  >
+                    Show more
+                  </button>
+                )}
               </motion.div>
             )}
 
@@ -1321,7 +1570,36 @@ export default function Home() {
             </div>
           </dl>
 
-          {selectedEvent ? (
+          {activeView === "tasks" ? (
+            selectedTaskRow ? (
+              <div className="inspector-event">
+                <h3>{selectedTaskRow.taskName}</h3>
+                <p className="meta-muted">
+                  <span className={`status-pill ${statusClass(selectedTaskRow.status)}`}>{selectedTaskRow.status}</span>
+                </p>
+                <p className="meta-muted">Reason: {selectedTaskRow.reason}</p>
+                <p className="meta-muted">
+                  Last run: {selectedTaskRow.lastRunAt ? formatTimestamp(selectedTaskRow.lastRunAt) : "n/a"}
+                </p>
+                <button
+                  className="btn-muted"
+                  type="button"
+                  onClick={() => void copySelectedTaskDetails(selectedTaskRow)}
+                  aria-label={`Copy redacted details for ${selectedTaskRow.taskName}`}
+                >
+                  <Copy className="w-4 h-4" /> Copy Details
+                </button>
+                <details open>
+                  <summary>Redacted output snippet</summary>
+                  <pre className="terminal-window">
+                    {selectedTaskRow.outputSnippet || "(no output snippet available for this task yet)"}
+                  </pre>
+                </details>
+              </div>
+            ) : (
+              <p className="meta-muted">Select a task to inspect status and details.</p>
+            )
+          ) : selectedEvent ? (
             <div className="inspector-event">
               <h3>{selectedEvent.label}</h3>
               <p className="meta-muted">{selectedEvent.note}</p>
@@ -1390,7 +1668,7 @@ export default function Home() {
               </li>
               <li>
                 <kbd>/</kbd>
-                <span>Focus output search (Output view)</span>
+                <span>Focus search (Output or Tasks view)</span>
               </li>
               <li>
                 <kbd>g d</kbd>
