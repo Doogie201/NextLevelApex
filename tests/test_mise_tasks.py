@@ -1,6 +1,5 @@
-from nextlevelapex.main import get_task_registry
-
-# Import the wrapper you created in mise.py
+import nextlevelapex.tasks.mise  # noqa: F401
+from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.tasks.mise import setup_mise_globals_task
 
 
@@ -12,6 +11,12 @@ class DummyCtx(dict):
 
 
 def test_mise_task_in_registry():
+    import importlib
+
+    importlib.import_module("nextlevelapex.tasks.mise")
+    from nextlevelapex.main2 import discover_tasks
+
+    discover_tasks()
     task_registry = get_task_registry()
     names = [
         task_registry[name]._task_name for name in task_registry

@@ -1,5 +1,6 @@
 # nextlevelapex/core/report.py
 
+import html
 import json
 from datetime import datetime
 from pathlib import Path
@@ -67,10 +68,10 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     latest = out_dir / "nextlevelapex-latest.html"
     stamped = out_dir / f"nextlevelapex-{now}.html"
-    versions = json.dumps(state.get("service_versions", {}), indent=2)
+    versions = html.escape(json.dumps(state.get("service_versions", {}), indent=2))
 
     # Simple HTML. For fancier reporting, plug in a template engine later.
-    html = f"""<!DOCTYPE html>
+    html_content = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -85,7 +86,7 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
 </head>
 <body>
 <h1>NextLevelApex Health Report</h1>
-<p>Generated: {now} UTC</p>
+<p>Generated: {html.escape(now)} UTC</p>
 <h2>Service Versions</h2>
 <pre>{versions}</pre>
 <h2>Summary Table</h2>
@@ -94,20 +95,26 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
 """
     # Render summary rows
     for task, status in state.get("task_status", {}).items():
-        last_healthy = status.get("last_healthy", "--")
+        last_healthy = html.escape(str(status.get("last_healthy", "--")))
         recent = state.get("health_history", {}).get(task, [])
-        trend = " ".join([e["status"][0] for e in recent[-5:]]) if recent else "-"
-        html += f"<tr><td>{task}</td><td>{status['status']}</td><td>{last_healthy}</td><td>{trend}</td></tr>\n"
-    html += "</table>\n<h2>Task Details</h2>\n"
+        trend = html.escape(" ".join([e["status"][0] for e in recent[-5:]]) if recent else "-")
+        safe_task = html.escape(str(task))
+        safe_status = html.escape(str(status['status']))
+        html_content += f"<tr><td>{safe_task}</td><td>{safe_status}</td><td>{last_healthy}</td><td>{trend}</td></tr>\n"
+    html_content += "</table>\n<h2>Task Details</h2>\n"
     for task, history in state.get("health_history", {}).items():
-        html += f"<h3>{task}</h3><ul>"
+        safe_task_hdr = html.escape(str(task))
+        html_content += f"<h3>{safe_task_hdr}</h3><ul>"
         for entry in history[-10:]:
             details = entry.get("details", "")
-            html += f"<li>{entry['timestamp']}: <b>{entry['status']}</b> <pre>{json.dumps(details, indent=2) if details else ''}</pre></li>"
-        html += "</ul>"
-    html += "</body></html>"
+            safe_ts = html.escape(str(entry['timestamp']))
+            safe_st = html.escape(str(entry['status']))
+            safe_det = html.escape(json.dumps(details, indent=2)) if details else ""
+            html_content += f"<li>{safe_ts}: <b>{safe_st}</b> <pre>{safe_det}</pre></li>"
+        html_content += "</ul>"
+    html_content += "</body></html>"
 
-    latest.write_text(html)
+    latest.write_text(html_content)
     # Save a timestamped copy for history
     latest.replace(stamped)
     latest.write_text((stamped).read_text())

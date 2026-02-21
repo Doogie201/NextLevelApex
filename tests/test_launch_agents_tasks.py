@@ -1,5 +1,6 @@
 import pytest
 
+import nextlevelapex.tasks.launch_agents  # noqa: F401
 from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
 from nextlevelapex.tasks.launch_agents import setup_battery_alert_agent_task
@@ -14,6 +15,12 @@ class DummyCtx(dict):
 
 def test_launch_agents_in_registry():
     """Ensure our launch agents wrappers are registered correctly."""
+    import importlib
+
+    importlib.import_module("nextlevelapex.tasks.launch_agents")
+    from nextlevelapex.main2 import discover_tasks
+
+    discover_tasks()
     get_task_registry()
     names = list(get_task_registry().keys())
     assert "Battery Alert Agent" in names

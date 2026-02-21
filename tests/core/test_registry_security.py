@@ -5,9 +5,13 @@ from nextlevelapex.core.registry import clear_registry, get_task_registry, task
 
 @pytest.fixture(autouse=True)
 def wipe_registry():
+    from nextlevelapex.core.registry import _TASK_REGISTRY
+
+    old_registry = _TASK_REGISTRY.copy()
     clear_registry()
     yield
     clear_registry()
+    _TASK_REGISTRY.update(old_registry)
 
 
 def test_legitimate_task_registration():
