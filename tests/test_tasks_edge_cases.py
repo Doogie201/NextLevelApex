@@ -1,7 +1,7 @@
 import pytest
 
+from nextlevelapex.core.registry import get_task_registry
 from nextlevelapex.core.task import Severity, TaskResult
-from nextlevelapex.main import get_task_registry
 from nextlevelapex.tasks.ollama import setup_ollama_task
 
 
@@ -26,6 +26,9 @@ def test_ollama_task_missing_config(monkeypatch):
 
 def test_registry_contains_tasks():
     """Make sure our @task decorators actually registered them."""
+    from nextlevelapex.main2 import discover_tasks
+
+    discover_tasks()
     tasks = get_task_registry()
     assert "Ollama Setup" in tasks
     assert "Homebrew Install" in tasks

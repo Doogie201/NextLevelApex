@@ -25,6 +25,16 @@ def task(name: str) -> Callable[[TaskFunc], TaskFunc]:
         if name in _TASK_REGISTRY:
             raise RuntimeError(f"Duplicate task name: {name}")
 
+        # Enforce strict module provenance (Security Memo Item B)
+        module_name = getattr(fn, "__module__", "") or ""
+        if not module_name.startswith("nextlevelapex.tasks."):
+            import logging
+
+            logging.critical(
+                f"SECURITY ALERT: Rejecting unauthorized task '{name}' from foreign module '{module_name}'"
+            )
+            raise RuntimeError(f"Unauthorized task origin: {module_name}")
+
         fn._task_name = name  # type: ignore[attr-defined]  # 🔥 Use setattr for reliability
         _TASK_REGISTRY[name] = fn
         return fn
