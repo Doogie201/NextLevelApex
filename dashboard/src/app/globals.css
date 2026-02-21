@@ -357,6 +357,86 @@ textarea:focus-visible,
   flex-wrap: wrap;
 }
 
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(56vh, 620px);
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.task-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(149, 158, 201, 0.24);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px;
+}
+
+.task-row-shell-active {
+  border-color: rgba(143, 194, 255, 0.7);
+  background: rgba(70, 128, 255, 0.11);
+}
+
+.task-row-button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.task-row-header strong {
+  color: #f3f7ff;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.task-row-reason {
+  margin: 0;
+  color: rgba(216, 224, 246, 0.85);
+  font-size: 0.84rem;
+}
+
+.task-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(191, 201, 236, 0.73);
+  font-size: 0.78rem;
+}
+
+.task-row-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(216, 224, 246, 0.92);
+  font-size: 0.83rem;
+  font-weight: 600;
+  align-self: center;
+}
+
+.task-row-select input {
+  width: 15px;
+  height: 15px;
+}
+
 .task-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -846,6 +926,10 @@ details summary {
   .diagnose-grid,
   .task-grid,
   .inspector-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .task-row-shell {
     grid-template-columns: 1fr;
   }
 }
