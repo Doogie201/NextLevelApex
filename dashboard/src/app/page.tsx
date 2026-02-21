@@ -9,6 +9,7 @@ import {
   Contrast,
   Copy,
   Download,
+  Keyboard,
   ListChecks,
   Loader2,
   Play,
@@ -17,13 +18,20 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { CommandId } from "@/engine/commandContract";
 import { isRunEnvelope } from "@/engine/apiContract";
 import { localhostWarning } from "@/engine/hostSafety";
 import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
+import { evaluateShortcut, initialShortcutState, type ShortcutState } from "@/engine/keyboardShortcuts";
 import { buildRedactedEventText, buildRedactedLogText } from "@/engine/outputExport";
+import {
+  nextReducedMotionOverride,
+  parseReducedMotionOverride,
+  REDUCED_MOTION_STORAGE_KEY,
+  resolveReducedMotionEffective,
+} from "@/engine/reducedMotion";
 import {
   classifyCommandOutcome,
   formatCommandLabel,
@@ -42,6 +50,20 @@ import {
 
 type ViewId = "dashboard" | "tasks" | "output";
 type SeverityFilter = "ALL" | CommandOutcome;
+
+function isTypingElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tag = target.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") {
+    return true;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  return Boolean(target.closest("[contenteditable='true']"));
+}
 
 function formatTimestamp(isoTime: string): string {
   return new Date(isoTime).toLocaleString();
@@ -141,8 +163,13 @@ export default function Home() {
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [highContrast, setHighContrast] = useState(false);
+  const [reduceMotionOverride, setReduceMotionOverride] = useState<boolean | null>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutState, setShortcutState] = useState<ShortcutState>(() => initialShortcutState());
+  const [liveMessage, setLiveMessage] = useState("Ready.");
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
   const [activeElapsedMs, setActiveElapsedMs] = useState(0);
   const [friendlyMessage, setFriendlyMessage] = useState("Run diagnose to evaluate stack health.");
@@ -152,6 +179,18 @@ export default function Home() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeStartedAtRef = useRef<number | null>(null);
+  const runStatusRef = useRef<HTMLSpanElement | null>(null);
+  const healthBadgeRef = useRef<HTMLSpanElement | null>(null);
+  const outputHeaderRef = useRef<HTMLElement | null>(null);
+  const outputSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const shortcutCloseRef = useRef<HTMLButtonElement | null>(null);
+  const shortcutDialogRef = useRef<HTMLDivElement | null>(null);
+  const shortcutOpenerRef = useRef<HTMLElement | null>(null);
+
+  const effectiveReducedMotion = useMemo(
+    () => resolveReducedMotionEffective(reduceMotionOverride, prefersReducedMotion),
+    [prefersReducedMotion, reduceMotionOverride],
+  );
 
   const badgeClass = useMemo(() => {
     if (healthBadge === "OK") {
@@ -191,6 +230,18 @@ export default function Home() {
     }
     const storedContrast = window.localStorage.getItem("nlx.gui.highContrast");
     setHighContrast(storedContrast === "true");
+    setReduceMotionOverride(parseReducedMotionOverride(window.localStorage.getItem(REDUCED_MOTION_STORAGE_KEY)));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncPreference = (): void => setPrefersReducedMotion(mediaQuery.matches);
+    syncPreference();
+    mediaQuery.addEventListener("change", syncPreference);
+    return () => mediaQuery.removeEventListener("change", syncPreference);
   }, []);
 
   useEffect(() => {
@@ -206,6 +257,13 @@ export default function Home() {
     }
     window.localStorage.setItem("nlx.gui.highContrast", highContrast ? "true" : "false");
   }, [highContrast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || reduceMotionOverride === null) {
+      return;
+    }
+    window.localStorage.setItem(REDUCED_MOTION_STORAGE_KEY, reduceMotionOverride ? "true" : "false");
+  }, [reduceMotionOverride]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -250,6 +308,85 @@ export default function Home() {
       setSelectedEventId(commandHistory[0]?.id ?? null);
     }
   }, [commandHistory, selectedEventId]);
+
+  const setViewByShortcut = useCallback((viewId: ViewId): void => {
+    setActiveView(viewId);
+    setLiveMessage(`Switched to ${viewId} view.`);
+  }, []);
+
+  const openKeyboardShortcuts = useCallback((): void => {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      shortcutOpenerRef.current = document.activeElement;
+    }
+    setShortcutsOpen(true);
+    setLiveMessage("Keyboard shortcuts opened.");
+  }, []);
+
+  const closeKeyboardShortcuts = useCallback((): void => {
+    setShortcutsOpen(false);
+    setLiveMessage("Keyboard shortcuts closed.");
+    shortcutOpenerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!shortcutsOpen) {
+      return;
+    }
+    shortcutCloseRef.current?.focus();
+  }, [shortcutsOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const result = evaluateShortcut(shortcutState, {
+        key: event.key,
+        nowMs: Date.now(),
+        isTypingTarget: isTypingElement(event.target),
+        isOutputView: activeView === "output",
+        hasSearchInput: Boolean(outputSearchInputRef.current),
+        isHelpOpen: shortcutsOpen,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+      });
+
+      setShortcutState(result.nextState);
+
+      if (!result.action) {
+        return;
+      }
+
+      if (result.action === "OPEN_HELP") {
+        event.preventDefault();
+        openKeyboardShortcuts();
+        return;
+      }
+
+      if (result.action === "CLOSE_HELP") {
+        event.preventDefault();
+        closeKeyboardShortcuts();
+        return;
+      }
+
+      if (result.action === "FOCUS_SEARCH") {
+        event.preventDefault();
+        outputSearchInputRef.current?.focus();
+        outputSearchInputRef.current?.select();
+        return;
+      }
+
+      event.preventDefault();
+      if (result.action === "VIEW_DASHBOARD") {
+        setViewByShortcut("dashboard");
+      } else if (result.action === "VIEW_TASKS") {
+        setViewByShortcut("tasks");
+      } else if (result.action === "VIEW_OUTPUT") {
+        setViewByShortcut("output");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeView, closeKeyboardShortcuts, openKeyboardShortcuts, setViewByShortcut, shortcutState, shortcutsOpen]);
 
   const callNlx = useCallback(
     async (commandId: CommandId, taskName?: string, signal?: AbortSignal): Promise<CommandResponse> => {
@@ -356,6 +493,10 @@ export default function Home() {
       const label = formatCommandLabel(commandId, taskName);
       setActiveCommandLabel(label);
       setCancelRequested(false);
+      setLiveMessage(`Running ${label}...`);
+      requestAnimationFrame(() => {
+        runStatusRef.current?.focus();
+      });
 
       const eventId = appendCommandStart(commandId, label);
       const startedAtMs = Date.now();
@@ -374,16 +515,32 @@ export default function Home() {
       setActiveCommandLabel("");
       activeStartedAtRef.current = null;
       if (result.errorType === "aborted") {
+        setLiveMessage("Cancelled.");
         setFriendlyMessage("Cancel confirmed. Command stopped safely.");
+      } else if (!result.ok) {
+        setLiveMessage(`Run failed: ${result.reasonCode ?? "UNKNOWN"}.`);
+      } else {
+        setLiveMessage(`Completed: ${result.badge ?? "OK"}.`);
+      }
+
+      if (!isTypingElement(typeof document !== "undefined" ? document.activeElement : null)) {
+        requestAnimationFrame(() => {
+          if (activeView === "output") {
+            outputHeaderRef.current?.focus();
+          } else {
+            healthBadgeRef.current?.focus();
+          }
+        });
       }
       return result;
     },
-    [appendCommandStart, callNlx, finalizeCommand],
+    [activeView, appendCommandStart, callNlx, finalizeCommand],
   );
 
   const cancelRunningCommand = useCallback((): void => {
     abortControllerRef.current?.abort();
     setCancelRequested(true);
+    setLiveMessage("Cancel requested.");
     setFriendlyMessage("Cancel requested. Waiting for command shutdown...");
   }, []);
 
@@ -532,6 +689,61 @@ export default function Home() {
     setFriendlyMessage("Downloaded redacted log.");
   }, []);
 
+  const handleShortcutDialogKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeKeyboardShortcuts();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const container = shortcutDialogRef.current;
+      if (!container) {
+        return;
+      }
+
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+
+      if (focusables.length === 0) {
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    },
+    [closeKeyboardShortcuts],
+  );
+
+  const motionTransition = useMemo(
+    () => (effectiveReducedMotion ? { duration: 0 } : { duration: 0.22 }),
+    [effectiveReducedMotion],
+  );
+  const motionInitial = useMemo(
+    () => (effectiveReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 12 }),
+    [effectiveReducedMotion],
+  );
+  const motionExit = useMemo(
+    () => (effectiveReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -12 }),
+    [effectiveReducedMotion],
+  );
+
   const filteredHistory = useMemo(() => {
     return commandHistory.filter((event) => {
       if (severityFilter !== "ALL" && event.outcome !== severityFilter) {
@@ -582,9 +794,19 @@ export default function Home() {
   }, [loadConfig, loadTasks, runDiagnose]);
 
   return (
-    <div className="meta-root" data-theme="run" data-contrast={highContrast ? "high" : "normal"}>
+    <div
+      className={`meta-root ${effectiveReducedMotion ? "reduce-motion" : ""}`}
+      data-theme="run"
+      data-contrast={highContrast ? "high" : "normal"}
+    >
+      <a href="#main" className="skip-link">
+        Skip to main content
+      </a>
+      <div className="sr-only" aria-live="polite">
+        {liveMessage}
+      </div>
       <div className="aurora-background" aria-hidden="true" />
-      <main className="meta-shell">
+      <div className="meta-shell">
         <header className="glass-card top-healthbar" aria-live="polite">
           <div className="health-title-row">
             <div>
@@ -604,7 +826,7 @@ export default function Home() {
           )}
 
           <div className="health-meta-row">
-            <span className={`badge-status ${badgeClass}`}>
+            <span ref={healthBadgeRef} tabIndex={-1} className={`badge-status ${badgeClass}`}>
               {healthBadge === "OK" ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
               {healthBadge}
             </span>
@@ -641,8 +863,26 @@ export default function Home() {
             >
               <Contrast className="w-4 h-4" /> Contrast {highContrast ? "ON" : "OFF"}
             </button>
+            <button
+              className="btn-muted"
+              onClick={() => setReduceMotionOverride((previous) => nextReducedMotionOverride(previous, prefersReducedMotion))}
+              type="button"
+              aria-label="Toggle reduced motion mode"
+            >
+              <Activity className="w-4 h-4" /> Reduce Motion {effectiveReducedMotion ? "ON" : "OFF"}
+            </button>
+            <button
+              className="btn-muted"
+              type="button"
+              aria-label="Open keyboard shortcuts"
+              aria-haspopup="dialog"
+              aria-expanded={shortcutsOpen}
+              onClick={openKeyboardShortcuts}
+            >
+              <Keyboard className="w-4 h-4" /> Shortcuts
+            </button>
             {isBusy && (
-              <span className="run-state-chip" aria-live="polite">
+              <span ref={runStatusRef} tabIndex={-1} className="run-state-chip" aria-live="polite">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {cancelRequested ? "Cancel requested..." : `Running ${activeCommandLabel} (${formatDuration(activeElapsedMs)})`}
               </span>
@@ -652,7 +892,7 @@ export default function Home() {
           <p className="meta-muted">{friendlyMessage}</p>
         </header>
 
-        <aside className="glass-card left-nav" aria-label="Navigation">
+        <nav className="glass-card left-nav" aria-label="Navigation">
           <button
             type="button"
             className={`nav-item ${activeView === "dashboard" ? "nav-item-active" : ""}`}
@@ -677,18 +917,18 @@ export default function Home() {
           >
             <TerminalSquare className="w-4 h-4" /> Output
           </button>
-        </aside>
+        </nav>
 
-        <section className="main-content" aria-label="Main content">
+        <main id="main" className="main-content" aria-label="Main content">
           <AnimatePresence mode="wait">
             {activeView === "dashboard" && (
               <motion.div
                 key="dashboard"
                 className="glass-card content-card"
-                initial={{ opacity: 0, y: 12 }}
+                initial={motionInitial}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.22 }}
+                exit={motionExit}
+                transition={motionTransition}
               >
                 <h2 className="section-title">Stack Overview</h2>
                 {diagnoseSummary ? (
@@ -728,10 +968,10 @@ export default function Home() {
               <motion.div
                 key="tasks"
                 className="glass-card content-card"
-                initial={{ opacity: 0, y: 12 }}
+                initial={motionInitial}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.22 }}
+                exit={motionExit}
+                transition={motionTransition}
               >
                 <h2 className="section-title">Task Dry-Run</h2>
                 <p className="meta-muted">Task names are sourced from `nlx list-tasks` and validated server-side.</p>
@@ -811,10 +1051,10 @@ export default function Home() {
               <motion.div
                 key="output"
                 className="glass-card content-card"
-                initial={{ opacity: 0, y: 12 }}
+                initial={motionInitial}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.22 }}
+                exit={motionExit}
+                transition={motionTransition}
               >
                 <h2 className="section-title">Live Output Viewer</h2>
                 <p className="meta-muted">Filter timeline entries and inspect redacted stdout/stderr per command.</p>
@@ -823,6 +1063,7 @@ export default function Home() {
                   <label className="search-control" aria-label="Search redacted output">
                     <Search className="w-4 h-4" />
                     <input
+                      ref={outputSearchInputRef}
                       type="search"
                       placeholder="Search output"
                       value={searchQuery}
@@ -855,7 +1096,7 @@ export default function Home() {
                   </button>
                 </div>
 
-                <section className="sticky-run-header" aria-live="polite">
+                <section ref={outputHeaderRef} tabIndex={-1} className="sticky-run-header" aria-live="polite">
                   {selectedEvent ? (
                     <>
                       <div className="sticky-run-meta">
@@ -900,7 +1141,16 @@ export default function Home() {
                           key={event.id}
                           className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
                           role="listitem"
+                          tabIndex={0}
+                          aria-current={selectedEvent?.id === event.id ? "true" : undefined}
+                          aria-label={`${event.label} ${event.outcome}. Press Enter to select.`}
                           onClick={() => setSelectedEventId(event.id)}
+                          onKeyDown={(keyboardEvent) => {
+                            if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+                              keyboardEvent.preventDefault();
+                              setSelectedEventId(event.id);
+                            }
+                          }}
                         >
                           <header className="timeline-header">
                             <div className="timeline-heading">
@@ -910,7 +1160,10 @@ export default function Home() {
                             <button
                               className="copy-btn"
                               type="button"
-                              onClick={() => void copyEventOutput(event)}
+                              onClick={(clickEvent) => {
+                                clickEvent.stopPropagation();
+                                void copyEventOutput(event);
+                              }}
                               aria-label={`Copy redacted output for ${event.label}`}
                             >
                               <Copy className="w-4 h-4" /> Copy
@@ -983,7 +1236,7 @@ export default function Home() {
               </motion.div>
             )}
           </AnimatePresence>
-        </section>
+        </main>
 
         <aside className="glass-card inspector-panel" aria-label="Inspector">
           <h2 className="section-title">Inspector</h2>
@@ -1057,7 +1310,55 @@ export default function Home() {
             <p className="meta-muted">Select a timeline event to inspect details.</p>
           )}
         </aside>
-      </main>
+      </div>
+
+      {shortcutsOpen && (
+        <div className="shortcut-overlay" role="presentation">
+          <div
+            ref={shortcutDialogRef}
+            className="shortcut-dialog glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shortcut-dialog-title"
+            onKeyDown={handleShortcutDialogKeyDown}
+          >
+            <header className="shortcut-header">
+              <h2 id="shortcut-dialog-title" className="section-title">
+                Keyboard Shortcuts
+              </h2>
+              <button ref={shortcutCloseRef} className="btn-muted" type="button" onClick={closeKeyboardShortcuts}>
+                <X className="w-4 h-4" /> Close
+              </button>
+            </header>
+            <ul className="shortcut-list">
+              <li>
+                <kbd>?</kbd>
+                <span>Open shortcuts help</span>
+              </li>
+              <li>
+                <kbd>Esc</kbd>
+                <span>Close shortcuts help</span>
+              </li>
+              <li>
+                <kbd>/</kbd>
+                <span>Focus output search (Output view)</span>
+              </li>
+              <li>
+                <kbd>g d</kbd>
+                <span>Go to Dashboard</span>
+              </li>
+              <li>
+                <kbd>g t</kbd>
+                <span>Go to Tasks</span>
+              </li>
+              <li>
+                <kbd>g o</kbd>
+                <span>Go to Output</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
