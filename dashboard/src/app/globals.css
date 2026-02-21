@@ -730,6 +730,15 @@ textarea:focus-visible,
   padding: 4px 8px;
 }
 
+.select-control input {
+  background: rgba(10, 15, 28, 0.9);
+  border: 1px solid rgba(149, 158, 201, 0.34);
+  border-radius: 8px;
+  color: #edf2ff;
+  padding: 4px 8px;
+  min-width: 220px;
+}
+
 .timeline-list {
   display: flex;
   flex-direction: column;

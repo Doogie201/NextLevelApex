@@ -25,7 +25,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import type { CommandId } from "@/engine/commandContract";
 import { isRunEnvelope } from "@/engine/apiContract";
@@ -66,6 +74,25 @@ import {
 } from "@/engine/viewModel";
 import { buildTaskDetailsSummary } from "@/engine/taskDetailsExport";
 import { moveTaskSelection, nextVisibleTaskLimit } from "@/engine/taskSelection";
+import {
+  addOrUpdatePreset,
+  buildRunPreset,
+  createPresetId,
+  duplicatePreset,
+  loadRunPresets,
+  markPresetUsed,
+  parsePresetTaskInput,
+  PRESETS_SCHEMA_VERSION,
+  storeRunPresets,
+  type RunPreset,
+  type RunPresetConfig,
+  type RunPresetCommandId,
+} from "@/engine/presetsStore";
+import {
+  buildPresetsExportJson,
+  mergeImportedPresets,
+  parsePresetsImportJson,
+} from "@/engine/presetsExport";
 import {
   addRunSession,
   clearRunSessions,
@@ -108,6 +135,7 @@ interface TaskRowSummary {
 
 const TASK_VISIBLE_STEP = 200;
 const GUI_BUILD_ID = "phase11";
+const MAX_PRESET_NAME_LENGTH = 64;
 
 function taskRowId(taskName: string): string {
   return `task-row-${encodeURIComponent(taskName)}`;
@@ -226,6 +254,12 @@ export default function Home() {
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
+  const [presets, setPresets] = useState<RunPreset[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [presetName, setPresetName] = useState("Diagnose baseline");
+  const [presetCommandId, setPresetCommandId] = useState<RunPresetCommandId>("diagnose");
+  const [presetTaskInput, setPresetTaskInput] = useState("");
+  const [lastRunConfig, setLastRunConfig] = useState<RunPresetConfig | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [compareSessionId, setCompareSessionId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -261,6 +295,7 @@ export default function Home() {
   const healthBadgeRef = useRef<HTMLSpanElement | null>(null);
   const outputHeaderRef = useRef<HTMLElement | null>(null);
   const outputSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const presetsImportInputRef = useRef<HTMLInputElement | null>(null);
   const sessionsListRef = useRef<HTMLDivElement | null>(null);
   const tasksSearchInputRef = useRef<HTMLInputElement | null>(null);
   const shortcutCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -286,6 +321,11 @@ export default function Home() {
   }, [healthBadge]);
 
   const isStaleState = useMemo(() => isStale(lastUpdatedAtIso, nowTick), [lastUpdatedAtIso, nowTick]);
+
+  const selectedPreset = useMemo(
+    () => (selectedPresetId ? presets.find((preset) => preset.id === selectedPresetId) ?? null : presets[0] ?? null),
+    [presets, selectedPresetId],
+  );
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -373,6 +413,12 @@ export default function Home() {
     if (loaded.length > 0) {
       setLastUpdatedAtIso(loaded[0]?.finishedAt ?? loaded[0]?.startedAt ?? null);
     }
+
+    const loadedPresets = loadRunPresets(window.localStorage);
+    setPresets(loadedPresets);
+    if (loadedPresets.length > 0) {
+      setSelectedPresetId(loadedPresets[0].id);
+    }
   }, []);
 
   useEffect(() => {
@@ -388,6 +434,23 @@ export default function Home() {
     }
     storeRunSessions(window.localStorage, runSessions);
   }, [runSessions]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeRunPresets(window.localStorage, presets);
+  }, [presets]);
+
+  useEffect(() => {
+    if (presets.length === 0) {
+      setSelectedPresetId(null);
+      return;
+    }
+    if (!selectedPresetId || !presets.some((preset) => preset.id === selectedPresetId)) {
+      setSelectedPresetId(presets[0].id);
+    }
+  }, [presets, selectedPresetId]);
 
   useEffect(() => {
     if (!isBusy || activeStartedAtRef.current === null) {
@@ -792,6 +855,12 @@ export default function Home() {
     setActiveView("dashboard");
     setIsBusy(true);
     setFriendlyMessage("Running diagnose command...");
+    setLastRunConfig({
+      commandId: "diagnose",
+      taskNames: [],
+      dryRun: true,
+      toggles: { readOnly },
+    });
 
     try {
       const result = await executeCommand("diagnose");
@@ -816,12 +885,18 @@ export default function Home() {
     } finally {
       setIsBusy(false);
     }
-  }, [executeCommand]);
+  }, [executeCommand, readOnly]);
 
   const runDryRunSweep = useCallback(async (): Promise<void> => {
     setActiveView("output");
     setIsBusy(true);
     setFriendlyMessage("Running full dry-run sweep...");
+    setLastRunConfig({
+      commandId: "dryRunAll",
+      taskNames: [],
+      dryRun: true,
+      toggles: { readOnly },
+    });
 
     try {
       const result = await executeCommand("dryRunAll");
@@ -830,7 +905,7 @@ export default function Home() {
     } finally {
       setIsBusy(false);
     }
-  }, [executeCommand]);
+  }, [executeCommand, readOnly]);
 
   const runDryRunSelected = useCallback(async (tasksOverride?: string[]): Promise<void> => {
     const tasksToRun = tasksOverride ?? selectedTasks;
@@ -842,6 +917,12 @@ export default function Home() {
     setActiveView("output");
     setIsBusy(true);
     setFriendlyMessage(`Running dry-run for ${tasksToRun.length} task(s)...`);
+    setLastRunConfig({
+      commandId: "dryRunTask",
+      taskNames: [...tasksToRun].sort((left, right) => left.localeCompare(right)),
+      dryRun: true,
+      toggles: { readOnly },
+    });
 
     const aggregated: TaskResult[] = [];
 
@@ -886,7 +967,147 @@ export default function Home() {
     } finally {
       setIsBusy(false);
     }
-  }, [executeCommand, knownTasks, selectedTasks]);
+  }, [executeCommand, knownTasks, readOnly, selectedTasks]);
+
+  const runFromPresetConfig = useCallback(
+    async (config: RunPresetConfig): Promise<void> => {
+      if (isBusy) {
+        setFriendlyMessage("A command is already running.");
+        return;
+      }
+      if (config.commandId === "diagnose") {
+        await runDiagnose();
+        return;
+      }
+      if (config.commandId === "dryRunAll") {
+        await runDryRunSweep();
+        return;
+      }
+      await runDryRunSelected(config.taskNames);
+    },
+    [isBusy, runDiagnose, runDryRunSelected, runDryRunSweep],
+  );
+
+  const buildPresetConfigFromInputs = useCallback((): RunPresetConfig | null => {
+    const parsedTasks = parsePresetTaskInput(presetTaskInput);
+    if (presetCommandId === "dryRunTask" && parsedTasks.length === 0) {
+      setFriendlyMessage("Provide at least one task for dryRunTask presets.");
+      return null;
+    }
+    return {
+      commandId: presetCommandId,
+      taskNames: presetCommandId === "dryRunTask" ? parsedTasks : [],
+      dryRun: true,
+      toggles: { readOnly },
+    };
+  }, [presetCommandId, presetTaskInput, readOnly]);
+
+  const savePresetFromInputs = useCallback((): void => {
+    const config = buildPresetConfigFromInputs();
+    if (!config) {
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const normalizedName = presetName.trim().slice(0, MAX_PRESET_NAME_LENGTH);
+    const id = createPresetId(normalizedName || "preset", nowIso);
+    const preset = buildRunPreset({
+      id,
+      name: normalizedName || "Untitled preset",
+      timestampIso: nowIso,
+      config,
+    });
+    setPresets((previous) => addOrUpdatePreset(previous, preset));
+    setSelectedPresetId(preset.id);
+    setFriendlyMessage(`Saved preset: ${preset.name}.`);
+  }, [buildPresetConfigFromInputs, presetName]);
+
+  const runSelectedPreset = useCallback(async (): Promise<void> => {
+    if (!selectedPreset) {
+      setFriendlyMessage("Select a preset first.");
+      return;
+    }
+    await runFromPresetConfig(selectedPreset.config);
+    const nowIso = new Date().toISOString();
+    setPresets((previous) => markPresetUsed(previous, selectedPreset.id, nowIso));
+  }, [runFromPresetConfig, selectedPreset]);
+
+  const duplicateSelectedPreset = useCallback((): void => {
+    if (!selectedPreset) {
+      setFriendlyMessage("Select a preset to duplicate.");
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const shouldDuplicate = window.confirm(`Duplicate preset '${selectedPreset.name}'?`);
+      if (!shouldDuplicate) {
+        return;
+      }
+    }
+    const nowIso = new Date().toISOString();
+    setPresets((previous) => duplicatePreset(previous, selectedPreset.id, nowIso));
+    setFriendlyMessage(`Duplicated preset: ${selectedPreset.name}.`);
+  }, [selectedPreset]);
+
+  const repeatLastRun = useCallback(async (): Promise<void> => {
+    if (!lastRunConfig) {
+      setFriendlyMessage("No prior run configuration available.");
+      return;
+    }
+    setLiveMessage("Replaying last run configuration...");
+    await runFromPresetConfig(lastRunConfig);
+  }, [lastRunConfig, runFromPresetConfig]);
+
+  const exportPresets = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (presets.length === 0) {
+      setFriendlyMessage("No presets available to export.");
+      return;
+    }
+    const payload = buildPresetsExportJson(PRESETS_SCHEMA_VERSION, presets);
+    const timestamp = new Date().toISOString().replace(/[:]/g, "-");
+    const blob = new Blob([payload], { type: "application/json;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `nlx-presets-${timestamp}.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    setFriendlyMessage("Exported presets JSON.");
+  }, [presets]);
+
+  const triggerPresetImport = useCallback((): void => {
+    presetsImportInputRef.current?.click();
+  }, []);
+
+  const onPresetImportSelected = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+      try {
+        const raw = await file.text();
+        const imported = parsePresetsImportJson(raw);
+        let merge = mergeImportedPresets(presets, imported, false);
+        if (merge.skipped > 0 && typeof window !== "undefined") {
+          const overwrite = window.confirm(
+            `${merge.skipped} preset(s) match existing IDs. Overwrite existing presets with imported versions?`,
+          );
+          if (overwrite) {
+            merge = mergeImportedPresets(presets, imported, true);
+          }
+        }
+        setPresets(merge.presets);
+        setFriendlyMessage(`Imported presets: +${merge.added}, updated ${merge.updated}, skipped ${merge.skipped}.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid presets import file.";
+        setFriendlyMessage(message);
+      }
+    },
+    [presets],
+  );
 
   const copyEventOutput = useCallback(async (event: CommandEvent): Promise<void> => {
     const payload = buildRedactedEventText(event);
@@ -1761,6 +1982,120 @@ export default function Home() {
                 ) : (
                   <p className="meta-muted">No diagnose output available yet.</p>
                 )}
+
+                <section className="sessions-panel" aria-label="Command runner presets">
+                  <div className="sessions-header">
+                    <h3>Presets</h3>
+                    <p className="meta-muted">Client-only run templates with deterministic export/import.</p>
+                  </div>
+                  <div className="sessions-filters">
+                    <label className="select-control" aria-label="Preset name">
+                      <span>Name</span>
+                      <input
+                        type="text"
+                        value={presetName}
+                        maxLength={MAX_PRESET_NAME_LENGTH}
+                        onChange={(event) => setPresetName(event.target.value)}
+                        aria-label="Preset name"
+                      />
+                    </label>
+                    <label className="select-control" aria-label="Preset command">
+                      <span>Command</span>
+                      <select
+                        value={presetCommandId}
+                        onChange={(event) => setPresetCommandId(event.target.value as RunPresetCommandId)}
+                        aria-label="Preset command"
+                      >
+                        <option value="diagnose">diagnose</option>
+                        <option value="dryRunAll">dryRunAll</option>
+                        <option value="dryRunTask">dryRunTask</option>
+                      </select>
+                    </label>
+                    {presetCommandId === "dryRunTask" && (
+                      <label className="search-control" aria-label="Preset tasks">
+                        <Search className="w-4 h-4" />
+                        <input
+                          type="text"
+                          placeholder="Task names, comma-separated"
+                          value={presetTaskInput}
+                          onChange={(event) => setPresetTaskInput(event.target.value)}
+                          aria-label="Preset tasks comma separated"
+                        />
+                      </label>
+                    )}
+                  </div>
+                  <div className="sessions-export-center">
+                    <button className="btn-theme" type="button" onClick={savePresetFromInputs} aria-label="Save preset">
+                      <FileJson2 className="w-4 h-4" /> Save Preset
+                    </button>
+                    <button
+                      className="btn-theme"
+                      type="button"
+                      onClick={() => void runSelectedPreset()}
+                      disabled={!selectedPreset || isBusy}
+                      aria-label="Run selected preset"
+                    >
+                      <Play className="w-4 h-4" /> Run Preset
+                    </button>
+                    <button
+                      className="btn-muted"
+                      type="button"
+                      onClick={duplicateSelectedPreset}
+                      disabled={!selectedPreset}
+                      aria-label="Duplicate selected preset"
+                    >
+                      <Copy className="w-4 h-4" /> Duplicate Preset
+                    </button>
+                    <button
+                      className="btn-muted"
+                      type="button"
+                      onClick={() => void repeatLastRun()}
+                      disabled={!lastRunConfig || isBusy}
+                      aria-label="Repeat last run configuration"
+                    >
+                      <Activity className="w-4 h-4" /> Repeat Last Run
+                    </button>
+                    <button className="btn-muted" type="button" onClick={exportPresets} disabled={presets.length === 0}>
+                      <Download className="w-4 h-4" /> Export Presets
+                    </button>
+                    <button className="btn-muted" type="button" onClick={triggerPresetImport}>
+                      <FileJson2 className="w-4 h-4" /> Import Presets
+                    </button>
+                    <input
+                      ref={presetsImportInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="sr-only"
+                      onChange={(event) => void onPresetImportSelected(event)}
+                    />
+                  </div>
+                  <label className="select-control" aria-label="Select existing preset">
+                    <span>Saved</span>
+                    <select
+                      value={selectedPreset?.id ?? ""}
+                      onChange={(event) => setSelectedPresetId(event.target.value || null)}
+                      disabled={presets.length === 0}
+                    >
+                      {presets.length === 0 ? (
+                        <option value="">No presets saved</option>
+                      ) : (
+                        presets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name} ({preset.config.commandId})
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  {selectedPreset && (
+                    <p className="meta-muted" aria-live="polite">
+                      Selected preset: {selectedPreset.name} | command {selectedPreset.config.commandId}
+                      {selectedPreset.config.commandId === "dryRunTask"
+                        ? ` | tasks ${selectedPreset.config.taskNames.join(", ")}`
+                        : ""}
+                    </p>
+                  )}
+                </section>
               </motion.div>
             )}
 
