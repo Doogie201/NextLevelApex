@@ -1,4 +1,4 @@
-import { parseDiagnoseLine } from "../lib/diagnoseParser";
+import { parseDiagnoseLine } from "../engine/diagnoseParser";
 
 describe("parseDiagnoseLine", () => {
   it("parses the canonical single-line diagnose output", () => {

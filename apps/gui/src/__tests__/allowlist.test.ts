@@ -1,4 +1,4 @@
-import { buildAllowlistedArgv } from "../lib/allowlist";
+import { buildAllowlistedArgv } from "../engine/allowlist";
 
 describe("buildAllowlistedArgv", () => {
   it("allows diagnose without arguments", () => {

@@ -1,4 +1,4 @@
-import { redactOutput } from "../lib/redaction";
+import { redactOutput } from "../engine/redaction";
 
 describe("redactOutput", () => {
   it("redacts obvious key-value secrets and secret-looking paths", () => {

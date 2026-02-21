@@ -1,4 +1,4 @@
-import type { HealthBadgeStatus } from "../lib/types";
+import type { HealthBadgeStatus } from "../engine/types";
 
 interface DashboardScreenProps {
   status: HealthBadgeStatus;

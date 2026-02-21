@@ -1,5 +1,5 @@
-import { runCommand } from "../lib/nlxBridge";
-import type { CommandRunner } from "../lib/nlxBridge";
+import { runCommand } from "../engine/nlxBridge";
+import type { CommandRunner } from "../engine/nlxBridge";
 
 describe("runCommand", () => {
   it("returns command failure for disallowed task args", async () => {
