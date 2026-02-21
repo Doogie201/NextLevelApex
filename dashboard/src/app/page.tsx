@@ -8,73 +8,34 @@ import {
   Clock3,
   Copy,
   ListChecks,
+  Loader2,
   Play,
+  Search,
   Shield,
   TerminalSquare,
+  X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandId } from "@/engine/commandContract";
+import { loadCommandHistory, storeCommandHistory } from "@/engine/historyStore";
+import {
+  classifyCommandOutcome,
+  formatCommandLabel,
+  healthBadgeFromDiagnose,
+  isStale,
+  summarizeCommandResult,
+  type CommandErrorType,
+  type CommandEvent,
+  type CommandOutcome,
+  type CommandResponse,
+  type DiagnoseSummary,
+  type HealthBadge,
+  type TaskResult,
+} from "@/engine/viewModel";
 
-interface DiagnoseSummary {
-  dnsMode: string;
-  resolver: string;
-  pihole: string;
-  piholeUpstream: string;
-  cloudflared: string;
-  plaintextDns: string;
-  notes: string;
-}
-
-interface TaskResult {
-  taskName: string;
-  status: "PASS" | "FAIL" | "WARN" | "SKIP" | "UNKNOWN";
-  reason: string;
-}
-
-type HealthBadge = "OK" | "DEGRADED" | "BROKEN";
-type CommandErrorType =
-  | "missing_nlx"
-  | "permission"
-  | "timeout"
-  | "aborted"
-  | "spawn_error"
-  | "nonzero_exit"
-  | "none";
-
-type CommandOutcome = "RUNNING" | "PASS" | "WARN" | "FAIL";
 type ViewId = "dashboard" | "tasks" | "output";
-
-interface CommandResponse {
-  ok: boolean;
-  commandId: CommandId;
-  exitCode: number;
-  timedOut: boolean;
-  errorType: CommandErrorType;
-  stdout: string;
-  stderr: string;
-  taskNames?: string[];
-  taskResults?: TaskResult[];
-  diagnose?: {
-    summary: DiagnoseSummary;
-    badge: HealthBadge;
-  };
-  error?: string;
-  httpStatus: number;
-}
-
-interface CommandEvent {
-  id: string;
-  commandId: CommandId;
-  label: string;
-  startedAt: string;
-  finishedAt?: string;
-  durationMs?: number;
-  outcome: CommandOutcome;
-  note: string;
-  stdout: string;
-  stderr: string;
-}
+type SeverityFilter = "ALL" | CommandOutcome;
 
 function formatTimestamp(isoTime: string): string {
   return new Date(isoTime).toLocaleString();
@@ -90,17 +51,20 @@ function formatDuration(durationMs?: number): string {
   return `${(durationMs / 1000).toFixed(2)}s`;
 }
 
-function labelForCommand(commandId: CommandId, taskName?: string): string {
-  if (commandId === "diagnose") {
-    return "Diagnose";
+function statusClass(status: CommandOutcome | TaskResult["status"]): string {
+  if (status === "PASS") {
+    return "status-pass";
   }
-  if (commandId === "listTasks") {
-    return "List Tasks";
+  if (status === "WARN" || status === "UNKNOWN") {
+    return "status-warn";
   }
-  if (commandId === "dryRunAll") {
-    return "Dry-Run Sweep";
+  if (status === "RUNNING") {
+    return "status-running";
   }
-  return taskName ? `Dry-Run Task: ${taskName}` : "Dry-Run Task";
+  if (status === "SKIP") {
+    return "status-skip";
+  }
+  return "status-fail";
 }
 
 function normalizeCommandResponse(commandId: CommandId, httpStatus: number, payload: unknown): CommandResponse {
@@ -143,89 +107,17 @@ function normalizeCommandResponse(commandId: CommandId, httpStatus: number, payl
     errorType: typeof raw.errorType === "string" ? (raw.errorType as CommandErrorType) : "spawn_error",
     stdout: typeof raw.stdout === "string" ? raw.stdout : "",
     stderr: typeof raw.stderr === "string" ? raw.stderr : "",
-    taskNames: Array.isArray(raw.taskNames) ? (raw.taskNames.filter((entry) => typeof entry === "string") as string[]) : [],
+    taskNames: Array.isArray(raw.taskNames)
+      ? (raw.taskNames.filter((entry) => typeof entry === "string") as string[])
+      : [],
     taskResults: Array.isArray(raw.taskResults) ? (raw.taskResults as TaskResult[]) : [],
-    diagnose: typeof raw.diagnose === "object" && raw.diagnose !== null
-      ? (raw.diagnose as CommandResponse["diagnose"])
-      : undefined,
+    diagnose:
+      typeof raw.diagnose === "object" && raw.diagnose !== null
+        ? (raw.diagnose as CommandResponse["diagnose"])
+        : undefined,
     error: typeof raw.error === "string" ? raw.error : undefined,
     httpStatus,
   };
-}
-
-function classifyCommandOutcome(result: CommandResponse): CommandOutcome {
-  if (!result.ok) {
-    return "FAIL";
-  }
-
-  if (result.commandId === "diagnose") {
-    if (!result.diagnose || result.diagnose.badge === "BROKEN") {
-      return "FAIL";
-    }
-    return result.diagnose.badge === "OK" ? "PASS" : "WARN";
-  }
-
-  if (result.taskResults && result.taskResults.some((task) => task.status === "FAIL")) {
-    return "FAIL";
-  }
-
-  if (
-    result.taskResults &&
-    result.taskResults.some((task) => task.status === "WARN" || task.status === "UNKNOWN")
-  ) {
-    return "WARN";
-  }
-
-  return "PASS";
-}
-
-function summarizeCommandResult(result: CommandResponse): string {
-  if (!result.ok) {
-    if (result.errorType === "missing_nlx") {
-      return "nlx not found. Install dependencies and verify `poetry run nlx diagnose`.";
-    }
-    if (result.errorType === "timeout") {
-      return "Command timed out before completion.";
-    }
-    return result.error || result.stderr || "Command failed.";
-  }
-
-  if (result.commandId === "diagnose" && result.diagnose) {
-    return result.diagnose.badge === "OK"
-      ? "Diagnose confirms expected secure local DNS path."
-      : "Diagnose reports degraded DNS state. Review notes.";
-  }
-
-  if (result.commandId === "listTasks") {
-    return `Discovered ${result.taskNames?.length ?? 0} task(s).`;
-  }
-
-  if (result.taskResults && result.taskResults.length > 0) {
-    const failures = result.taskResults.filter((task) => task.status === "FAIL").length;
-    const warnings = result.taskResults.filter((task) => task.status === "WARN").length;
-    if (failures > 0 || warnings > 0) {
-      return `Completed with ${failures} fail / ${warnings} warn.`;
-    }
-    return `Completed ${result.taskResults.length} task checks with no warnings.`;
-  }
-
-  return "Command completed.";
-}
-
-function statusClass(status: CommandOutcome | TaskResult["status"]): string {
-  if (status === "PASS") {
-    return "status-pass";
-  }
-  if (status === "WARN" || status === "UNKNOWN") {
-    return "status-warn";
-  }
-  if (status === "RUNNING") {
-    return "status-running";
-  }
-  if (status === "SKIP") {
-    return "status-skip";
-  }
-  return "status-fail";
 }
 
 export default function Home() {
@@ -237,9 +129,16 @@ export default function Home() {
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
   const [friendlyMessage, setFriendlyMessage] = useState("Run diagnose to evaluate stack health.");
-  const [lastRunAt, setLastRunAt] = useState("never");
+  const [lastUpdatedAtIso, setLastUpdatedAtIso] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const badgeClass = useMemo(() => {
     if (healthBadge === "OK") {
@@ -251,24 +150,108 @@ export default function Home() {
     return "badge-FAIL";
   }, [healthBadge]);
 
-  const callNlx = useCallback(async (commandId: CommandId, taskName?: string): Promise<CommandResponse> => {
-    const response = await fetch("/api/nlx/run", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ commandId, taskName }),
-    });
+  const isStaleState = useMemo(() => isStale(lastUpdatedAtIso, nowTick), [lastUpdatedAtIso, nowTick]);
 
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = null;
-    }
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 60_000);
 
-    return normalizeCommandResponse(commandId, response.status, payload);
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const view = new URLSearchParams(window.location.search).get("view");
+    if (view === "dashboard" || view === "tasks" || view === "output") {
+      setActiveView(view);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const loaded = loadCommandHistory(window.localStorage);
+    setCommandHistory(loaded);
+    if (loaded.length > 0) {
+      setSelectedEventId(loaded[0]?.id ?? null);
+      setLastUpdatedAtIso(loaded[0]?.finishedAt ?? loaded[0]?.startedAt ?? null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeCommandHistory(window.localStorage, commandHistory);
+  }, [commandHistory]);
+
+  useEffect(() => {
+    if (commandHistory.length === 0) {
+      setSelectedEventId(null);
+      return;
+    }
+    if (!selectedEventId || !commandHistory.some((entry) => entry.id === selectedEventId)) {
+      setSelectedEventId(commandHistory[0]?.id ?? null);
+    }
+  }, [commandHistory, selectedEventId]);
+
+  const callNlx = useCallback(
+    async (commandId: CommandId, taskName?: string, signal?: AbortSignal): Promise<CommandResponse> => {
+      try {
+        const response = await fetch("/api/nlx/run", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ commandId, taskName }),
+          signal,
+        });
+
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+
+        return normalizeCommandResponse(commandId, response.status, payload);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return {
+            ok: false,
+            commandId,
+            exitCode: 130,
+            timedOut: false,
+            errorType: "aborted",
+            stdout: "",
+            stderr: "Command canceled by user.",
+            error: "Command canceled by user.",
+            httpStatus: 499,
+          };
+        }
+
+        const message = error instanceof Error ? error.message : "Unexpected command execution error.";
+        return {
+          ok: false,
+          commandId,
+          exitCode: 1,
+          timedOut: false,
+          errorType: "spawn_error",
+          stdout: "",
+          stderr: message,
+          error: message,
+          httpStatus: 500,
+        };
+      }
+    },
+    [],
+  );
 
   const appendCommandStart = useCallback((commandId: CommandId, label: string): string => {
     const eventId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -284,50 +267,68 @@ export default function Home() {
         note: "Running...",
         stdout: "",
         stderr: "",
+        taskResults: [],
       },
       ...previous,
     ]);
 
+    setSelectedEventId(eventId);
     return eventId;
   }, []);
 
-  const finalizeCommand = useCallback(
-    (eventId: string, startedAtMs: number, result: CommandResponse): void => {
-      const finishedAt = new Date().toISOString();
-      const outcome = classifyCommandOutcome(result);
-      const note = summarizeCommandResult(result);
+  const finalizeCommand = useCallback((eventId: string, startedAtMs: number, result: CommandResponse): void => {
+    const finishedAt = new Date().toISOString();
+    const outcome = classifyCommandOutcome(result);
+    const note = summarizeCommandResult(result);
 
-      setCommandHistory((previous) =>
-        previous.map((entry) => {
-          if (entry.id !== eventId) {
-            return entry;
-          }
-          return {
-            ...entry,
-            finishedAt,
-            durationMs: Date.now() - startedAtMs,
-            outcome,
-            note,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          };
-        }),
-      );
-    },
-    [],
-  );
+    setCommandHistory((previous) =>
+      previous.map((entry) => {
+        if (entry.id !== eventId) {
+          return entry;
+        }
+        return {
+          ...entry,
+          finishedAt,
+          durationMs: Date.now() - startedAtMs,
+          outcome,
+          note,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          taskResults: result.taskResults ?? [],
+        };
+      }),
+    );
+    setLastUpdatedAtIso(finishedAt);
+  }, []);
 
   const executeCommand = useCallback(
     async (commandId: CommandId, taskName?: string): Promise<CommandResponse> => {
-      const label = labelForCommand(commandId, taskName);
+      const label = formatCommandLabel(commandId, taskName);
+      setActiveCommandLabel(label);
+
       const eventId = appendCommandStart(commandId, label);
       const startedAtMs = Date.now();
-      const result = await callNlx(commandId, taskName);
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      const result = await callNlx(commandId, taskName, controller.signal);
+
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+
       finalizeCommand(eventId, startedAtMs, result);
+      setActiveCommandLabel("");
       return result;
     },
     [appendCommandStart, callNlx, finalizeCommand],
   );
+
+  const cancelRunningCommand = useCallback((): void => {
+    abortControllerRef.current?.abort();
+    setFriendlyMessage("Cancel requested. Waiting for command shutdown...");
+  }, []);
 
   const loadConfig = useCallback(async (): Promise<void> => {
     const response = await fetch("/api/gui/config", { method: "GET" });
@@ -354,27 +355,24 @@ export default function Home() {
 
     try {
       const result = await executeCommand("diagnose");
+      setHealthBadge(healthBadgeFromDiagnose(result));
 
       if (!result.ok) {
-        setHealthBadge("DEGRADED");
         setFriendlyMessage(summarizeCommandResult(result));
         return;
       }
 
       if (!result.diagnose) {
-        setHealthBadge("BROKEN");
         setFriendlyMessage("Diagnose output was missing required fields.");
         return;
       }
 
       setDiagnoseSummary(result.diagnose.summary);
-      setHealthBadge(result.diagnose.badge);
       setFriendlyMessage(
         result.diagnose.badge === "OK"
           ? "DNS stack appears healthy and private."
-          : "DNS stack is degraded. Review output timeline for details.",
+          : "DNS stack is degraded. Review inspector notes and output timeline.",
       );
-      setLastRunAt(new Date().toLocaleString());
     } finally {
       setIsBusy(false);
     }
@@ -388,7 +386,6 @@ export default function Home() {
     try {
       const result = await executeCommand("dryRunAll");
       setTaskResults(result.taskResults ?? []);
-      setLastRunAt(new Date().toLocaleString());
       setFriendlyMessage(result.ok ? "Dry-run sweep complete." : summarizeCommandResult(result));
     } finally {
       setIsBusy(false);
@@ -419,21 +416,32 @@ export default function Home() {
         }
 
         const result = await executeCommand("dryRunTask", taskName);
-        if (result.taskResults && result.taskResults.length > 0) {
-          aggregated.push(...result.taskResults);
-          continue;
+
+        if (result.errorType === "aborted") {
+          aggregated.push({
+            taskName,
+            status: "FAIL",
+            reason: "Execution canceled by user.",
+          });
+          setFriendlyMessage("Task run canceled by user.");
+          break;
         }
 
-        aggregated.push({
-          taskName,
-          status: result.ok ? "UNKNOWN" : "FAIL",
-          reason: summarizeCommandResult(result),
-        });
+        if (result.taskResults && result.taskResults.length > 0) {
+          aggregated.push(...result.taskResults);
+        } else {
+          aggregated.push({
+            taskName,
+            status: result.ok ? "UNKNOWN" : "FAIL",
+            reason: summarizeCommandResult(result),
+          });
+        }
       }
 
       setTaskResults(aggregated);
-      setLastRunAt(new Date().toLocaleString());
-      setFriendlyMessage("Selected task dry-run complete.");
+      if (aggregated.length > 0) {
+        setFriendlyMessage("Selected task dry-run complete.");
+      }
     } finally {
       setIsBusy(false);
     }
@@ -462,255 +470,379 @@ export default function Home() {
     }
   }, []);
 
+  const filteredHistory = useMemo(() => {
+    return commandHistory.filter((event) => {
+      if (severityFilter !== "ALL" && event.outcome !== severityFilter) {
+        return false;
+      }
+
+      if (!searchQuery.trim()) {
+        return true;
+      }
+
+      const needle = searchQuery.toLowerCase();
+      const haystacks = [
+        event.label,
+        event.note,
+        event.stdout,
+        event.stderr,
+        ...event.taskResults.map((task) => `${task.taskName} ${task.status} ${task.reason}`),
+      ];
+
+      return haystacks.some((value) => value.toLowerCase().includes(needle));
+    });
+  }, [commandHistory, searchQuery, severityFilter]);
+
+  const selectedEvent = useMemo(() => {
+    if (!selectedEventId) {
+      return filteredHistory[0] ?? null;
+    }
+    return filteredHistory.find((event) => event.id === selectedEventId) ?? filteredHistory[0] ?? null;
+  }, [filteredHistory, selectedEventId]);
+
   useEffect(() => {
     void (async () => {
       try {
         await loadConfig();
-        await Promise.all([runDiagnose(), loadTasks()]);
+        await loadTasks();
+        await runDiagnose();
       } catch {
-        setFriendlyMessage("Failed to initialize GUI diagnostics.");
+        setFriendlyMessage("Failed to initialize dashboard diagnostics.");
       }
     })();
   }, [loadConfig, loadTasks, runDiagnose]);
 
   return (
-    <div className="min-h-screen relative overflow-hidden font-sans text-sm pb-20" data-theme="run">
-      <div className="bg-glow" />
-      <main className="max-w-6xl mx-auto px-6 pt-12 flex flex-col gap-6">
-        <header className="glass-card p-6 flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+    <div className="meta-root" data-theme="run">
+      <div className="aurora-background" aria-hidden="true" />
+      <main className="meta-shell">
+        <header className="glass-card top-healthbar" aria-live="polite">
+          <div className="health-title-row">
             <div>
-              <h1 className="text-3xl font-bold text-white">NextLevelApex Dashboard</h1>
-              <p className="text-white/70 mt-1">Read-only control plane for local NLX diagnose and dry-run observability.</p>
+              <p className="eyebrow">NextLevelApex Control Plane</p>
+              <h1 className="meta-title">Local DNS + Orchestrator Observatory</h1>
             </div>
-            <div className="badge-status badge-PASS" title="Read-only mode is enforced by server config">
-              <Shield className="w-4 h-4" /> READ-ONLY: {readOnly ? "ON" : "OFF"}
+            <div className="read-only-badge" title="Read-only mode is server enforced">
+              <Shield className="w-4 h-4" /> READ-ONLY {readOnly ? "ON" : "OFF"}
             </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="health-meta-row">
             <span className={`badge-status ${badgeClass}`}>
-              {healthBadge === "OK" && <CheckCircle2 className="w-4 h-4" />}
-              {healthBadge !== "OK" && <AlertTriangle className="w-4 h-4" />}
+              {healthBadge === "OK" ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
               {healthBadge}
             </span>
-            <span className="text-white/70">Last run: {lastRunAt}</span>
+            <span className={`stale-chip ${isStaleState ? "stale-on" : "stale-off"}`}>
+              {isStaleState ? "STALE" : "FRESH"}
+            </span>
+            <span className="meta-muted">
+              Last updated: {lastUpdatedAtIso ? formatTimestamp(lastUpdatedAtIso) : "never"}
+            </span>
           </div>
 
-          <p className="text-white/85">{friendlyMessage}</p>
+          <div className="health-actions">
+            <button className="btn-theme" onClick={() => void runDiagnose()} disabled={isBusy}>
+              <Activity className="w-4 h-4" /> Run Diagnose
+            </button>
+            <button className="btn-theme" onClick={() => void runDryRunSweep()} disabled={isBusy}>
+              <Play className="w-4 h-4" /> Run Dry-Run Sweep
+            </button>
+            {isBusy && (
+              <button className="btn-muted" onClick={cancelRunningCommand} type="button">
+                <X className="w-4 h-4" /> Cancel {activeCommandLabel || "Run"}
+              </button>
+            )}
+          </div>
+
+          <p className="meta-muted">{friendlyMessage}</p>
         </header>
 
-        <section className="glass-card p-4">
-          <div className="panel-tabs" role="tablist" aria-label="Dashboard panels">
-            <button
-              type="button"
-              className={`tab-btn ${activeView === "dashboard" ? "tab-btn-active" : ""}`}
-              onClick={() => setActiveView("dashboard")}
-              role="tab"
-              aria-selected={activeView === "dashboard"}
-            >
-              <Activity className="w-4 h-4" /> Dashboard
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeView === "tasks" ? "tab-btn-active" : ""}`}
-              onClick={() => setActiveView("tasks")}
-              role="tab"
-              aria-selected={activeView === "tasks"}
-            >
-              <ListChecks className="w-4 h-4" /> Tasks
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeView === "output" ? "tab-btn-active" : ""}`}
-              onClick={() => setActiveView("output")}
-              role="tab"
-              aria-selected={activeView === "output"}
-            >
-              <TerminalSquare className="w-4 h-4" /> Output
-            </button>
-          </div>
-        </section>
+        <aside className="glass-card left-nav" aria-label="Navigation">
+          <button
+            type="button"
+            className={`nav-item ${activeView === "dashboard" ? "nav-item-active" : ""}`}
+            onClick={() => setActiveView("dashboard")}
+          >
+            <Activity className="w-4 h-4" /> Dashboard
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${activeView === "tasks" ? "nav-item-active" : ""}`}
+            onClick={() => setActiveView("tasks")}
+          >
+            <ListChecks className="w-4 h-4" /> Tasks
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${activeView === "output" ? "nav-item-active" : ""}`}
+            onClick={() => setActiveView("output")}
+          >
+            <TerminalSquare className="w-4 h-4" /> Output
+          </button>
+        </aside>
 
-        <AnimatePresence mode="wait">
-          {activeView === "dashboard" && (
-            <motion.section
-              key="dashboard"
-              className="glass-card p-6 flex flex-col gap-4"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <h2 className="text-xl font-semibold text-white">Run Panel</h2>
-              <div className="flex gap-3 flex-wrap">
-                <button className="btn-theme" onClick={() => void runDiagnose()} disabled={isBusy}>
-                  <Activity className="w-4 h-4" /> Run Diagnose
-                </button>
-                <button className="btn-theme" onClick={() => void runDryRunSweep()} disabled={isBusy}>
-                  <Play className="w-4 h-4" /> Run Dry-Run Sweep
-                </button>
-              </div>
-              {diagnoseSummary && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-white/85">
-                  <div>
-                    <strong>DNS Mode:</strong> {diagnoseSummary.dnsMode}
+        <section className="main-content" aria-label="Main content">
+          <AnimatePresence mode="wait">
+            {activeView === "dashboard" && (
+              <motion.div
+                key="dashboard"
+                className="glass-card content-card"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.22 }}
+              >
+                <h2 className="section-title">Stack Overview</h2>
+                {diagnoseSummary ? (
+                  <div className="diagnose-grid">
+                    <div className="diagnose-tile">
+                      <span>DNS Mode</span>
+                      <strong>{diagnoseSummary.dnsMode}</strong>
+                    </div>
+                    <div className="diagnose-tile">
+                      <span>Resolver</span>
+                      <strong>{diagnoseSummary.resolver}</strong>
+                    </div>
+                    <div className="diagnose-tile">
+                      <span>Pi-hole</span>
+                      <strong>{diagnoseSummary.pihole}</strong>
+                    </div>
+                    <div className="diagnose-tile">
+                      <span>Cloudflared</span>
+                      <strong>{diagnoseSummary.cloudflared}</strong>
+                    </div>
+                    <div className="diagnose-tile">
+                      <span>Pi-hole Upstream</span>
+                      <strong>{diagnoseSummary.piholeUpstream}</strong>
+                    </div>
+                    <div className="diagnose-tile">
+                      <span>Plaintext DNS</span>
+                      <strong>{diagnoseSummary.plaintextDns}</strong>
+                    </div>
                   </div>
-                  <div>
-                    <strong>Resolver:</strong> {diagnoseSummary.resolver}
-                  </div>
-                  <div>
-                    <strong>Pi-hole:</strong> {diagnoseSummary.pihole}
-                  </div>
-                  <div>
-                    <strong>Cloudflared:</strong> {diagnoseSummary.cloudflared}
-                  </div>
-                  <div>
-                    <strong>Upstream:</strong> {diagnoseSummary.piholeUpstream}
-                  </div>
-                  <div>
-                    <strong>Plaintext DNS:</strong> {diagnoseSummary.plaintextDns}
-                  </div>
+                ) : (
+                  <p className="meta-muted">No diagnose output available yet.</p>
+                )}
+              </motion.div>
+            )}
+
+            {activeView === "tasks" && (
+              <motion.div
+                key="tasks"
+                className="glass-card content-card"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.22 }}
+              >
+                <h2 className="section-title">Task Dry-Run</h2>
+                <p className="meta-muted">Task names are sourced from `nlx list-tasks` and validated server-side.</p>
+
+                <div className="task-controls">
+                  <button className="btn-muted" onClick={() => void loadTasks()} disabled={isBusy}>
+                    Refresh Task List
+                  </button>
+                  <button
+                    className="btn-theme"
+                    onClick={() => void runDryRunSelected()}
+                    disabled={isBusy || selectedTasks.length === 0}
+                  >
+                    Run Selected Tasks
+                  </button>
                 </div>
-              )}
-            </motion.section>
-          )}
 
-          {activeView === "tasks" && (
-            <motion.section
-              key="tasks"
-              className="glass-card p-6 flex flex-col gap-4"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <h2 className="text-xl font-semibold text-white">Task Dry-Run</h2>
-              <p className="text-white/70">
-                Task names come from <code>nlx list-tasks</code> and are validated server-side.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-56 overflow-auto pr-2">
-                {knownTasks.map((task) => (
-                  <label key={task} className="flex items-center gap-2 text-white/90">
-                    <input
-                      type="checkbox"
-                      checked={selectedTasks.includes(task)}
-                      onChange={(event) => {
-                        setSelectedTasks((previous) =>
-                          event.target.checked
-                            ? [...previous, task]
-                            : previous.filter((entry) => entry !== task),
-                        );
-                      }}
-                    />
-                    {task}
-                  </label>
-                ))}
-              </div>
-
-              <div className="flex gap-3 flex-wrap">
-                <button className="btn-theme" onClick={() => void loadTasks()} disabled={isBusy}>
-                  Refresh Task List
-                </button>
-                <button
-                  className="btn-theme"
-                  onClick={() => void runDryRunSelected()}
-                  disabled={isBusy || selectedTasks.length === 0}
-                >
-                  Run Selected Tasks
-                </button>
-              </div>
-
-              <div className="overflow-auto">
-                <table className="w-full text-left text-white/90">
-                  <thead>
-                    <tr className="text-white/60 text-xs uppercase">
-                      <th className="py-2">Task</th>
-                      <th className="py-2">Status</th>
-                      <th className="py-2">Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {taskResults.length === 0 ? (
-                      <tr>
-                        <td colSpan={3} className="py-3 text-white/60">
-                          No task output yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      taskResults.map((result) => (
-                        <tr
-                          key={`${result.taskName}-${result.status}-${result.reason}`}
-                          className="border-t border-white/10 align-top"
-                        >
-                          <td className="py-2 pr-3">{result.taskName}</td>
-                          <td className="py-2 pr-3">
-                            <span className={`status-pill ${statusClass(result.status)}`}>{result.status}</span>
-                          </td>
-                          <td className="py-2">{result.reason}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </motion.section>
-          )}
-
-          {activeView === "output" && (
-            <motion.section
-              key="output"
-              className="glass-card p-6 flex flex-col gap-4"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <h2 className="text-xl font-semibold text-white">Live Output Viewer</h2>
-              <p className="text-white/70">Command timeline with redacted output, status, timestamps, and durations.</p>
-
-              {commandHistory.length === 0 ? (
-                <p className="text-white/60">No command activity yet.</p>
-              ) : (
-                <div className="timeline-list" role="list" aria-label="Command timeline">
-                  {commandHistory.map((event) => (
-                    <article key={event.id} className="timeline-item" role="listitem">
-                      <header className="timeline-header">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
-                          <strong className="text-white">{event.label}</strong>
-                        </div>
-                        <button className="copy-btn" type="button" onClick={() => void copyEventOutput(event)}>
-                          <Copy className="w-4 h-4" /> Copy
-                        </button>
-                      </header>
-
-                      <div className="timeline-meta">
-                        <span>
-                          <Clock3 className="w-4 h-4" /> Started {formatTimestamp(event.startedAt)}
-                        </span>
-                        <span>Duration {formatDuration(event.durationMs)}</span>
-                      </div>
-
-                      <p className="text-white/80">{event.note}</p>
-
-                      <details>
-                        <summary className="cursor-pointer text-white/85">STDOUT</summary>
-                        <pre className="terminal-window p-4 mt-2 whitespace-pre-wrap">{event.stdout || "(stdout empty)"}</pre>
-                      </details>
-
-                      <details>
-                        <summary className="cursor-pointer text-white/85">STDERR</summary>
-                        <pre className="terminal-window p-4 mt-2 whitespace-pre-wrap">{event.stderr || "(stderr empty)"}</pre>
-                      </details>
-                    </article>
+                <div className="task-grid">
+                  {knownTasks.map((task) => (
+                    <label key={task} className="task-option">
+                      <input
+                        type="checkbox"
+                        checked={selectedTasks.includes(task)}
+                        onChange={(event) => {
+                          setSelectedTasks((previous) =>
+                            event.target.checked
+                              ? [...previous, task]
+                              : previous.filter((entry) => entry !== task),
+                          );
+                        }}
+                      />
+                      <span>{task}</span>
+                    </label>
                   ))}
                 </div>
-              )}
-            </motion.section>
+
+                <div className="task-table-wrap">
+                  <table className="task-table">
+                    <thead>
+                      <tr>
+                        <th>Task</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {taskResults.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="empty-cell">
+                            No task output yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        taskResults.map((result) => (
+                          <tr key={`${result.taskName}-${result.status}-${result.reason}`}>
+                            <td>{result.taskName}</td>
+                            <td>
+                              <span className={`status-pill ${statusClass(result.status)}`}>{result.status}</span>
+                            </td>
+                            <td>{result.reason}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+            )}
+
+            {activeView === "output" && (
+              <motion.div
+                key="output"
+                className="glass-card content-card"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.22 }}
+              >
+                <h2 className="section-title">Live Output Viewer</h2>
+                <p className="meta-muted">Filter timeline entries and inspect redacted stdout/stderr per command.</p>
+
+                <div className="output-controls">
+                  <label className="search-control">
+                    <Search className="w-4 h-4" />
+                    <input
+                      type="search"
+                      placeholder="Search output"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                    />
+                  </label>
+                  <label className="select-control">
+                    <span>Severity</span>
+                    <select
+                      value={severityFilter}
+                      onChange={(event) => setSeverityFilter(event.target.value as SeverityFilter)}
+                    >
+                      <option value="ALL">All</option>
+                      <option value="PASS">PASS</option>
+                      <option value="WARN">WARN</option>
+                      <option value="FAIL">FAIL</option>
+                      <option value="RUNNING">RUNNING</option>
+                    </select>
+                  </label>
+                </div>
+
+                {filteredHistory.length === 0 ? (
+                  <p className="meta-muted">No output entries for the selected filter.</p>
+                ) : (
+                  <div className="timeline-list" role="list" aria-label="Command timeline">
+                    {filteredHistory.map((event) => (
+                      <article
+                        key={event.id}
+                        className={`timeline-item ${selectedEvent?.id === event.id ? "timeline-item-active" : ""}`}
+                        role="listitem"
+                        onClick={() => setSelectedEventId(event.id)}
+                      >
+                        <header className="timeline-header">
+                          <div className="timeline-heading">
+                            <span className={`status-pill ${statusClass(event.outcome)}`}>{event.outcome}</span>
+                            <strong>{event.label}</strong>
+                          </div>
+                          <button className="copy-btn" type="button" onClick={() => void copyEventOutput(event)}>
+                            <Copy className="w-4 h-4" /> Copy
+                          </button>
+                        </header>
+
+                        <div className="timeline-meta">
+                          <span>
+                            <Clock3 className="w-4 h-4" /> {formatTimestamp(event.startedAt)}
+                          </span>
+                          <span>Duration {formatDuration(event.durationMs)}</span>
+                        </div>
+
+                        <p className="timeline-note">{event.note}</p>
+
+                        {event.taskResults.length > 0 && (
+                          <ol className="stepper-list">
+                            {event.taskResults.map((step) => (
+                              <li key={`${event.id}-${step.taskName}-${step.status}-${step.reason}`}>
+                                <span className={`status-pill ${statusClass(step.status)}`}>{step.status}</span>
+                                <div>
+                                  <strong>{step.taskName}</strong>
+                                  <p>{step.reason}</p>
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+
+                        <details open>
+                          <summary>STDOUT</summary>
+                          <pre className="terminal-window">{event.stdout || "(stdout empty)"}</pre>
+                        </details>
+                        <details>
+                          <summary>STDERR</summary>
+                          <pre className="terminal-window">{event.stderr || "(stderr empty)"}</pre>
+                        </details>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+
+        <aside className="glass-card inspector-panel" aria-label="Inspector">
+          <h2 className="section-title">Inspector</h2>
+          {isBusy ? (
+            <div className="inspector-live">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Running: {activeCommandLabel || "Command"}</span>
+            </div>
+          ) : (
+            <p className="meta-muted">Idle</p>
           )}
-        </AnimatePresence>
+
+          <dl className="inspector-grid">
+            <div>
+              <dt>Known tasks</dt>
+              <dd>{knownTasks.length}</dd>
+            </div>
+            <div>
+              <dt>Selected tasks</dt>
+              <dd>{selectedTasks.length}</dd>
+            </div>
+            <div>
+              <dt>History entries</dt>
+              <dd>{commandHistory.length}</dd>
+            </div>
+            <div>
+              <dt>Filter</dt>
+              <dd>{severityFilter}</dd>
+            </div>
+          </dl>
+
+          {selectedEvent ? (
+            <div className="inspector-event">
+              <h3>{selectedEvent.label}</h3>
+              <p className="meta-muted">{selectedEvent.note}</p>
+              <p className="meta-muted">Status: {selectedEvent.outcome}</p>
+              <p className="meta-muted">Started: {formatTimestamp(selectedEvent.startedAt)}</p>
+              <p className="meta-muted">Duration: {formatDuration(selectedEvent.durationMs)}</p>
+            </div>
+          ) : (
+            <p className="meta-muted">Select a timeline event to inspect details.</p>
+          )}
+        </aside>
       </main>
     </div>
   );

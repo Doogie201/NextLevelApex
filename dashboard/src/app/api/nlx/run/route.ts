@@ -22,10 +22,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const result = await runAllowlistedNlxCommand(parsed.commandId, parsed.taskName);
+    const result = await runAllowlistedNlxCommand(parsed.commandId, parsed.taskName, request.signal);
 
     if (!result.ok) {
-      const status = result.errorType === "timeout" ? 504 : 502;
+      const status = result.errorType === "timeout" ? 504 : result.errorType === "aborted" ? 499 : 502;
       return Response.json(result, { status });
     }
 

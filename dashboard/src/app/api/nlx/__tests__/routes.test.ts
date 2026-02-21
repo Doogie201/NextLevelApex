@@ -37,6 +37,21 @@ describe("nlx run API route", () => {
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
+  it("rejects non-string command ids", async () => {
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: 42 }),
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/allowlisted/i);
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid task names", async () => {
     const request = new Request("http://localhost/api/nlx/run", {
       method: "POST",
@@ -49,6 +64,21 @@ describe("nlx run API route", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toMatch(/unsupported characters|invalid/i);
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects dryRunTask without taskName", async () => {
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunTask" }),
+    });
+
+    const response = await runPost(request);
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/taskName is required/i);
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
@@ -103,7 +133,7 @@ describe("nlx run API route", () => {
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.commandId).toBe("diagnose");
-    expect(mockedRun).toHaveBeenCalledWith("diagnose", undefined);
+    expect(mockedRun).toHaveBeenCalledWith("diagnose", undefined, expect.any(AbortSignal));
   });
 
   it("maps timeout command failures to 504", async () => {
@@ -129,5 +159,26 @@ describe("nlx run API route", () => {
     expect(response.status).toBe(504);
     expect(body.errorType).toBe("timeout");
     expect(body.timedOut).toBe(true);
+  });
+
+  it("maps aborted command failures to 499", async () => {
+    mockedRun.mockResolvedValue({
+      ok: false,
+      commandId: "dryRunAll",
+      exitCode: 130,
+      timedOut: false,
+      errorType: "aborted",
+      stdout: "",
+      stderr: "aborted",
+    });
+
+    const request = new Request("http://localhost/api/nlx/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandId: "dryRunAll" }),
+    });
+
+    const response = await runPost(request);
+    expect(response.status).toBe(499);
   });
 });

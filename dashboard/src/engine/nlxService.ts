@@ -58,9 +58,9 @@ async function executeSpecWithFallback(
   return lastResult;
 }
 
-async function listTasksInternal(): Promise<{ taskNames: string[] }> {
+async function listTasksInternal(signal?: AbortSignal): Promise<{ taskNames: string[] }> {
   const spec = buildCommandSpec("listTasks");
-  const result = await executeSpecWithFallback(spec.argv, spec.timeoutMs);
+  const result = await executeSpecWithFallback(spec.argv, spec.timeoutMs, signal);
   const stdout = redactOutput(result.stdout);
   if (result.exitCode !== 0) {
     throw new Error("Failed to list tasks from nlx.");
@@ -90,7 +90,7 @@ export async function runAllowlistedNlxCommand(
 
   if (spec.commandId === "dryRunTask") {
     const normalizedTask = validateTaskNameFormat(taskName ?? "");
-    const discovered = await listTasksInternal();
+    const discovered = await listTasksInternal(signal);
     ensureTaskIsDiscovered(normalizedTask, discovered.taskNames);
   }
 
