@@ -10,6 +10,20 @@
   - `chore/<short-description>`
 - Never force-push to `main`.
 
+## Solo Maintainer Governance
+
+- This repository is currently solo-maintained.
+- Pull request approvals are intentionally not required on `main`.
+- Merges are still gated by required CI status checks, strict up-to-date requirements, and conversation resolution.
+- Use PRs for all changes; do not bypass branch protection with direct pushes.
+
+## Merge Policy
+
+- Squash merges only (`merge` and `rebase` merges are disabled).
+- Linear history is required on `main`.
+- Branches are auto-deleted after merge.
+- Force-pushes and branch deletion are disabled on `main`.
+
 ## Commit Conventions
 
 Use small, reviewable commits with clear intent. Conventional Commit style is preferred:
