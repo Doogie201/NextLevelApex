@@ -8,12 +8,16 @@ from nextlevelapex.main2 import app
 runner = CliRunner()
 
 
-def test_export_state_yaml_disabled():
+def test_export_state_rejects_yaml():
     result = runner.invoke(app, ["export-state", "--fmt", "yaml"])
     assert result.exit_code == 1
-    assert (
-        "YAML export requires optional dependency; not enabled in hardened build." in result.output
-    )
+    assert "ERROR: Unsupported export format. Allowed formats: json, csv." in result.output
+
+
+def test_export_state_rejects_unknown_format_with_same_error():
+    result = runner.invoke(app, ["export-state", "--fmt", "xml"])
+    assert result.exit_code == 1
+    assert "ERROR: Unsupported export format. Allowed formats: json, csv." in result.output
 
 
 def test_no_shell_true_in_source_code():

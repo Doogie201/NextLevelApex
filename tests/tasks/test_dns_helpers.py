@@ -153,10 +153,12 @@ def test_podman_fallback(monkeypatch, healthy_inspect_json):
 
 
 def test_dns_sanity_conflicts(monkeypatch):
+    # Force Linux path so the command stub is deterministic in CI.
+    monkeypatch.setattr(dns.platform, "system", lambda: "Linux")
     # ps shows processes; port 53 shows a binder
     mapping = {
         "ps aux": (0, "root 1 0 0 cloudflared --something\n", ""),
-        "lsof -nP -i :53": (0, "dnsmasq 1234 root  TCP *:53 (LISTEN)", ""),
+        "ss -tunlp": (0, "udp   UNCONN 0 0 0.0.0.0:53 0.0.0.0:* users:((\"dnsmasq\"))", ""),
     }
     monkeypatch.setattr(dns, "_run", fake_run_factory(mapping))
     res = dns.dns_sanity_check()

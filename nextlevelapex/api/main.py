@@ -10,24 +10,13 @@ from pydantic import BaseModel
 
 from nextlevelapex.core.config import DEFAULT_CONFIG_PATH, generate_default_config
 from nextlevelapex.core.state import get_task_health_trend, load_state, save_state
-from nextlevelapex.main2 import (
-    STATE_PATH,
-    archive_reports_cmd,
-)
+from nextlevelapex.main2 import STATE_PATH, archive_reports_cmd
 from nextlevelapex.main2 import auto_fix as auto_fix_cli
-from nextlevelapex.main2 import (
-    discover_tasks,
-    execute_remediation,
-)
+from nextlevelapex.main2 import discover_tasks, execute_remediation
 from nextlevelapex.main2 import export_state as export_state_cli
-from nextlevelapex.main2 import (
-    generate_report_cli,
-    install_archiver_cmd,
-)
+from nextlevelapex.main2 import generate_report_cli, install_archiver_cmd
 from nextlevelapex.main2 import reset_state as reset_state_cli
-from nextlevelapex.main2 import (
-    run_task,
-)
+from nextlevelapex.main2 import run_task
 
 app = FastAPI(
     title="NextLevelApex Mission Control API",

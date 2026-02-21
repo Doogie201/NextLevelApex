@@ -30,7 +30,8 @@ log.error("This is an ERROR message")
 log.critical("This is a CRITICAL message")
 
 # Step 3: Confirm file creation
-log_dir = Path(mock_config["script_behavior"]["log_file_directory"]).expanduser()
+log_dir_value = str(mock_config["script_behavior"]["log_file_directory"])
+log_dir = Path(log_dir_value).expanduser()
 log_files = sorted(log_dir.glob("nextlevelapex-run-*.log"), reverse=True)
 
 if log_files:

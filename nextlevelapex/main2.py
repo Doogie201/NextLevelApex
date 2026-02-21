@@ -1,13 +1,14 @@
-# mypy: ignore-errors
 # nextlevelapex/main.py
 
 import importlib
+import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Callable, Dict, List, Optional, Type, Union
+from typing import Annotated, Any, Dict, List, Optional, Type, Union
 
 import typer
 
@@ -60,6 +61,111 @@ ALLOWED_MODULES = [
     "security",
     "system",
 ]
+
+SUDOERS_SUPPORTED_INCLUDE_DIRS = (
+    "/private/etc/sudoers.d",
+    "/etc/sudoers.d",
+)
+SUDOERS_INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9._\-() ]+$")
+SUDOERS_USER_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+SUDOERS_FORBIDDEN_CHARS = ("\n", "\r", "\t", ",", "\x00", '"', "'")
+
+
+class InterfaceValidationError(ValueError):
+    pass
+
+
+class InterfaceNotFoundError(InterfaceValidationError):
+    pass
+
+
+def _parse_network_services(networksetup_output: str) -> list[str]:
+    """
+    Parse `networksetup -listallnetworkservices` output.
+    Disabled services are prefixed with `*`.
+    """
+    lines = networksetup_output.splitlines()
+    services: list[str] = []
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("*"):
+            continue
+        services.append(stripped)
+    return services
+
+
+def _validate_interface_name(interface: str, valid_interfaces: list[str]) -> None:
+    if interface != interface.strip() or "  " in interface:
+        raise InterfaceValidationError(
+            f"ERROR: Interface '{interface}' contains leading, trailing, or consecutive spaces."
+        )
+    if interface.startswith("-"):
+        raise InterfaceValidationError(
+            f"ERROR: Interface '{interface}' starts with a disallowed '-'."
+        )
+    if SUDOERS_INTERFACE_PATTERN.fullmatch(interface) is None:
+        raise InterfaceValidationError(
+            f"ERROR: Interface '{interface}' contains characters outside the safe allowlist."
+        )
+    if interface not in valid_interfaces:
+        raise InterfaceNotFoundError(
+            f"ERROR: Interface '{interface}' is not a valid active network service."
+        )
+
+
+def _sudoers_escape_arg(arg: str) -> str:
+    """Strictly escape a single argument for sudoers command specs."""
+    if any(char in arg for char in SUDOERS_FORBIDDEN_CHARS):
+        raise ValueError("Invalid character in sudoers argument")
+    return arg.replace("\\", "\\\\").replace(" ", "\\ ")
+
+
+def _render_sudoers_rule(user: str, interface: str) -> str:
+    commands = [
+        ["/usr/libexec/ApplicationFirewall/socketfilterfw", "--setstealthmode", "on"],
+        ["/usr/sbin/networksetup", "-setdnsservers", interface, "127.0.0.1"],
+        ["/usr/sbin/networksetup", "-setdnsservers", interface, "Empty"],
+    ]
+    rendered_cmds = [" ".join(_sudoers_escape_arg(arg) for arg in cmd) for cmd in commands]
+    return f"{user} ALL=(root) NOPASSWD: {', '.join(rendered_cmds)}\n"
+
+
+def _sudoers_includedir_present(sudoers_content: str) -> bool:
+    for raw_line in sudoers_content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        tokens = line.split()
+        if len(tokens) < 2:
+            continue
+        if tokens[0] == "#includedir" and tokens[1] in SUDOERS_SUPPORTED_INCLUDE_DIRS:
+            return True
+    return False
+
+
+def _read_sudoers_content_for_check() -> Optional[str]:
+    try:
+        return Path("/etc/sudoers").read_text()
+    except PermissionError:
+        try:
+            check = subprocess.run(
+                ["sudo", "-n", "cat", "/etc/sudoers"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        except OSError:
+            return None
+        if check.returncode != 0:
+            return None
+        if not (check.stdout or "").strip():
+            return None
+        return check.stdout
+    except OSError:
+        return None
 
 
 def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
@@ -526,9 +632,7 @@ def generate_report_cli(
     """
     Generate Markdown/HTML summary report for NextLevelApex.
     """
-    from nextlevelapex.core.report import (  # You’ll need to finish report.py!
-        generate_report,
-    )
+    from nextlevelapex.core.report import generate_report  # You’ll need to finish report.py!
 
     state = load_state(STATE_PATH)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -709,25 +813,27 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
 
 @app.command("export-state")
 def export_state(
-    fmt: str = typer.Option("json", help="Export format: json, csv (YAML removed for security)"),
+    fmt: str = typer.Option("json", help="Export format: json or csv."),
 ):
     """
-    Export orchestrator state as JSON or CSV.
+    Export orchestrator state as JSON or CSV only.
     """
+    normalized_fmt = fmt.strip().lower()
+    if normalized_fmt not in {"json", "csv"}:
+        typer.secho(
+            "ERROR: Unsupported export format. Allowed formats: json, csv.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
     state = load_state(STATE_PATH)
-    path = REPORTS_DIR / f"state-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.{fmt}"
-    if fmt == "json":
+    path = REPORTS_DIR / f"state-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.{normalized_fmt}"
+    if normalized_fmt == "json":
         import json
 
         with path.open("w") as f:
             json.dump(state, f, indent=2)
-    elif fmt == "yaml":
-        typer.secho(
-            "ERROR: YAML export requires optional dependency; not enabled in hardened build.",
-            fg=typer.colors.RED,
-        )
-        raise typer.Exit(code=1)
-    elif fmt == "csv":
+    else:
         import csv
 
         # Flatten state to rows if possible (else error)
@@ -736,9 +842,6 @@ def export_state(
             writer = csv.writer(f)
             writer.writerow(keys)
             writer.writerow([str(state[k]) for k in keys])
-    else:
-        typer.secho("Unknown format", fg=typer.colors.RED)
-        raise typer.Exit(code=1)
     typer.echo(f"Exported state to {path}")
 
 
@@ -791,17 +894,12 @@ def install_archiver_cmd():
     Generate and install a macOS launchd agent to run `archive-reports` automatically
     on the 1st of every month at midnight.
     """
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
     agent_name = "com.nextlevelapex.archiver.plist"
     agents_dir = Path.home() / "Library" / "LaunchAgents"
     plist_path = agents_dir / agent_name
 
     # We resolve the absolute paths so launchd knows exactly what to run without needing $PATH setup
-    poetry_bin = subprocess.run(["which", "poetry"], capture_output=True, text=True).stdout.strip()
+    poetry_bin = shutil.which("poetry")
     if not poetry_bin:
         typer.secho("Error: Could not locate `poetry` executable.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
@@ -868,27 +966,32 @@ def install_sudoers(
     of specific required commands, fulfilling the Principle of Least Privilege.
     """
     import getpass
-    import subprocess
     import tempfile
     from pathlib import Path
 
+    if sys.platform != "darwin":
+        typer.secho(
+            "ERROR: install-sudoers is only supported on macOS (darwin).", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
+
     user = getpass.getuser()
     sudoers_path = "/etc/sudoers.d/nextlevelapex"
+    if SUDOERS_USER_PATTERN.fullmatch(user) is None:
+        typer.secho(
+            "ERROR: Unsupported username for sudoers rule; please install manually via visudo.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
 
-    # Using ALL=(ALL) to comprehensively map root execution paths securely without wildcards
-
-    # 1. Safely gather valid interfaces via subprocess.run (no shell=True)
+    # 1) Gather active network services (no shell=True).
     try:
         check = subprocess.run(
             ["networksetup", "-listallnetworkservices"], capture_output=True, text=True, check=True
         )
-        lines = check.stdout.strip().splitlines()
-        # Skip the first informational line and any disabled lines
-        valid_interfaces = [
-            line.strip() for line in lines[1:] if line.strip() and not line.startswith("*")
-        ]
-    except Exception as e:
-        typer.secho(f"Failed to list network services safely: {e}", fg=typer.colors.RED)
+        valid_interfaces = _parse_network_services(check.stdout)
+    except Exception as exc:
+        typer.secho(f"Failed to list network services safely: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
     if not interface:
@@ -899,86 +1002,90 @@ def install_sudoers(
         typer.echo(f"Available services: {', '.join(valid_interfaces)}")
         raise typer.Exit(code=1)
 
-    if interface not in valid_interfaces:
-        typer.secho(
-            f"ERROR: Interface '{interface}' is not a valid active network service.",
-            fg=typer.colors.RED,
-        )
+    try:
+        _validate_interface_name(interface, valid_interfaces)
+        rule = _render_sudoers_rule(user, interface)
+    except InterfaceNotFoundError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
         typer.echo(f"Available services: {', '.join(valid_interfaces)}")
         raise typer.Exit(code=1)
-
-    # Reject newlines, commas, backslashes, quotes just to be defensively safe
-    if any(c in interface for c in ["\n", "\r", ",", "\"", "'", "\\"]):
-        typer.secho(
-            f"ERROR: Interface '{interface}' contains characters unsafe for sudoers.",
-            fg=typer.colors.RED,
-        )
+    except InterfaceValidationError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(code=1)
-
-    # Sudoers requires escaping spaces in command arguments with a backslash
-    escaped_iface = interface.replace(" ", "\\ ")
-
-    # Whitelisting EXACT binaries and arguments we elevate (CWE-269 mitigation)
-    commands = [
-        "/usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on",
-        f"/usr/sbin/networksetup -setdnsservers {escaped_iface} 127.0.0.1",
-        f"/usr/sbin/networksetup -setdnsservers {escaped_iface} Empty",
-    ]
-
-    cmd_string = ", ".join(commands)
-    rule = f"{user} ALL=(ALL) NOPASSWD: {cmd_string}\n"
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1)
 
     if dry_run:
         typer.secho(f"DRY RUN: Would write to {sudoers_path}:", fg=typer.colors.YELLOW)
         typer.echo(rule)
         return
 
+    # 2) Check sudoers include-dir support before attempting install.
+    sudoers_content = _read_sudoers_content_for_check()
+    if sudoers_content is None:
+        typer.secho(
+            "ERROR: Could not verify /etc/sudoers includedir automatically.",
+            fg=typer.colors.RED,
+        )
+        typer.secho(
+            "For safety, this application will not automatically modify sudoers until verification succeeds.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.secho(
+            "Please run 'sudo visudo' and confirm one of the following lines exists:",
+            fg=typer.colors.WHITE,
+        )
+        typer.secho(
+            "#includedir /private/etc/sudoers.d  or  #includedir /etc/sudoers.d",
+            fg=typer.colors.MAGENTA,
+            bold=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not _sudoers_includedir_present(sudoers_content):
+        typer.secho(
+            "ERROR: Your /etc/sudoers file does not include the sudoers.d directory.",
+            fg=typer.colors.RED,
+        )
+        typer.secho(
+            "For safety, this application will not automatically modify the root /etc/sudoers file.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.secho(
+            "Please run 'sudo visudo' in your terminal and append the following line to the end of the file:",
+            fg=typer.colors.WHITE,
+        )
+        typer.secho(
+            "\n#includedir /private/etc/sudoers.d\n",
+            fg=typer.colors.MAGENTA,
+            bold=True,
+        )
+        typer.secho("Once complete, re-run this command.", fg=typer.colors.WHITE)
+        raise typer.Exit(code=1)
+
     with tempfile.NamedTemporaryFile(mode="w", delete=False) as tf:
         tf.write(rule)
         temp_path = tf.name
 
     try:
-        # 2. Safety Check: Validate syntax before attempting to write to /etc/ (prevents breaking sudo)
-        check = subprocess.run(["visudo", "-c", "-f", temp_path], capture_output=True, text=True)
+        # 3) Validate syntax before touching /etc.
+        check = subprocess.run(
+            ["visudo", "-c", "-f", temp_path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
         if check.returncode != 0:
-            typer.secho(f"Sudoers syntax invalid: {check.stderr}", fg=typer.colors.RED)
-            return
+            err = check.stderr.strip() or "visudo validation failed."
+            typer.secho(f"Sudoers syntax invalid: {err}", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
 
         typer.secho(
             "Prompting for standard sudo to install least-privilege rules...", fg=typer.colors.CYAN
         )
 
-        # 3. Check macOS sudoers.d compatibility (often missing by default)
-        include_check = subprocess.run(
-            [
-                "sudo",
-                "grep",
-                "-E",
-                "^#includedir /private/etc/sudoers.d|^#includedir /etc/sudoers.d",
-                "/etc/sudoers",
-            ],
-            capture_output=True,
-        )
-        if include_check.returncode != 0:
-            typer.secho(
-                "ERROR: Your /etc/sudoers file does not include the sudoers.d directory.",
-                fg=typer.colors.RED,
-            )
-            typer.secho(
-                "For safety, this application will not automatically modify the root /etc/sudoers file.",
-                fg=typer.colors.YELLOW,
-            )
-            typer.secho(
-                "Please run 'sudo visudo' in your terminal and seamlessly append the following line to the end of the file:",
-                fg=typer.colors.WHITE,
-            )
-            typer.secho(
-                "\n#includedir /private/etc/sudoers.d\n", fg=typer.colors.MAGENTA, bold=True
-            )
-            typer.secho("Once complete, re-run this command.", fg=typer.colors.WHITE)
-            raise typer.Exit(code=1)
-
-        # 4. Install the validated file securely setting 0440 permissions and root:wheel ownership
+        # 4) Install validated file with strict ownership and mode.
         install_cmd = [
             "sudo",
             "install",
@@ -996,8 +1103,9 @@ def install_sudoers(
             f"Successfully installed least-privilege sudoers to {sudoers_path}",
             fg=typer.colors.GREEN,
         )
-    except subprocess.CalledProcessError as e:
-        typer.secho(f"Failed to install sudoers: {e}", fg=typer.colors.RED)
+    except subprocess.CalledProcessError as exc:
+        typer.secho(f"Failed to install sudoers: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
     finally:
         Path(temp_path).unlink(missing_ok=True)
 

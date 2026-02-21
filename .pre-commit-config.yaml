@@ -6,6 +6,7 @@ default_language_version:
 
 ci:
   autofix: true # rewrite files, then fail so diff is visible
+  skip: [shellcheck, pytest] # pre-commit.ci lacks Docker and Poetry for these hooks
 fail_fast: true
 default_stages: [pre-commit, pre-push] # was [commit, push]
 

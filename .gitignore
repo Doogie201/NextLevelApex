@@ -136,3 +136,6 @@ etc-pihole/tls.pem
 
 # editor/backup files
 *.bak
+
+# NextLevelApex generated runtime artifacts
+reports/

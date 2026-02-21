@@ -1,52 +1,52 @@
 import os
+import stat
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from nextlevelapex.core.io import atomic_write_text
+from nextlevelapex.core.state import save_state
 
 
-def test_atomic_write_success(tmp_path):
+def test_atomic_write_calls_os_replace(tmp_path: Path):
     target = tmp_path / "target.txt"
-    # Execute
-    atomic_write_text(target, "hello world", perms=0o600)
-
-    # Validate
-    assert target.exists()
+    with patch("nextlevelapex.core.io.os.replace", wraps=os.replace) as mock_replace:
+        atomic_write_text(target, "hello world")
     assert target.read_text() == "hello world"
-    # Check permissions (on posix)
-    if os.name == "posix":
-        assert (target.stat().st_mode & 0o777) == 0o600
+    assert mock_replace.called
+    assert Path(mock_replace.call_args.args[1]) == target
 
 
-def test_atomic_write_interruption(tmp_path):
+def test_atomic_write_failure_does_not_create_partial_destination(tmp_path: Path):
     target = tmp_path / "target.txt"
-
-    # Mock os.replace to simulate a crash mid-flight right before replace
     with (
-        patch("nextlevelapex.core.io.Path.replace", side_effect=Exception("Simulated crash!")),
-        pytest.raises(Exception, match="Simulated crash!"),
+        patch("nextlevelapex.core.io.os.fdopen", side_effect=OSError("write failed")),
+        pytest.raises(OSError, match="write failed"),
     ):
         atomic_write_text(target, "half written data")
 
-    # File should not exist because it crashed before atomic swap
     assert not target.exists()
-
-    # Ensure no temp file drops are left around
-    temp_files = list(tmp_path.glob("*"))
-    assert len(temp_files) == 0
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_atomic_write_does_not_corrupt_existing(tmp_path):
+def test_atomic_write_failure_does_not_corrupt_existing_file(tmp_path: Path):
     target = tmp_path / "target.txt"
-    target.write_text("precious stable data")
+    target.write_text("stable data")
 
     with (
-        patch("nextlevelapex.core.io.Path.replace", side_effect=Exception("Simulated crash!")),
-        pytest.raises(Exception, match="Simulated crash!"),
+        patch("nextlevelapex.core.io.os.fdopen", side_effect=OSError("write failed")),
+        pytest.raises(OSError, match="write failed"),
     ):
-        atomic_write_text(target, "new corrupted data")
+        atomic_write_text(target, "new data")
 
-    # The original file must remain untouched
     assert target.exists()
-    assert target.read_text() == "precious stable data"
+    assert target.read_text() == "stable data"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only permission semantics")
+def test_save_state_enforces_0600_permissions(tmp_path: Path):
+    path = tmp_path / "state.json"
+    assert save_state({"key": "value"}, path, dry_run=False) is True
+    mode = stat.S_IMODE(path.stat().st_mode)
+    assert mode == 0o600
