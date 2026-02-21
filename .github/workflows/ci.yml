@@ -33,6 +33,30 @@ jobs:
           poetry config virtualenvs.create false
           poetry install --no-interaction --no-ansi
 
+      - name: 🟢 Set up Node (dashboard checks)
+        if: matrix.python-version == '3.12'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: 📦 Install dashboard dependencies
+        if: matrix.python-version == '3.12'
+        run: npm --prefix dashboard ci
+
+      - name: 🧪 Dashboard tests
+        if: matrix.python-version == '3.12'
+        run: npm --prefix dashboard test
+
+      - name: 🧼 Dashboard lint
+        if: matrix.python-version == '3.12'
+        run: npm --prefix dashboard run lint
+
+      - name: 🏗️ Dashboard build
+        if: matrix.python-version == '3.12'
+        run: npm --prefix dashboard run build
+
       - name: 🚦 CLI smoke dry-run (safe subset)
         run: |
           poetry run nlx --help

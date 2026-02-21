@@ -37,6 +37,32 @@ describe("history storage", () => {
     expect(raw).not.toContain("/Users/demo/.config/nextlevelapex/secrets.env");
   });
 
+  it("redacts diagnose-like payloads before persistence", () => {
+    const state = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => state.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        state.set(key, value);
+      },
+    };
+
+    const diagnoseEvent = sampleEvent({
+      stdout:
+        'DNS_MODE=local-private RESOLVER=192.168.64.2 PIHOLE=running PIHOLE_UPSTREAM=host.docker.internal#5053 CLOUDFLARED=ok PLAINTEXT_DNS=no NOTES="token=super-secret-token-value"',
+      note: "api_key: local-secret",
+      stderr: "/Users/demo/.config/nextlevelapex/credentials.json",
+    });
+
+    storeCommandHistory(storage, [diagnoseEvent]);
+    const raw = state.get(COMMAND_HISTORY_STORAGE_KEY) ?? "";
+
+    expect(raw).toContain("DNS_MODE=local-private");
+    expect(raw).toContain("PIHOLE_UPSTREAM=host.docker.internal#5053");
+    expect(raw).not.toContain("super-secret-token-value");
+    expect(raw).not.toContain("local-secret");
+    expect(raw).not.toContain("/Users/demo/.config/nextlevelapex/credentials.json");
+  });
+
   it("loads only valid events", () => {
     const valid = sampleEvent();
     const storage = {
