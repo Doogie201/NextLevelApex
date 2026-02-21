@@ -10,7 +10,8 @@ NextLevelApex is a security-focused macOS setup orchestrator for running repeata
 
 ## High-Level Architecture
 
-- CLI orchestrator: `nextlevelapex/main2.py`
+- Canonical CLI orchestrator: `nextlevelapex/main2.py` (exposed as `nlx`)
+- Compatibility shim for legacy module invocations: `nextlevelapex/main.py`
 - Task registry and guarded discovery: `nextlevelapex/core/registry.py`
 - State tracking and drift detection: `nextlevelapex/core/state.py`
 - Atomic report generation: `nextlevelapex/core/report.py`
