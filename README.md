@@ -16,7 +16,7 @@ NextLevelApex is a security-focused macOS setup orchestrator for running repeata
 - State tracking and drift detection: `nextlevelapex/core/state.py`
 - Atomic report generation: `nextlevelapex/core/report.py`
 - API wrapper: `nextlevelapex/api/main.py` (FastAPI)
-- Optional web dashboard: `dashboard/` (Next.js)
+- Canonical web GUI (read-only v1): `dashboard/` (Next.js)
 
 ## Supported Platforms
 
@@ -68,6 +68,13 @@ Run the API server:
 
 ```bash
 poetry run uvicorn nextlevelapex.api.main:app --reload
+```
+
+Run the canonical GUI dashboard:
+
+```bash
+npm --prefix dashboard install
+npm --prefix dashboard run dev -- --hostname 127.0.0.1 --port 4010
 ```
 
 ## Security Posture
