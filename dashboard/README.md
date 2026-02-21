@@ -9,7 +9,8 @@ This directory is the **single canonical GUI** for NextLevelApex.
   - `nlx list-tasks`
   - `nlx --dry-run --no-reports`
   - `nlx --dry-run --no-reports --task <TaskName>`
-- No system mutation routes in normal GUI flow.
+- No mutate endpoints are shipped in v1.
+- Output viewer shows redacted stdout/stderr with command timing metadata.
 
 ## Run locally
 ```bash

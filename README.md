@@ -77,6 +77,8 @@ npm --prefix dashboard install
 npm --prefix dashboard run dev -- --hostname 127.0.0.1 --port 4010
 ```
 
+GUI v1 is read-only: it supports diagnose + dry-run workflows only and ships no mutation endpoints.
+
 ## Security Posture
 
 NextLevelApex is hardened around least privilege and trust-boundary control:

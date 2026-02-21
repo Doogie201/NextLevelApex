@@ -1,6 +1,8 @@
-export type AllowedCommandId = "diagnose" | "listTasks" | "dryRunAll" | "dryRunTask";
-
-const TASK_NAME_PATTERN = /^[A-Za-z0-9._()\- ]+$/;
+import {
+  type CommandId,
+  isCommandId,
+  validateTaskNameInput,
+} from "./commandContract";
 
 export class AllowlistError extends Error {
   constructor(message: string) {
@@ -10,27 +12,24 @@ export class AllowlistError extends Error {
 }
 
 export interface CommandSpec {
-  commandId: AllowedCommandId;
+  commandId: CommandId;
   argv: string[];
   timeoutMs: number;
 }
 
-export function isAllowedCommandId(value: string): value is AllowedCommandId {
-  return value === "diagnose" || value === "listTasks" || value === "dryRunAll" || value === "dryRunTask";
+export function isAllowedCommandId(value: string): value is CommandId {
+  return isCommandId(value);
 }
 
 export function validateTaskNameFormat(taskName: string): string {
-  const trimmed = taskName.trim();
-  if (!trimmed) {
-    throw new AllowlistError("Task name is required.");
+  try {
+    return validateTaskNameInput(taskName);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new AllowlistError(error.message);
+    }
+    throw new AllowlistError("Task name validation failed.");
   }
-  if (trimmed.startsWith("-") || trimmed.includes("  ")) {
-    throw new AllowlistError("Task name format is invalid.");
-  }
-  if (!TASK_NAME_PATTERN.test(trimmed)) {
-    throw new AllowlistError("Task name contains unsupported characters.");
-  }
-  return trimmed;
 }
 
 export function buildCommandSpec(commandIdRaw: string, taskName?: string): CommandSpec {

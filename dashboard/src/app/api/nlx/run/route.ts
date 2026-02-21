@@ -1,35 +1,24 @@
 import { AllowlistError, runAllowlistedNlxCommand } from "@/engine/nlxService";
+import { CommandContractError, parseRunCommandRequest } from "@/engine/commandContract";
 
 export const runtime = "nodejs";
 
-interface RunBody {
-  commandId?: string;
-  taskName?: string;
-}
-
-function extractBody(input: unknown): RunBody {
-  if (!input || typeof input !== "object") {
-    return {};
-  }
-  const raw = input as Record<string, unknown>;
-  return {
-    commandId: typeof raw.commandId === "string" ? raw.commandId : undefined,
-    taskName: typeof raw.taskName === "string" ? raw.taskName : undefined,
-  };
-}
-
 export async function POST(request: Request): Promise<Response> {
-  let parsed: RunBody;
-
+  let body: unknown;
   try {
-    const body = await request.json();
-    parsed = extractBody(body);
+    body = await request.json();
   } catch {
     return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
   }
 
-  if (!parsed.commandId) {
-    return Response.json({ error: "commandId is required." }, { status: 400 });
+  let parsed: ReturnType<typeof parseRunCommandRequest>;
+  try {
+    parsed = parseRunCommandRequest(body);
+  } catch (error) {
+    if (error instanceof CommandContractError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    return Response.json({ error: "Invalid command request." }, { status: 400 });
   }
 
   try {

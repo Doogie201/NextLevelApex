@@ -146,6 +146,13 @@ body {
   filter: grayscale(1);
 }
 
+.btn-theme:focus-visible,
+.tab-btn:focus-visible,
+.copy-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.65);
+  outline-offset: 2px;
+}
+
 /* Status Badges */
 .badge-status {
   padding: 4px 12px;
@@ -197,6 +204,134 @@ body {
 .terminal-prompt {
   color: var(--theme-main);
   user-select: none;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(13, 17, 23, 0.55);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+.tab-btn-active {
+  color: #fff;
+  border-color: var(--theme-main);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 18px var(--theme-glow);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.status-pass {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.14);
+  border: 1px solid rgba(63, 185, 80, 0.26);
+}
+
+.status-warn {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.16);
+  border: 1px solid rgba(210, 153, 34, 0.28);
+}
+
+.status-fail {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.16);
+  border: 1px solid rgba(248, 81, 73, 0.28);
+}
+
+.status-running {
+  color: #79c0ff;
+  background: rgba(121, 192, 255, 0.12);
+  border: 1px solid rgba(121, 192, 255, 0.3);
+}
+
+.status-skip {
+  color: #8b949e;
+  background: rgba(139, 148, 158, 0.15);
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.timeline-item {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(13, 17, 23, 0.58);
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timeline-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: rgba(255, 255, 255, 0.72);
+  margin-top: 6px;
+  font-size: 0.82rem;
+}
+
+.timeline-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.copy-btn:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
 }
 
 /* Custom Scrollbar */
