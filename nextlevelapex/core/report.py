@@ -63,12 +63,21 @@ def generate_markdown_report(state: dict[str, Any], out_dir: Path) -> Path:
     return stamped
 
 
+def _trunc(val: Any, max_len: int) -> str:
+    s = str(val)
+    if len(s) > max_len:
+        return s[:max_len] + "...[TRUNCATED]"
+    return s
+
+
 def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
     now = datetime.utcnow().replace(microsecond=0).isoformat().replace(":", "-")
     out_dir.mkdir(parents=True, exist_ok=True)
     latest = out_dir / "nextlevelapex-latest.html"
     stamped = out_dir / f"nextlevelapex-{now}.html"
-    versions = html.escape(json.dumps(state.get("service_versions", {}), indent=2))
+    versions = html.escape(
+        _trunc(json.dumps(state.get("service_versions", {}), indent=2), 8192), quote=True
+    )
 
     # Simple HTML. For fancier reporting, plug in a template engine later.
     html_content = f"""<!DOCTYPE html>
@@ -86,7 +95,7 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
 </head>
 <body>
 <h1>NextLevelApex Health Report</h1>
-<p>Generated: {html.escape(now)} UTC</p>
+<p>Generated: {html.escape(_trunc(now, 64), quote=True)} UTC</p>
 <h2>Service Versions</h2>
 <pre>{versions}</pre>
 <h2>Summary Table</h2>
@@ -95,21 +104,23 @@ def generate_html_report(state: dict[str, Any], out_dir: Path) -> Path:
 """
     # Render summary rows
     for task, status in state.get("task_status", {}).items():
-        last_healthy = html.escape(str(status.get("last_healthy", "--")))
+        last_healthy = html.escape(_trunc(status.get("last_healthy", "--"), 64), quote=True)
         recent = state.get("health_history", {}).get(task, [])
-        trend = html.escape(" ".join([e["status"][0] for e in recent[-5:]]) if recent else "-")
-        safe_task = html.escape(str(task))
-        safe_status = html.escape(str(status['status']))
+        trend_str = " ".join([e["status"][0] for e in recent[-5:]]) if recent else "-"
+        trend = html.escape(_trunc(trend_str, 64), quote=True)
+        safe_task = html.escape(_trunc(task, 128), quote=True)
+        safe_status = html.escape(_trunc(status.get("status", ""), 16), quote=True)
         html_content += f"<tr><td>{safe_task}</td><td>{safe_status}</td><td>{last_healthy}</td><td>{trend}</td></tr>\n"
     html_content += "</table>\n<h2>Task Details</h2>\n"
     for task, history in state.get("health_history", {}).items():
-        safe_task_hdr = html.escape(str(task))
+        safe_task_hdr = html.escape(_trunc(task, 128), quote=True)
         html_content += f"<h3>{safe_task_hdr}</h3><ul>"
         for entry in history[-10:]:
             details = entry.get("details", "")
-            safe_ts = html.escape(str(entry['timestamp']))
-            safe_st = html.escape(str(entry['status']))
-            safe_det = html.escape(json.dumps(details, indent=2)) if details else ""
+            safe_ts = html.escape(_trunc(entry.get("timestamp", ""), 64), quote=True)
+            safe_st = html.escape(_trunc(entry.get("status", ""), 16), quote=True)
+            det_str = json.dumps(details, indent=2) if details else ""
+            safe_det = html.escape(_trunc(det_str, 8192), quote=True) if det_str else ""
             html_content += f"<li>{safe_ts}: <b>{safe_st}</b> <pre>{safe_det}</pre></li>"
         html_content += "</ul>"
     html_content += "</body></html>"

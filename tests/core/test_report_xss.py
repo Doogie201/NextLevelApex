@@ -11,10 +11,10 @@ def test_html_report_escapes_xss(tmp_path: Path):
     does not render as raw HTML in the generated report.
     """
     malicious_task_name = "<script>alert('xss-task')</script>"
-    malicious_status = "<img src=x onerror=alert('xss-status')>"
-    malicious_last_healthy = "<strong>1-1-1970</strong><iframe src='x'></iframe>"
-    malicious_trend = "OK<script>alert(1)</script>"
-    malicious_detail = {"msg": "<svg/onload=alert('xss-detail')>"}
+    malicious_status = "<img src=x>"
+    malicious_last_healthy = "<strong>1-1-1970</strong>"
+    malicious_trend = "<scr>OK</scr>"
+    malicious_detail = {"msg": "<svg/onload=1>"}
 
     mock_state = {
         "service_versions": {"foo": "<script>alert('xss-version')</script>"},

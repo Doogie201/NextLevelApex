@@ -89,8 +89,23 @@ def discover_tasks() -> Dict[str, Union[Type[BaseTask], Callable]]:
         if hasattr(module, "TASK_REGISTRY"):
             tasks.update(module.TASK_REGISTRY)
 
-    # Also add function tasks registered globally (from core.registry)
-    tasks.update(get_task_registry())
+    # Add function tasks from global registry, gated by strict exact-match provenance
+    import logging
+
+    for task_name, fn in get_task_registry().items():
+        module_name = getattr(fn, "__module__", "") or ""
+        valid = False
+        for allowed in ALLOWED_MODULES:
+            if module_name == f"nextlevelapex.tasks.{allowed}":
+                valid = True
+                break
+        if valid:
+            tasks[task_name] = fn
+        else:
+            logging.warning(
+                f"SECURITY WARNING: Rejecting registry task '{task_name}' outside ALLOWED_MODULES. Module: {module_name}"
+            )
+
     return tasks
 
 
