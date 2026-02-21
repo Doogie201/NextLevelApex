@@ -39,6 +39,13 @@ Read-only mode is enabled by default.
 - Environment variable: `NLX_GUI_READ_ONLY`
 - Default behavior: if unset, treated as `true`
 
+## Security Model
+- Read-only guarantee: v1 does not expose mutate routes or system-changing actions.
+- Single-flight command guard: only one `/api/nlx/run` execution is allowed at a time; concurrent requests return a deterministic degraded response.
+- Deterministic timeout handling: route-level wall-clock timeout maps to a degraded envelope instead of a crash.
+- Localhost safety warning: UI shows a warning banner when served from a non-localhost host.
+- Redaction guarantee: output is redacted before render, before persistence, and before export.
+
 ## Test
 ```bash
 npm --prefix dashboard test
