@@ -10,14 +10,18 @@ import {
   Contrast,
   Copy,
   Download,
+  FileJson2,
   Keyboard,
   Link2,
   ListChecks,
   Loader2,
+  Pin,
+  PinOff,
   Play,
   Search,
   Shield,
   TerminalSquare,
+  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
@@ -34,7 +38,13 @@ import {
   REDUCED_MOTION_STORAGE_KEY,
   resolveReducedMotionEffective,
 } from "@/engine/reducedMotion";
-import { parseUrlState, toUrlSearch, type UrlSeverityFilter, type UrlViewId } from "@/engine/urlState";
+import {
+  parseUrlState,
+  toUrlSearch,
+  type UrlInspectorSection,
+  type UrlSeverityFilter,
+  type UrlViewId,
+} from "@/engine/urlState";
 import {
   classifyCommandOutcome,
   formatCommandLabel,
@@ -52,9 +62,29 @@ import {
 } from "@/engine/viewModel";
 import { buildTaskDetailsSummary } from "@/engine/taskDetailsExport";
 import { moveTaskSelection, nextVisibleTaskLimit } from "@/engine/taskSelection";
+import {
+  addRunSession,
+  clearRunSessions,
+  createRunSessionFromCommandEvent,
+  createRunSessionFromResult,
+  filterRunSessions,
+  loadRunSessions,
+  sortRunSessions,
+  storeRunSessions,
+  togglePinnedSession,
+  type RunSession,
+  type RunSessionFilter,
+  type RunSessionTimeRange,
+} from "@/engine/runSessions";
+import {
+  buildSessionBundleExportJson,
+  buildSessionExportJson,
+  buildSessionOperatorReport,
+} from "@/engine/sessionExport";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
+type InspectorSection = UrlInspectorSection;
 interface TaskRowSummary {
   taskName: string;
   status: TaskResult["status"];
@@ -180,9 +210,17 @@ export default function Home() {
   const [taskVisibleLimit, setTaskVisibleLimit] = useState(TASK_VISIBLE_STEP);
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
+  const [runSessions, setRunSessions] = useState<RunSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [inspectorSection, setInspectorSection] = useState<InspectorSection>("summary");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sessionCommandFilter, setSessionCommandFilter] = useState<"ALL" | CommandId>("ALL");
+  const [sessionBadgeFilter, setSessionBadgeFilter] = useState<"ALL" | HealthBadge>("ALL");
+  const [sessionTimeRange, setSessionTimeRange] = useState<RunSessionTimeRange>("all");
+  const [sessionDegradedOnly, setSessionDegradedOnly] = useState(false);
+  const [sessionsPanelOpen, setSessionsPanelOpen] = useState(true);
   const [highContrast, setHighContrast] = useState(false);
   const [reduceMotionOverride, setReduceMotionOverride] = useState<boolean | null>(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -205,6 +243,7 @@ export default function Home() {
   const healthBadgeRef = useRef<HTMLSpanElement | null>(null);
   const outputHeaderRef = useRef<HTMLElement | null>(null);
   const outputSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const sessionsListRef = useRef<HTMLDivElement | null>(null);
   const tasksSearchInputRef = useRef<HTMLInputElement | null>(null);
   const shortcutCloseRef = useRef<HTMLButtonElement | null>(null);
   const shortcutDialogRef = useRef<HTMLDivElement | null>(null);
@@ -244,7 +283,9 @@ export default function Home() {
     const parsed = parseUrlState(window.location.search);
     setActiveView(parsed.view);
     setSelectedEventId(parsed.eventId);
+    setSelectedSessionId(parsed.sessionId);
     setSeverityFilter(parsed.severity);
+    setInspectorSection(parsed.inspectorSection);
     setSearchQuery(parsed.q);
     setIsUrlStateReady(true);
   }, []);
@@ -296,6 +337,17 @@ export default function Home() {
     }
     const loaded = loadCommandHistory(window.localStorage);
     setCommandHistory(loaded);
+
+    const loadedSessions = loadRunSessions(window.localStorage);
+    if (loadedSessions.length > 0) {
+      setRunSessions(sortRunSessions(loadedSessions));
+    } else if (loaded.length > 0) {
+      const derivedSessions = sortRunSessions(
+        loaded.filter((event) => event.outcome !== "RUNNING").map((event) => createRunSessionFromCommandEvent(event)),
+      );
+      setRunSessions(derivedSessions);
+    }
+
     if (loaded.length > 0) {
       setLastUpdatedAtIso(loaded[0]?.finishedAt ?? loaded[0]?.startedAt ?? null);
     }
@@ -307,6 +359,13 @@ export default function Home() {
     }
     storeCommandHistory(window.localStorage, commandHistory);
   }, [commandHistory]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeRunSessions(window.localStorage, runSessions);
+  }, [runSessions]);
 
   useEffect(() => {
     if (!isBusy || activeStartedAtRef.current === null) {
@@ -330,14 +389,24 @@ export default function Home() {
     const nextSearch = toUrlSearch({
       view: activeView,
       eventId: selectedEventId,
+      sessionId: selectedSessionId,
       severity: severityFilter,
+      inspectorSection,
       q: searchQuery,
     });
     const nextQuery = nextSearch.length > 0 ? `?${nextSearch}` : "";
     if (window.location.search !== nextQuery) {
       window.history.replaceState(null, "", `${window.location.pathname}${nextQuery}`);
     }
-  }, [activeView, isUrlStateReady, searchQuery, selectedEventId, severityFilter]);
+  }, [
+    activeView,
+    inspectorSection,
+    isUrlStateReady,
+    searchQuery,
+    selectedEventId,
+    selectedSessionId,
+    severityFilter,
+  ]);
 
   useEffect(() => {
     if (commandHistory.length === 0) {
@@ -348,6 +417,29 @@ export default function Home() {
       setSelectedEventId(commandHistory[0]?.id ?? null);
     }
   }, [commandHistory, selectedEventId]);
+
+  useEffect(() => {
+    if (!selectedEventId) {
+      return;
+    }
+    const matchingSession = runSessions.find((session) => session.eventId === selectedEventId);
+    if (matchingSession && matchingSession.id !== selectedSessionId) {
+      setSelectedSessionId(matchingSession.id);
+    }
+  }, [runSessions, selectedEventId, selectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      return;
+    }
+    const session = runSessions.find((item) => item.id === selectedSessionId);
+    if (!session) {
+      return;
+    }
+    if (selectedEventId !== session.eventId) {
+      setSelectedEventId(session.eventId);
+    }
+  }, [runSessions, selectedEventId, selectedSessionId]);
 
   const setViewByShortcut = useCallback((viewId: ViewId): void => {
     setActiveView(viewId);
@@ -503,11 +595,15 @@ export default function Home() {
     return eventId;
   }, []);
 
-  const finalizeCommand = useCallback((eventId: string, startedAtMs: number, result: CommandResponse): void => {
-    const finishedAt = new Date().toISOString();
-    const outcome = classifyCommandOutcome(result);
-    const note = summarizeCommandResult(result);
-
+  const finalizeCommand = useCallback(
+    (
+      eventId: string,
+      finishedAt: string,
+      durationMs: number,
+      outcome: CommandOutcome,
+      note: string,
+      result: CommandResponse,
+    ): void => {
     setCommandHistory((previous) =>
       previous.map((entry) => {
         if (entry.id !== eventId) {
@@ -516,7 +612,7 @@ export default function Home() {
         return {
           ...entry,
           finishedAt,
-          durationMs: Date.now() - startedAtMs,
+          durationMs,
           outcome,
           note,
           stdout: result.stdout,
@@ -526,7 +622,9 @@ export default function Home() {
       }),
     );
     setLastUpdatedAtIso(finishedAt);
-  }, []);
+    },
+    [],
+  );
 
   const executeCommand = useCallback(
     async (commandId: CommandId, taskName?: string): Promise<CommandResponse> => {
@@ -551,7 +649,28 @@ export default function Home() {
         abortControllerRef.current = null;
       }
 
-      finalizeCommand(eventId, startedAtMs, result);
+      const finishedAtIso = new Date().toISOString();
+      const durationMs = Math.max(0, Date.now() - startedAtMs);
+      const outcome = classifyCommandOutcome(result);
+      const note = summarizeCommandResult(result);
+
+      finalizeCommand(eventId, finishedAtIso, durationMs, outcome, note, result);
+      setRunSessions((previous) =>
+        addRunSession(
+          previous,
+          createRunSessionFromResult({
+            eventId,
+            commandId,
+            taskName,
+            label,
+            note,
+            startedAtMs,
+            finishedAtIso,
+            durationMs,
+            result,
+          }),
+        ),
+      );
       setActiveCommandLabel("");
       activeStartedAtRef.current = null;
       if (result.errorType === "aborted") {
@@ -790,7 +909,9 @@ export default function Home() {
     const search = toUrlSearch({
       view: activeView,
       eventId: selectedEventId,
+      sessionId: selectedSessionId,
       severity: severityFilter,
+      inspectorSection,
       q: searchQuery,
     });
     const deepLink = `${window.location.origin}${window.location.pathname}${search.length > 0 ? `?${search}` : ""}`;
@@ -801,7 +922,7 @@ export default function Home() {
     } catch {
       setFriendlyMessage("Clipboard write failed in this browser context.");
     }
-  }, [activeView, searchQuery, selectedEventId, severityFilter]);
+  }, [activeView, inspectorSection, searchQuery, selectedEventId, selectedSessionId, severityFilter]);
 
   const handleShortcutDialogKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -894,6 +1015,126 @@ export default function Home() {
     }
     return groupTaskResults(selectedEvent.taskResults);
   }, [selectedEvent]);
+
+  const sessionFilter = useMemo<RunSessionFilter>(
+    () => ({
+      commandId: sessionCommandFilter,
+      badge: sessionBadgeFilter,
+      degradedOnly: sessionDegradedOnly,
+      timeRange: sessionTimeRange,
+    }),
+    [sessionBadgeFilter, sessionCommandFilter, sessionDegradedOnly, sessionTimeRange],
+  );
+
+  const filteredSessions = useMemo(
+    () => filterRunSessions(sortRunSessions(runSessions), sessionFilter),
+    [runSessions, sessionFilter],
+  );
+
+  const sessionCommandOptions = useMemo(
+    () => Array.from(new Set(runSessions.map((session) => session.commandId))).sort(),
+    [runSessions],
+  );
+
+  const selectedSession = useMemo(() => {
+    if (!selectedSessionId) {
+      return filteredSessions[0] ?? null;
+    }
+    return filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
+  }, [filteredSessions, selectedSessionId]);
+
+  const selectedSessionTaskGroups = useMemo(() => {
+    if (!selectedSession || selectedSession.taskResults.length === 0) {
+      return { bySeverity: [], byTask: [] };
+    }
+    return groupTaskResults(selectedSession.taskResults);
+  }, [selectedSession]);
+
+  useEffect(() => {
+    if (filteredSessions.length === 0) {
+      setSelectedSessionId(null);
+      return;
+    }
+    if (!selectedSessionId || !filteredSessions.some((session) => session.id === selectedSessionId)) {
+      setSelectedSessionId(filteredSessions[0].id);
+    }
+  }, [filteredSessions, selectedSessionId]);
+
+  const openSession = useCallback((sessionId: string): void => {
+    const session = filteredSessions.find((item) => item.id === sessionId) ?? runSessions.find((item) => item.id === sessionId);
+    if (!session) {
+      return;
+    }
+    setActiveView("output");
+    setSessionsPanelOpen(true);
+    setSelectedSessionId(session.id);
+    setSelectedEventId(session.eventId);
+    setInspectorSection("summary");
+    setLiveMessage(`Opened session ${session.label}.`);
+  }, [filteredSessions, runSessions]);
+
+  const toggleSessionPinned = useCallback((sessionId: string): void => {
+    setRunSessions((previous) => togglePinnedSession(previous, sessionId));
+  }, []);
+
+  const clearSessionHistoryWithConfirm = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!window.confirm("Clear all stored run sessions? This cannot be undone.")) {
+      return;
+    }
+    setRunSessions(clearRunSessions());
+    setSelectedSessionId(null);
+    setInspectorSection("summary");
+    setLiveMessage("Run session history cleared.");
+    setFriendlyMessage("Cleared stored run sessions.");
+  }, []);
+
+  const downloadTextPayload = useCallback((fileName: string, payload: string): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const blob = new Blob([payload], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }, []);
+
+  const exportSelectedSessionJson = useCallback((): void => {
+    if (!selectedSession) {
+      return;
+    }
+    const timestamp = new Date(selectedSession.finishedAt).toISOString().replace(/[:]/g, "-");
+    downloadTextPayload(`nlx-session-${selectedSession.id}-${timestamp}.json`, buildSessionExportJson(selectedSession));
+    setFriendlyMessage("Exported selected session JSON (redacted).");
+  }, [downloadTextPayload, selectedSession]);
+
+  const exportSelectedSessionReport = useCallback((): void => {
+    if (!selectedSession) {
+      return;
+    }
+    const timestamp = new Date(selectedSession.finishedAt).toISOString().replace(/[:]/g, "-");
+    downloadTextPayload(
+      `nlx-session-report-${selectedSession.id}-${timestamp}.txt`,
+      buildSessionOperatorReport(selectedSession),
+    );
+    setFriendlyMessage("Exported selected operator report (redacted).");
+  }, [downloadTextPayload, selectedSession]);
+
+  const exportSessionBundle = useCallback((): void => {
+    const source = filteredSessions.length > 0 ? filteredSessions : runSessions;
+    if (source.length === 0) {
+      setFriendlyMessage("No sessions available to export.");
+      return;
+    }
+    const timestamp = new Date().toISOString().replace(/[:]/g, "-");
+    downloadTextPayload(`nlx-session-bundle-${timestamp}.json`, buildSessionBundleExportJson(source));
+    setFriendlyMessage("Exported filtered session bundle JSON (redacted).");
+  }, [downloadTextPayload, filteredSessions, runSessions]);
 
   const taskRows = useMemo<TaskRowSummary[]>(() => {
     const latest = new Map<string, TaskRowSummary>();
@@ -1039,6 +1280,58 @@ export default function Home() {
     shortcutsOpen,
     visibleTaskRows,
   ]);
+
+  useEffect(() => {
+    const onSessionKeyDown = (event: KeyboardEvent): void => {
+      if (activeView !== "output" || shortcutsOpen) {
+        return;
+      }
+
+      const typingTarget = isTypingElement(event.target);
+      const hasModifier = event.metaKey || event.ctrlKey || event.altKey;
+
+      if (typingTarget || hasModifier) {
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (sessionsPanelOpen) {
+          event.preventDefault();
+          setSessionsPanelOpen(false);
+          setLiveMessage("Sessions panel closed.");
+        }
+        return;
+      }
+
+      if (!sessionsPanelOpen || filteredSessions.length === 0) {
+        return;
+      }
+
+      const ids = filteredSessions.map((session) => session.id);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const currentIndex = selectedSessionId ? ids.indexOf(selectedSessionId) : -1;
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex =
+          currentIndex < 0 ? (delta > 0 ? 0 : ids.length - 1) : (currentIndex + delta + ids.length) % ids.length;
+        const nextSessionId = ids[nextIndex];
+        if (nextSessionId) {
+          setSelectedSessionId(nextSessionId);
+          setLiveMessage("Session selection updated.");
+          sessionsListRef.current?.focus();
+        }
+        return;
+      }
+
+      if (event.key === "Enter" && selectedSessionId) {
+        event.preventDefault();
+        openSession(selectedSessionId);
+      }
+    };
+
+    window.addEventListener("keydown", onSessionKeyDown);
+    return () => window.removeEventListener("keydown", onSessionKeyDown);
+  }, [activeView, filteredSessions, openSession, selectedSessionId, sessionsPanelOpen, shortcutsOpen]);
 
   useEffect(() => {
     void (async () => {
@@ -1349,6 +1642,166 @@ export default function Home() {
                 <h2 className="section-title">Live Output Viewer</h2>
                 <p className="meta-muted">Filter timeline entries and inspect redacted stdout/stderr per command.</p>
 
+                <section className="sessions-panel" aria-label="Run sessions">
+                  <div className="sessions-header">
+                    <h3>Run Sessions</h3>
+                    <div className="sessions-header-actions">
+                      <button
+                        className="btn-muted"
+                        type="button"
+                        onClick={() => setSessionsPanelOpen((previous) => !previous)}
+                        aria-label={sessionsPanelOpen ? "Collapse sessions panel" : "Expand sessions panel"}
+                      >
+                        {sessionsPanelOpen ? "Collapse" : "Expand"}
+                      </button>
+                      <button
+                        className="btn-muted"
+                        type="button"
+                        onClick={clearSessionHistoryWithConfirm}
+                        disabled={runSessions.length === 0}
+                        aria-label="Clear run session history"
+                      >
+                        <Trash2 className="w-4 h-4" /> Clear History
+                      </button>
+                    </div>
+                  </div>
+
+                  {sessionsPanelOpen && (
+                    <>
+                      <div className="sessions-filters">
+                        <label className="select-control" aria-label="Filter sessions by command">
+                          <span>Command</span>
+                          <select
+                            value={sessionCommandFilter}
+                            onChange={(event) => setSessionCommandFilter(event.target.value as "ALL" | CommandId)}
+                          >
+                            <option value="ALL">All</option>
+                            {sessionCommandOptions.map((commandId) => (
+                              <option key={commandId} value={commandId}>
+                                {commandId}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="select-control" aria-label="Filter sessions by badge">
+                          <span>Badge</span>
+                          <select
+                            value={sessionBadgeFilter}
+                            onChange={(event) => setSessionBadgeFilter(event.target.value as "ALL" | HealthBadge)}
+                          >
+                            <option value="ALL">All</option>
+                            <option value="OK">OK</option>
+                            <option value="DEGRADED">DEGRADED</option>
+                            <option value="BROKEN">BROKEN</option>
+                          </select>
+                        </label>
+                        <label className="select-control" aria-label="Filter sessions by time range">
+                          <span>Range</span>
+                          <select
+                            value={sessionTimeRange}
+                            onChange={(event) => setSessionTimeRange(event.target.value as RunSessionTimeRange)}
+                          >
+                            <option value="today">Today</option>
+                            <option value="7d">7d</option>
+                            <option value="all">All</option>
+                          </select>
+                        </label>
+                        <label className="session-toggle">
+                          <input
+                            type="checkbox"
+                            checked={sessionDegradedOnly}
+                            onChange={(event) => setSessionDegradedOnly(event.target.checked)}
+                          />
+                          <span>Degraded only</span>
+                        </label>
+                      </div>
+
+                      <div className="sessions-export-center">
+                        <button
+                          className="btn-muted"
+                          type="button"
+                          onClick={exportSelectedSessionJson}
+                          disabled={!selectedSession}
+                          aria-label="Export selected session JSON"
+                        >
+                          <FileJson2 className="w-4 h-4" /> Session JSON
+                        </button>
+                        <button
+                          className="btn-muted"
+                          type="button"
+                          onClick={exportSelectedSessionReport}
+                          disabled={!selectedSession}
+                          aria-label="Export selected operator report"
+                        >
+                          <Download className="w-4 h-4" /> Session Report
+                        </button>
+                        <button
+                          className="btn-muted"
+                          type="button"
+                          onClick={exportSessionBundle}
+                          disabled={runSessions.length === 0}
+                          aria-label="Export filtered session bundle"
+                        >
+                          <Download className="w-4 h-4" /> Bundle JSON
+                        </button>
+                      </div>
+
+                      {filteredSessions.length === 0 ? (
+                        <p className="meta-muted">No run sessions match the current filters.</p>
+                      ) : (
+                        <div
+                          ref={sessionsListRef}
+                          className="sessions-list"
+                          role="listbox"
+                          tabIndex={-1}
+                          aria-label="Run session list"
+                          aria-activedescendant={selectedSession ? `session-${selectedSession.id}` : undefined}
+                        >
+                          {filteredSessions.map((session) => {
+                            const isSelected = selectedSession?.id === session.id;
+                            return (
+                              <div
+                                key={session.id}
+                                className={`session-row ${isSelected ? "session-row-active" : ""}`}
+                              >
+                                <button
+                                  id={`session-${session.id}`}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  className="session-row-button"
+                                  onClick={() => openSession(session.id)}
+                                >
+                                  <div className="session-row-heading">
+                                    <span className={`status-pill ${session.statusClass}`}>{session.badge}</span>
+                                    <strong>{session.label}</strong>
+                                  </div>
+                                  <div className="session-row-meta">
+                                    <span>{formatTimestamp(session.startedAt)}</span>
+                                    <span>{session.durationLabel}</span>
+                                    <span>{session.reasonCode}</span>
+                                  </div>
+                                </button>
+                                <button
+                                  className="btn-muted session-pin-btn"
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleSessionPinned(session.id);
+                                  }}
+                                  aria-label={session.pinned ? "Unpin session" : "Pin session"}
+                                >
+                                  {session.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+
                 <div className="output-controls">
                   <label className="search-control" aria-label="Search redacted output">
                     <Search className="w-4 h-4" />
@@ -1395,19 +1848,21 @@ export default function Home() {
                 </div>
 
                 <section ref={outputHeaderRef} tabIndex={-1} className="sticky-run-header" aria-live="polite">
-                  {selectedEvent ? (
+                  {selectedSession ? (
                     <>
                       <div className="sticky-run-meta">
-                        <span className={`status-pill ${statusClass(selectedEvent.outcome)}`}>{selectedEvent.outcome}</span>
-                        <strong>{selectedEvent.label}</strong>
-                        <span>{formatTimestamp(selectedEvent.startedAt)}</span>
-                        <span>Duration {formatDuration(selectedEvent.durationMs)}</span>
+                        <span className={`status-pill ${selectedSession.statusClass}`}>{selectedSession.badge}</span>
+                        <strong>{selectedSession.label}</strong>
+                        <span>{formatTimestamp(selectedSession.startedAt)}</span>
+                        <span>Duration {selectedSession.durationLabel}</span>
+                        <span>Reason {selectedSession.reasonCode}</span>
                       </div>
                       <div className="sticky-run-actions">
                         <button
                           className="copy-btn"
                           type="button"
-                          onClick={() => void copyEventOutput(selectedEvent)}
+                          onClick={() => selectedEvent && void copyEventOutput(selectedEvent)}
+                          disabled={!selectedEvent}
                           aria-label="Copy selected event redacted output"
                         >
                           <Copy className="w-4 h-4" /> Copy Redacted
@@ -1415,7 +1870,8 @@ export default function Home() {
                         <button
                           className="btn-muted"
                           type="button"
-                          onClick={() => downloadRedactedLog([selectedEvent])}
+                          onClick={() => selectedEvent && downloadRedactedLog([selectedEvent])}
+                          disabled={!selectedEvent}
                           aria-label="Download selected event redacted output"
                         >
                           <Download className="w-4 h-4" /> Download Event
@@ -1599,6 +2055,109 @@ export default function Home() {
             ) : (
               <p className="meta-muted">Select a task to inspect status and details.</p>
             )
+          ) : activeView === "output" ? (
+            selectedSession ? (
+              <div className="inspector-event">
+                <h3>{selectedSession.label}</h3>
+                <p className="meta-muted">Command: {selectedSession.commandId}</p>
+                <p className="meta-muted">Status: {selectedSession.badge}</p>
+                <p className="meta-muted">Reason: {selectedSession.reasonCode}</p>
+                <p className="meta-muted">Started: {formatTimestamp(selectedSession.startedAt)}</p>
+                <p className="meta-muted">Duration: {selectedSession.durationLabel}</p>
+
+                <div className="inspector-tabs" role="tablist" aria-label="Inspector sections">
+                  <button
+                    type="button"
+                    role="tab"
+                    className={`btn-muted ${inspectorSection === "summary" ? "inspector-tab-active" : ""}`}
+                    aria-selected={inspectorSection === "summary"}
+                    onClick={() => setInspectorSection("summary")}
+                  >
+                    Summary
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    className={`btn-muted ${inspectorSection === "events" ? "inspector-tab-active" : ""}`}
+                    aria-selected={inspectorSection === "events"}
+                    onClick={() => setInspectorSection("events")}
+                  >
+                    Events
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    className={`btn-muted ${inspectorSection === "tasks" ? "inspector-tab-active" : ""}`}
+                    aria-selected={inspectorSection === "tasks"}
+                    onClick={() => setInspectorSection("tasks")}
+                  >
+                    Tasks
+                  </button>
+                </div>
+
+                {inspectorSection === "summary" && (
+                  <div className="inspector-section-block">
+                    <p className="meta-muted">{selectedSession.note}</p>
+                    <p className="meta-muted">Session ID: {selectedSession.id}</p>
+                    <p className="meta-muted">Event ID: {selectedSession.eventId}</p>
+                    <p className="meta-muted">Redacted: {selectedSession.redacted ? "yes" : "no"}</p>
+                  </div>
+                )}
+
+                {inspectorSection === "events" && (
+                  <div className="inspector-section-block">
+                    {selectedSession.events.length === 0 ? (
+                      <p className="meta-muted">No session events available.</p>
+                    ) : (
+                      <ul className="session-event-list">
+                        {selectedSession.events.map((event) => (
+                          <li key={event.id}>
+                            <span>+{event.offsetMs}ms</span>
+                            <span>[{event.level}]</span>
+                            <p>{event.msg}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {inspectorSection === "tasks" && (
+                  <div className="inspector-section-block">
+                    {selectedSession.taskResults.length === 0 ? (
+                      <p className="meta-muted">No task results in this session.</p>
+                    ) : (
+                      <div className="inspector-groups">
+                        <details open>
+                          <summary>Severity groups</summary>
+                          <ul>
+                            {selectedSessionTaskGroups.bySeverity.map((group) => (
+                              <li key={`session-inspector-severity-${group.severity}`}>
+                                <span className={`status-pill ${statusClass(group.severity)}`}>{group.severity}</span>
+                                <span>{group.items.length}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                        <details>
+                          <summary>Task groups</summary>
+                          <ul>
+                            {selectedSessionTaskGroups.byTask.map((group) => (
+                              <li key={`session-inspector-task-${group.taskName}`}>
+                                <strong>{group.taskName}</strong>
+                                <span>{group.items.length}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="meta-muted">Select a run session to inspect details.</p>
+            )
           ) : selectedEvent ? (
             <div className="inspector-event">
               <h3>{selectedEvent.label}</h3>
@@ -1681,6 +2240,10 @@ export default function Home() {
               <li>
                 <kbd>g o</kbd>
                 <span>Go to Output</span>
+              </li>
+              <li>
+                <kbd>↑ / ↓</kbd>
+                <span>Navigate sessions (Output view)</span>
               </li>
             </ul>
           </div>
