@@ -78,6 +78,15 @@ export interface CaseLibraryFilter {
   query: string;
 }
 
+export interface CaseLibraryIntegritySummary {
+  caseId: string;
+  storedFingerprint: string;
+  recomputedFingerprint: string;
+  shortFingerprint: string;
+  mismatch: boolean;
+  runCount: number;
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -123,6 +132,14 @@ function normalizeCaseName(value: string | undefined, bundle: CaseBundle): strin
 
 function normalizeFingerprint(fingerprint: string): string {
   return fingerprint.trim().toLowerCase();
+}
+
+export function toShortFingerprint(fingerprint: string): string {
+  const normalized = normalizeFingerprint(fingerprint);
+  if (normalized.length <= 20) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 16)}…`;
 }
 
 function normalizeSource(value: unknown): CaseLibrarySource {
@@ -431,4 +448,19 @@ export function openCaseLibraryEntry(entries: CaseLibraryEntry[], caseId: string
 
 export function buildCaseBundleExportJson(entry: Pick<CaseLibraryEntry, "bundle">): string {
   return buildCaseBundleJson(entry.bundle);
+}
+
+export function summarizeCaseLibraryIntegrity(entries: CaseLibraryEntry[]): CaseLibraryIntegritySummary[] {
+  return normalizeEntries(entries).map((entry) => {
+    const recomputed = normalizeFingerprint(buildCaseBundleFingerprint(entry.bundle));
+    const stored = normalizeFingerprint(entry.fingerprint);
+    return {
+      caseId: entry.id,
+      storedFingerprint: stored,
+      recomputedFingerprint: recomputed,
+      shortFingerprint: toShortFingerprint(stored),
+      mismatch: stored !== recomputed,
+      runCount: entry.bundle.runs.length,
+    };
+  });
 }
