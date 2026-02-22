@@ -133,6 +133,7 @@ import {
   buildSessionExportJson,
   buildSessionOperatorReport,
 } from "@/engine/sessionExport";
+import { buildInvestigationBundleJson, type BundlePresetSelection } from "@/engine/bundleExport";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
@@ -297,6 +298,10 @@ export default function Home() {
   const [cancelRequested, setCancelRequested] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [consoleHelpOpen, setConsoleHelpOpen] = useState(false);
+  const [bundleExportOpen, setBundleExportOpen] = useState(false);
+  const [bundlePresetSelection, setBundlePresetSelection] = useState<BundlePresetSelection>("current");
+  const [bundleSessionIds, setBundleSessionIds] = useState<string[]>([]);
+  const [bundleViewNames, setBundleViewNames] = useState<string[]>([]);
   const [shortcutState, setShortcutState] = useState<ShortcutState>(() => initialShortcutState());
   const [liveMessage, setLiveMessage] = useState("Ready.");
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
@@ -321,6 +326,9 @@ export default function Home() {
   const consoleHelpCloseRef = useRef<HTMLButtonElement | null>(null);
   const consoleHelpDialogRef = useRef<HTMLDivElement | null>(null);
   const consoleHelpOpenerRef = useRef<HTMLElement | null>(null);
+  const bundleExportCloseRef = useRef<HTMLButtonElement | null>(null);
+  const bundleExportDialogRef = useRef<HTMLDivElement | null>(null);
+  const bundleExportOpenerRef = useRef<HTMLElement | null>(null);
 
   const effectiveReducedMotion = useMemo(
     () => resolveReducedMotionEffective(reduceMotionOverride, prefersReducedMotion),
@@ -626,6 +634,27 @@ export default function Home() {
     consoleHelpOpenerRef.current?.focus();
   }, []);
 
+  const openBundleExport = useCallback((): void => {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      bundleExportOpenerRef.current = document.activeElement;
+    }
+    const defaultSessionId =
+      selectedSessionId && runSessions.some((session) => session.id === selectedSessionId)
+        ? selectedSessionId
+        : runSessions[0]?.id ?? null;
+    setBundleSessionIds(defaultSessionId ? [defaultSessionId] : []);
+    setBundleViewNames(savedViews.map((view) => view.name));
+    setBundlePresetSelection(selectedPreset ? "preset" : runCenterModel.config ? "current" : "none");
+    setBundleExportOpen(true);
+    setLiveMessage("Bundle export opened.");
+  }, [runCenterModel.config, runSessions, savedViews, selectedPreset, selectedSessionId]);
+
+  const closeBundleExport = useCallback((): void => {
+    setBundleExportOpen(false);
+    setLiveMessage("Bundle export closed.");
+    bundleExportOpenerRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!shortcutsOpen) {
       return;
@@ -641,7 +670,22 @@ export default function Home() {
   }, [consoleHelpOpen]);
 
   useEffect(() => {
+    if (!bundleExportOpen) {
+      return;
+    }
+    bundleExportCloseRef.current?.focus();
+  }, [bundleExportOpen]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (bundleExportOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeBundleExport();
+        }
+        return;
+      }
+
       if (consoleHelpOpen) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -701,6 +745,8 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeView,
+    bundleExportOpen,
+    closeBundleExport,
     closeConsoleHelp,
     closeKeyboardShortcuts,
     consoleHelpOpen,
@@ -1452,6 +1498,48 @@ export default function Home() {
     [closeConsoleHelp],
   );
 
+  const handleBundleExportDialogKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeBundleExport();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const container = bundleExportDialogRef.current;
+      if (!container) {
+        return;
+      }
+
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+
+      if (focusables.length === 0) {
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    },
+    [closeBundleExport],
+  );
+
   const motionTransition = useMemo(
     () => (effectiveReducedMotion ? { duration: 0 } : { duration: 0.22 }),
     [effectiveReducedMotion],
@@ -1541,6 +1629,16 @@ export default function Home() {
     return runSessions.find((session) => session.id === compareSessionId) ?? null;
   }, [compareSessionId, runSessions]);
 
+  const selectedBundleSessions = useMemo(
+    () => runSessions.filter((session) => bundleSessionIds.includes(session.id)),
+    [bundleSessionIds, runSessions],
+  );
+
+  const selectedBundleViews = useMemo(
+    () => savedViews.filter((view) => bundleViewNames.includes(view.name)),
+    [bundleViewNames, savedViews],
+  );
+
   const sessionComparison = useMemo(() => {
     if (!selectedSession || !selectedCompareSession) {
       return null;
@@ -1574,6 +1672,14 @@ export default function Home() {
       setCompareSessionId(null);
     }
   }, [compareSessionId, runSessions, selectedSessionId]);
+
+  useEffect(() => {
+    setBundleSessionIds((previous) => previous.filter((id) => runSessions.some((session) => session.id === id)));
+  }, [runSessions]);
+
+  useEffect(() => {
+    setBundleViewNames((previous) => previous.filter((name) => savedViews.some((view) => view.name === name)));
+  }, [savedViews]);
 
   const openSession = useCallback((sessionId: string): void => {
     const session = filteredSessions.find((item) => item.id === sessionId) ?? runSessions.find((item) => item.id === sessionId);
@@ -1682,6 +1788,56 @@ export default function Home() {
     downloadTextPayload(`${baseName}.md`, bundle.markdown);
     setFriendlyMessage("Generated deterministic session report bundle (redacted).");
   }, [downloadTextPayload, selectedCompareSession, selectedSession]);
+
+  const toggleBundleSessionSelection = useCallback((sessionId: string, selected: boolean): void => {
+    setBundleSessionIds((previous) => {
+      if (selected) {
+        return [...new Set([...previous, sessionId])];
+      }
+      return previous.filter((entry) => entry !== sessionId);
+    });
+  }, []);
+
+  const toggleBundleViewSelection = useCallback((viewName: string, selected: boolean): void => {
+    setBundleViewNames((previous) => {
+      if (selected) {
+        return [...new Set([...previous, viewName])];
+      }
+      return previous.filter((entry) => entry !== viewName);
+    });
+  }, []);
+
+  const exportInvestigationBundle = useCallback((): void => {
+    if (selectedBundleSessions.length === 0 && selectedBundleViews.length === 0 && bundlePresetSelection === "none") {
+      setFriendlyMessage("Select at least one session, saved view, or preset source before exporting.");
+      return;
+    }
+
+    const json = buildInvestigationBundleJson({
+      guiVersionTag: GUI_BUILD_ID,
+      repo: "Doogie201/NextLevelApex",
+      presetSelection: bundlePresetSelection,
+      selectedPreset,
+      currentConfig: runCenterModel.config,
+      viewUrls: selectedBundleViews.map((view) => view.url),
+      sessions: selectedBundleSessions,
+    });
+
+    const firstSession = selectedBundleSessions[0]?.id ?? "bundle";
+    downloadTextPayload(`nlx-investigation-bundle-${firstSession}.json`, json);
+    setFriendlyMessage(
+      `Exported investigation bundle (sessions: ${selectedBundleSessions.length}, views: ${selectedBundleViews.length}).`,
+    );
+    closeBundleExport();
+  }, [
+    bundlePresetSelection,
+    closeBundleExport,
+    downloadTextPayload,
+    runCenterModel.config,
+    selectedBundleSessions,
+    selectedBundleViews,
+    selectedPreset,
+  ]);
 
   const copyConsoleDiagnostics = useCallback(async (): Promise<void> => {
     if (typeof navigator === "undefined") {
@@ -2733,6 +2889,16 @@ export default function Home() {
                         >
                           <FileJson2 className="w-4 h-4" /> Generate Report
                         </button>
+                        <button
+                          className="btn-theme"
+                          type="button"
+                          onClick={openBundleExport}
+                          aria-haspopup="dialog"
+                          aria-expanded={bundleExportOpen}
+                          aria-label="Open investigation bundle export"
+                        >
+                          <Download className="w-4 h-4" /> Bundle Export
+                        </button>
                       </div>
 
                       {runSessions.length === 0 ? (
@@ -3299,6 +3465,111 @@ export default function Home() {
           )}
         </aside>
       </div>
+
+      {bundleExportOpen && (
+        <div className="shortcut-overlay" role="presentation">
+          <div
+            ref={bundleExportDialogRef}
+            className="shortcut-dialog glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bundle-export-title"
+            onKeyDown={handleBundleExportDialogKeyDown}
+          >
+            <header className="shortcut-header">
+              <h2 id="bundle-export-title" className="section-title">
+                Investigation Bundle Export
+              </h2>
+              <button ref={bundleExportCloseRef} className="btn-muted" type="button" onClick={closeBundleExport}>
+                <X className="w-4 h-4" /> Close
+              </button>
+            </header>
+
+            <div className="help-body">
+              <section className="help-section">
+                <h3>Preset Source</h3>
+                <label className="select-control">
+                  <span>Source</span>
+                  <select
+                    value={bundlePresetSelection}
+                    onChange={(event) => setBundlePresetSelection(event.target.value as BundlePresetSelection)}
+                    aria-label="Bundle preset source"
+                  >
+                    <option value="none">None</option>
+                    <option value="preset" disabled={!selectedPreset}>
+                      Selected preset
+                    </option>
+                    <option value="current" disabled={!runCenterModel.config}>
+                      Current runner config
+                    </option>
+                  </select>
+                </label>
+              </section>
+
+              <section className="help-section">
+                <h3>Sessions</h3>
+                {runSessions.length === 0 ? (
+                  <p className="meta-muted">No sessions available.</p>
+                ) : (
+                  <div className="sessions-list" role="list" aria-label="Bundle session selection">
+                    {sortRunSessions(runSessions).map((session) => {
+                      const checked = bundleSessionIds.includes(session.id);
+                      return (
+                        <label key={`bundle-session-${session.id}`} className="session-toggle">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => toggleBundleSessionSelection(session.id, event.target.checked)}
+                          />
+                          <span>
+                            {session.label} ({session.id})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="help-section">
+                <h3>Saved Views</h3>
+                {savedViews.length === 0 ? (
+                  <p className="meta-muted">No saved views available.</p>
+                ) : (
+                  <div className="sessions-list" role="list" aria-label="Bundle saved view selection">
+                    {savedViews.map((view) => {
+                      const checked = bundleViewNames.includes(view.name);
+                      return (
+                        <label key={`bundle-view-${view.name}`} className="session-toggle">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => toggleBundleViewSelection(view.name, event.target.checked)}
+                          />
+                          <span>{view.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="help-section">
+                <h3>Preview</h3>
+                <p className="meta-muted">
+                  sessions={selectedBundleSessions.length} views={selectedBundleViews.length} preset=
+                  {bundlePresetSelection}
+                </p>
+                <div className="settings-actions">
+                  <button className="btn-theme" type="button" onClick={exportInvestigationBundle}>
+                    <Download className="w-4 h-4" /> Download Bundle JSON
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
 
       {shortcutsOpen && (
         <div className="shortcut-overlay" role="presentation">
