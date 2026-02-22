@@ -173,6 +173,20 @@ import {
   type CaseBundleRunListItem,
 } from "@/engine/caseBundle";
 import {
+  buildCaseBundleFingerprint,
+  clearCaseLibraryStorage,
+  deleteCaseLibraryEntry,
+  filterCaseLibraryEntries,
+  loadCaseLibraryState,
+  openCaseLibraryEntry,
+  saveCaseLibraryEntry,
+  storeCaseLibrary,
+  updateCaseLibraryNotes,
+  type CaseLibraryEntry,
+  type CaseLibraryLoadStatus,
+  type CaseLibrarySource,
+} from "@/engine/caseLibraryStore";
+import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
 } from "@/engine/sessionReport";
@@ -281,6 +295,19 @@ function runHistoryStatusNotice(status: RunHistoryLoadStatus): string | null {
   return null;
 }
 
+function caseLibraryStatusNotice(status: CaseLibraryLoadStatus): string | null {
+  if (status === "cleared_corrupt") {
+    return "Stored case library could not be loaded and was cleared.";
+  }
+  if (status === "ignored_newer_schema") {
+    return "Stored case library version is newer than this app build and was ignored.";
+  }
+  if (status === "migrated") {
+    return "Stored case library was migrated to the latest schema.";
+  }
+  return null;
+}
+
 function statusClass(status: CommandOutcome | TaskResult["status"]): string {
   if (status === "PASS") {
     return "status-pass";
@@ -375,6 +402,13 @@ export default function Home() {
   const [confirmRunHistoryClear, setConfirmRunHistoryClear] = useState(false);
   const [runHistoryPersistenceNotice, setRunHistoryPersistenceNotice] = useState<string | null>(null);
   const [caseBundleMode, setCaseBundleMode] = useState<CaseBundle | null>(null);
+  const [caseLibraryEntries, setCaseLibraryEntries] = useState<CaseLibraryEntry[]>([]);
+  const [selectedCaseLibraryId, setSelectedCaseLibraryId] = useState<string | null>(null);
+  const [activeCaseLibraryId, setActiveCaseLibraryId] = useState<string | null>(null);
+  const [caseLibraryQuery, setCaseLibraryQuery] = useState("");
+  const [caseLibraryNotice, setCaseLibraryNotice] = useState<string | null>(null);
+  const [confirmCaseLibraryDeleteId, setConfirmCaseLibraryDeleteId] = useState<string | null>(null);
+  const [caseNotesDraft, setCaseNotesDraft] = useState("");
   const [caseModeNotice, setCaseModeNotice] = useState<string | null>(null);
   const [runDetailsExpanded, setRunDetailsExpanded] = useState<Record<RunDetailsSection, boolean>>({
     input: false,
@@ -614,6 +648,10 @@ export default function Home() {
       setSelectedRunHistoryId(runHistoryState.entries[0].id);
     }
     setRunHistoryPersistenceNotice(runHistoryStatusNotice(runHistoryState.status));
+
+    const caseLibraryState = loadCaseLibraryState(window.localStorage);
+    setCaseLibraryEntries(caseLibraryState.entries);
+    setCaseLibraryNotice(caseLibraryStatusNotice(caseLibraryState.status));
   }, []);
 
   useEffect(() => {
@@ -650,6 +688,13 @@ export default function Home() {
     }
     storeRunHistory(window.localStorage, runHistoryEntries);
   }, [runHistoryEntries]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeCaseLibrary(window.localStorage, caseLibraryEntries);
+  }, [caseLibraryEntries]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1876,6 +1921,31 @@ export default function Home() {
     [caseBundleMode, runHistoryEntries.length],
   );
 
+  const filteredCaseLibraryEntries = useMemo(
+    () => filterCaseLibraryEntries(caseLibraryEntries, { query: caseLibraryQuery }),
+    [caseLibraryEntries, caseLibraryQuery],
+  );
+
+  const selectedCaseLibraryEntry = useMemo(
+    () =>
+      selectedCaseLibraryId
+        ? filteredCaseLibraryEntries.find((entry) => entry.id === selectedCaseLibraryId) ??
+          caseLibraryEntries.find((entry) => entry.id === selectedCaseLibraryId) ??
+          null
+        : null,
+    [caseLibraryEntries, filteredCaseLibraryEntries, selectedCaseLibraryId],
+  );
+
+  const activeCaseLibraryEntry = useMemo(
+    () => (activeCaseLibraryId ? caseLibraryEntries.find((entry) => entry.id === activeCaseLibraryId) ?? null : null),
+    [activeCaseLibraryId, caseLibraryEntries],
+  );
+
+  const caseModeFingerprint = useMemo(
+    () => (caseBundleMode ? buildCaseBundleFingerprint(caseBundleMode) : null),
+    [caseBundleMode],
+  );
+
   const runHistoryVisibleIds = useMemo(
     () => activeRunHistoryRows.map((entry) => entry.id),
     [activeRunHistoryRows],
@@ -2190,6 +2260,34 @@ export default function Home() {
       error: false,
     });
   }, [selectedRunHistoryId]);
+
+  useEffect(() => {
+    if (!selectedCaseLibraryId) {
+      return;
+    }
+    const exists = caseLibraryEntries.some((entry) => entry.id === selectedCaseLibraryId);
+    if (!exists) {
+      setSelectedCaseLibraryId(null);
+    }
+  }, [caseLibraryEntries, selectedCaseLibraryId]);
+
+  useEffect(() => {
+    if (!activeCaseLibraryId) {
+      setCaseNotesDraft("");
+      return;
+    }
+    const matching = caseLibraryEntries.find((entry) => entry.id === activeCaseLibraryId) ?? null;
+    if (!matching) {
+      setActiveCaseLibraryId(null);
+      if (caseBundleMode) {
+        setCaseBundleMode(null);
+        setCaseModeNotice("Selected case was removed from library. Exited case mode.");
+      }
+      setCaseNotesDraft("");
+      return;
+    }
+    setCaseNotesDraft(matching.notes);
+  }, [activeCaseLibraryId, caseBundleMode, caseLibraryEntries]);
 
   useEffect(() => {
     if (runSessions.length === 0) {
@@ -2532,14 +2630,17 @@ export default function Home() {
     setFriendlyMessage("Exported share-safe run JSON.");
   }, [downloadTextPayload, selectedRunHistoryId, selectedRunShareSafeExport]);
 
-  const exportCaseBundleFile = useCallback((): void => {
+  const buildVisibleCaseBundle = useCallback((): CaseBundle | null => {
     if (activeRunHistoryRows.length === 0) {
-      setFriendlyMessage("No visible runs available for case bundle export.");
-      return;
+      return null;
     }
     const createdAt = new Date().toISOString();
     const comparePairs =
-      runHistoryCompareSelection.enabled && runHistoryCompareSelection.baseRunId && runHistoryCompareSelection.targetRunId
+      runHistoryCompareSelection.enabled &&
+      runHistoryCompareSelection.baseRunId &&
+      runHistoryCompareSelection.targetRunId &&
+      runHistoryVisibleIds.includes(runHistoryCompareSelection.baseRunId) &&
+      runHistoryVisibleIds.includes(runHistoryCompareSelection.targetRunId)
         ? [
             {
               baseRunId: runHistoryCompareSelection.baseRunId,
@@ -2547,17 +2648,53 @@ export default function Home() {
             },
           ]
         : [];
-    const bundle = buildCaseBundle({
+    return buildCaseBundle({
       createdAt,
       guiBuildId: GUI_BUILD_ID,
       runs: activeRunHistoryRows.map((entry) => entry.shareSafeExport),
       comparePairs,
     });
-    const fileStamp = createdAt.replace(/[:]/g, "-");
+  }, [activeRunHistoryRows, runHistoryCompareSelection, runHistoryVisibleIds]);
+
+  const exportCaseBundleFile = useCallback((): void => {
+    const bundle = buildVisibleCaseBundle();
+    if (!bundle) {
+      setFriendlyMessage("No visible runs available for case bundle export.");
+      return;
+    }
+    const fileStamp = bundle.createdAt.replace(/[:]/g, "-");
     downloadTextPayload(`nlx-case-bundle-${fileStamp}.json`, buildCaseBundleJson(bundle));
     setCaseModeNotice("Exported share-safe case bundle.");
     setFriendlyMessage("Case bundle exported (share-safe).");
-  }, [activeRunHistoryRows, downloadTextPayload, runHistoryCompareSelection]);
+  }, [buildVisibleCaseBundle, downloadTextPayload]);
+
+  const saveCurrentCaseToLibrary = useCallback((): void => {
+    const source: CaseLibrarySource = caseBundleMode ? "import" : "export";
+    const candidateBundle = caseBundleMode ?? buildVisibleCaseBundle();
+    if (!candidateBundle) {
+      setFriendlyMessage("No case bundle available to save.");
+      return;
+    }
+    const result = saveCaseLibraryEntry(caseLibraryEntries, {
+      bundle: candidateBundle,
+      source,
+    });
+    if (!result.ok) {
+      setCaseLibraryNotice(result.error);
+      setFriendlyMessage(result.error);
+      return;
+    }
+
+    setCaseLibraryEntries(result.entries);
+    setSelectedCaseLibraryId(result.entry.id);
+    if (caseBundleMode) {
+      setActiveCaseLibraryId(result.entry.id);
+    }
+    setCaseLibraryNotice(`Saved case "${result.entry.name}" (${result.entry.fingerprint}).`);
+    setCaseModeNotice("Case saved locally. Notes remain private by default and are not exported.");
+    setFriendlyMessage(result.updatedExisting ? "Updated existing case library entry." : "Saved case to local library.");
+    setLiveMessage("Case saved to local library.");
+  }, [buildVisibleCaseBundle, caseBundleMode, caseLibraryEntries]);
 
   const openCaseBundleImportPicker = useCallback((): void => {
     caseBundleImportInputRef.current?.click();
@@ -2585,6 +2722,8 @@ export default function Home() {
         return;
       }
       setCaseBundleMode(parsed.bundle);
+      setActiveCaseLibraryId(null);
+      setSelectedCaseLibraryId(null);
       setSelectedRunHistoryId(parsed.bundle.runs[0]?.runId ?? null);
       const firstCompare = parsed.bundle.compares[0];
       if (firstCompare) {
@@ -2596,10 +2735,11 @@ export default function Home() {
       } else {
         setRunHistoryCompareSelection(createRunHistoryCompareSelection());
       }
+      const fingerprint = buildCaseBundleFingerprint(parsed.bundle);
       if (parsed.warnings.length > 0) {
-        setCaseModeNotice(`Imported with warnings: ${parsed.warnings.join(" ")}`);
+        setCaseModeNotice(`Imported with warnings: ${parsed.warnings.join(" ")} Fingerprint ${fingerprint}.`);
       } else {
-        setCaseModeNotice("Case mode active (session-only, read-only).");
+        setCaseModeNotice(`Case mode active (session-only, read-only). Fingerprint ${fingerprint}.`);
       }
       setFriendlyMessage(`Imported case bundle with ${parsed.bundle.runs.length} run(s).`);
       setLiveMessage("Case mode active.");
@@ -2607,8 +2747,103 @@ export default function Home() {
     [],
   );
 
+  const openCaseFromLibrary = useCallback(
+    (caseId: string): void => {
+      const result = openCaseLibraryEntry(caseLibraryEntries, caseId);
+      if (!result.entry) {
+        setFriendlyMessage(result.warning ?? "Case not found in local library.");
+        return;
+      }
+      setCaseBundleMode(result.entry.bundle);
+      setActiveCaseLibraryId(result.entry.id);
+      setSelectedCaseLibraryId(result.entry.id);
+      setSelectedRunHistoryId(result.entry.bundle.runs[0]?.runId ?? null);
+      const firstCompare = result.entry.bundle.compares[0];
+      if (firstCompare) {
+        setRunHistoryCompareSelection({
+          enabled: true,
+          baseRunId: firstCompare.baseRunId,
+          targetRunId: firstCompare.targetRunId,
+        });
+      } else {
+        setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+      }
+      if (result.warning) {
+        setCaseModeNotice(`${result.warning} Opened library case "${result.entry.name}".`);
+      } else {
+        setCaseModeNotice(
+          `Case mode active from library: ${result.entry.name}. Fingerprint ${result.entry.fingerprint}.`,
+        );
+      }
+      setFriendlyMessage(`Opened case library entry "${result.entry.name}".`);
+      setLiveMessage("Case mode active from library.");
+    },
+    [caseLibraryEntries],
+  );
+
+  const requestCaseDelete = useCallback((caseId: string): void => {
+    setConfirmCaseLibraryDeleteId(caseId);
+  }, []);
+
+  const cancelCaseDelete = useCallback((): void => {
+    setConfirmCaseLibraryDeleteId(null);
+  }, []);
+
+  const confirmCaseDelete = useCallback(
+    (caseId: string): void => {
+      setCaseLibraryEntries((previous) => deleteCaseLibraryEntry(previous, caseId));
+      setConfirmCaseLibraryDeleteId(null);
+      if (activeCaseLibraryId === caseId) {
+        setCaseBundleMode(null);
+        setActiveCaseLibraryId(null);
+        setSelectedRunHistoryId(null);
+        setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+        setCaseModeNotice("Deleted active case and exited case mode.");
+      }
+      if (selectedCaseLibraryId === caseId) {
+        setSelectedCaseLibraryId(null);
+      }
+      setFriendlyMessage("Deleted case library entry.");
+      setLiveMessage("Case library entry deleted.");
+    },
+    [activeCaseLibraryId, selectedCaseLibraryId],
+  );
+
+  const saveActiveCaseNotes = useCallback((): void => {
+    if (!activeCaseLibraryId) {
+      setFriendlyMessage("Save this case to the library before adding notes.");
+      return;
+    }
+    const nextEntries = updateCaseLibraryNotes(caseLibraryEntries, activeCaseLibraryId, caseNotesDraft);
+    setCaseLibraryEntries(nextEntries);
+    setCaseModeNotice("Case notes updated locally. Notes are private by default and not included in exports.");
+    setFriendlyMessage("Saved case notes locally.");
+    setLiveMessage("Case notes saved.");
+  }, [activeCaseLibraryId, caseLibraryEntries, caseNotesDraft]);
+
+  const clearStoredCaseLibraryImmediately = useCallback((): void => {
+    if (typeof window !== "undefined") {
+      clearCaseLibraryStorage(window.localStorage);
+    }
+    setCaseLibraryEntries([]);
+    setSelectedCaseLibraryId(null);
+    setActiveCaseLibraryId(null);
+    setConfirmCaseLibraryDeleteId(null);
+    setCaseNotesDraft("");
+    if (caseBundleMode) {
+      setCaseBundleMode(null);
+      setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+      setSelectedRunHistoryId(null);
+    }
+    setCaseLibraryNotice("Stored case library was cleared.");
+    setCaseModeNotice("Exited case mode.");
+    setFriendlyMessage("Cleared stored case library.");
+    setLiveMessage("Stored case library cleared.");
+  }, [caseBundleMode]);
+
   const exitCaseMode = useCallback((): void => {
     setCaseBundleMode(null);
+    setActiveCaseLibraryId(null);
     setRunHistoryCompareSelection(createRunHistoryCompareSelection());
     setSelectedRunHistoryId(null);
     setCaseModeNotice("Exited case mode.");
@@ -4309,6 +4544,15 @@ export default function Home() {
                               <ChevronRight className="w-4 h-4" /> {runHistoryCompareSelection.enabled ? "Exit Compare" : "Compare"}
                             </button>
                             <button
+                              className="btn-muted"
+                              type="button"
+                              onClick={saveCurrentCaseToLibrary}
+                              disabled={!caseBundleMode && activeRunHistoryRows.length === 0}
+                              aria-label="Save current case to local library"
+                            >
+                              <FileJson2 className="w-4 h-4" /> Save Current Case
+                            </button>
+                            <button
                               className="btn-theme"
                               type="button"
                               onClick={exportCaseBundleFile}
@@ -4366,7 +4610,13 @@ export default function Home() {
                             )}
                           </div>
                         </div>
-                        {caseBundleMode && <p className="meta-muted">Case mode is active. Imported runs are read-only and session-only.</p>}
+                        {caseBundleMode && (
+                          <p className="meta-muted">
+                            Case mode is active. Imported runs are read-only and session-only. Fingerprint:{" "}
+                            {caseModeFingerprint ?? "n/a"}
+                            {activeCaseLibraryEntry ? ` | Library case: ${activeCaseLibraryEntry.name}` : ""}
+                          </p>
+                        )}
                         {!runHistoryCanCompareEntries && (
                           <p className="meta-muted">Compare mode needs at least two visible runs.</p>
                         )}
@@ -4412,6 +4662,149 @@ export default function Home() {
                             </div>
                           </div>
                         )}
+                        {caseLibraryNotice && (
+                          <div className="empty-state-card" aria-live="polite" aria-label="Case library notice">
+                            <p className="meta-muted">{caseLibraryNotice}</p>
+                            <div className="sessions-header-actions">
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={clearStoredCaseLibraryImmediately}
+                                disabled={caseLibraryEntries.length === 0}
+                                aria-label="Clear stored case library"
+                              >
+                                <Trash2 className="w-4 h-4" /> Clear Stored Cases
+                              </button>
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={() => setCaseLibraryNotice(null)}
+                                aria-label="Dismiss case library notice"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <section className="empty-state-card" aria-label="Case library">
+                          <div className="sessions-header">
+                            <h3>Case Library</h3>
+                            <div className="sessions-header-actions">
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={saveCurrentCaseToLibrary}
+                                disabled={!caseBundleMode && activeRunHistoryRows.length === 0}
+                                aria-label="Save current case to local case library"
+                              >
+                                <FileJson2 className="w-4 h-4" /> Save Current Case
+                              </button>
+                            </div>
+                          </div>
+                          <p className="meta-muted">
+                            Saved locally only. Stores share-safe case bundles plus private notes metadata. Notes are excluded
+                            from default exports.
+                          </p>
+                          <label className="search-control" aria-label="Search case library">
+                            <Search className="w-4 h-4" />
+                            <input
+                              type="search"
+                              placeholder="Search case name or saved date"
+                              value={caseLibraryQuery}
+                              onChange={(event) => setCaseLibraryQuery(event.target.value)}
+                              aria-label="Search case library text"
+                            />
+                          </label>
+                          <p className="meta-muted" aria-live="polite">
+                            Showing {filteredCaseLibraryEntries.length} of {caseLibraryEntries.length} saved cases.
+                          </p>
+                          {caseLibraryEntries.length === 0 ? (
+                            <p className="meta-muted">No saved cases yet. Save a case from Case Mode or from visible run history.</p>
+                          ) : filteredCaseLibraryEntries.length === 0 ? (
+                            <div className="empty-state-card">
+                              <p className="meta-muted">No saved cases match your search.</p>
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={() => setCaseLibraryQuery("")}
+                                aria-label="Reset case library search"
+                              >
+                                Reset Search
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="sessions-list" role="list" aria-label="Saved case library list">
+                              {filteredCaseLibraryEntries.map((entry) => {
+                                const isSelected = selectedCaseLibraryEntry?.id === entry.id;
+                                const isDeleteConfirming = confirmCaseLibraryDeleteId === entry.id;
+                                return (
+                                  <div
+                                    key={entry.id}
+                                    className={`session-row ${isSelected ? "session-row-active" : ""}`}
+                                    role="listitem"
+                                  >
+                                    <button
+                                      type="button"
+                                      className="session-row-button"
+                                      onClick={() => setSelectedCaseLibraryId(entry.id)}
+                                      aria-label={`Select saved case ${entry.name}`}
+                                      aria-pressed={isSelected}
+                                    >
+                                      <div className="session-row-heading">
+                                        <span className="status-pill status-skip">{entry.source.toUpperCase()}</span>
+                                        <strong>{entry.name}</strong>
+                                      </div>
+                                      <div className="session-row-meta">
+                                        <span>{formatTimestamp(entry.savedAt)}</span>
+                                        <span>{entry.bundle.runs.length} runs</span>
+                                        <span>{entry.fingerprint}</span>
+                                      </div>
+                                    </button>
+                                    <div className="sessions-export-center">
+                                      <button
+                                        className="btn-theme"
+                                        type="button"
+                                        onClick={() => openCaseFromLibrary(entry.id)}
+                                        aria-label={`Open saved case ${entry.name} in case mode`}
+                                      >
+                                        <ListChecks className="w-4 h-4" /> Open
+                                      </button>
+                                      {!isDeleteConfirming ? (
+                                        <button
+                                          className="btn-muted"
+                                          type="button"
+                                          onClick={() => requestCaseDelete(entry.id)}
+                                          aria-label={`Delete saved case ${entry.name}`}
+                                        >
+                                          <Trash2 className="w-4 h-4" /> Delete
+                                        </button>
+                                      ) : (
+                                        <>
+                                          <button
+                                            className="btn-theme"
+                                            type="button"
+                                            onClick={() => confirmCaseDelete(entry.id)}
+                                            aria-label={`Confirm delete for ${entry.name}`}
+                                          >
+                                            Confirm Delete
+                                          </button>
+                                          <button
+                                            className="btn-muted"
+                                            type="button"
+                                            onClick={cancelCaseDelete}
+                                            aria-label="Cancel saved case delete"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </section>
                         <div className="output-controls">
                           <label className="search-control" aria-label="Search run history">
                             <Search className="w-4 h-4" />
@@ -4700,6 +5093,57 @@ export default function Home() {
                                   </div>
                                 )}
                               </>
+                            )}
+                          </section>
+                        )}
+
+                        {caseBundleMode && (
+                          <section className="empty-state-card" aria-label="Case notes">
+                            <div className="sessions-header">
+                              <h3>Case Notes</h3>
+                              <div className="sessions-header-actions">
+                                <button
+                                  className="btn-theme"
+                                  type="button"
+                                  onClick={saveActiveCaseNotes}
+                                  disabled={!activeCaseLibraryId}
+                                  aria-label="Save private case notes"
+                                >
+                                  <CheckCircle2 className="w-4 h-4" /> Save Notes
+                                </button>
+                              </div>
+                            </div>
+                            {activeCaseLibraryEntry ? (
+                              <>
+                                <p className="meta-muted">
+                                  Private notes for {activeCaseLibraryEntry.name}. Updated{" "}
+                                  {activeCaseLibraryEntry.notesUpdatedAt
+                                    ? formatTimestamp(activeCaseLibraryEntry.notesUpdatedAt)
+                                    : "never"}
+                                  . Notes are not included in default case bundle exports.
+                                </p>
+                                <textarea
+                                  value={caseNotesDraft}
+                                  onChange={(event) => setCaseNotesDraft(event.target.value)}
+                                  rows={6}
+                                  placeholder="Add private operator notes for this saved case."
+                                  aria-label="Private case notes"
+                                />
+                              </>
+                            ) : (
+                              <div className="empty-state-card">
+                                <p className="meta-muted">
+                                  Save this case to the local Case Library before adding private notes.
+                                </p>
+                                <button
+                                  className="btn-muted"
+                                  type="button"
+                                  onClick={saveCurrentCaseToLibrary}
+                                  aria-label="Save current case before adding notes"
+                                >
+                                  <FileJson2 className="w-4 h-4" /> Save Case First
+                                </button>
+                              </div>
                             )}
                           </section>
                         )}
