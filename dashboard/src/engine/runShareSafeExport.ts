@@ -223,6 +223,10 @@ function deepSort(value: unknown): unknown {
   return value;
 }
 
+function sortPayload(value: ShareSafeRunExport): ShareSafeRunExport {
+  return deepSort(value) as ShareSafeRunExport;
+}
+
 export function buildShareSafeRunExport(entry: RunHistoryEntry): ShareSafeRunExport | null {
   const model = buildRunDetailsModel(entry);
   if (!model) {
@@ -254,10 +258,29 @@ export function buildShareSafeRunExport(entry: RunHistoryEntry): ShareSafeRunExp
   };
 }
 
+export function buildRunDetailsModelFromShareSafeExport(value: ShareSafeRunExport): RunDetailsModel {
+  return {
+    runId: value.runId,
+    bundleId: value.bundleId,
+    bundleLabel: `${value.commandId} (${value.runId.slice(0, 8)})`,
+    commandId: value.commandId,
+    reasonCode: value.reasonCode,
+    timestamp: value.timestamp,
+    status: value.status,
+    inputText: normalizeText(value.input.text),
+    outputText: normalizeText(value.output.text),
+    errorText: normalizeText(value.error?.text ?? ""),
+  };
+}
+
+export function buildShareSafeRunExportJsonFromPayload(value: ShareSafeRunExport): string {
+  return JSON.stringify(sortPayload(value), null, 2);
+}
+
 export function buildShareSafeRunExportJson(entry: RunHistoryEntry): string | null {
   const payload = buildShareSafeRunExport(entry);
   if (!payload) {
     return null;
   }
-  return JSON.stringify(deepSort(payload), null, 2);
+  return buildShareSafeRunExportJsonFromPayload(payload);
 }
