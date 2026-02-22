@@ -10,6 +10,8 @@ import {
   openCaseLibraryEntry,
   saveCaseLibraryEntry,
   storeCaseLibrary,
+  summarizeCaseLibraryIntegrity,
+  toShortFingerprint,
   updateCaseLibraryNotes,
   type CaseLibraryStorageLike,
 } from "../caseLibraryStore";
@@ -182,6 +184,11 @@ describe("caseLibraryStore", () => {
     const reopened = openCaseLibraryEntry(tampered, saved.entry.id);
     expect(reopened.entry?.id).toBe(saved.entry.id);
     expect(reopened.warning).toContain("fingerprint mismatch");
+
+    const summaries = summarizeCaseLibraryIntegrity(tampered);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.mismatch).toBe(true);
+    expect(summaries[0]?.shortFingerprint).toBe(toShortFingerprint("fingerprint-fnv1a32-deadbeef"));
   });
 
   it("migrates legacy schema v0 entries forward safely", () => {

@@ -144,7 +144,6 @@ import {
   buildRunDetailsModel,
   buildRunDetailsModelFromShareSafeExport,
   buildShareSafeRunExport,
-  buildShareSafeRunExportJsonFromPayload,
   RUN_DETAILS_ERROR_PREVIEW_LIMIT,
   RUN_DETAILS_PREVIEW_LIMIT,
   truncateRunDetails,
@@ -153,7 +152,6 @@ import {
 } from "@/engine/runShareSafeExport";
 import {
   buildRunHistoryShareSafeDiff,
-  buildRunHistoryShareSafeDiffCopyText,
   buildRunHistoryShareSafeDiffFromExports,
   canCompareRunHistory,
   createRunHistoryCompareSelection,
@@ -165,7 +163,6 @@ import {
 } from "@/engine/runHistoryCompare";
 import {
   buildCaseBundle,
-  buildCaseBundleJson,
   filterCaseBundleRunListItems,
   parseCaseBundleJson,
   toCaseBundleRunListItems,
@@ -180,12 +177,25 @@ import {
   loadCaseLibraryState,
   openCaseLibraryEntry,
   saveCaseLibraryEntry,
+  summarizeCaseLibraryIntegrity,
   storeCaseLibrary,
+  toShortFingerprint,
   updateCaseLibraryNotes,
   type CaseLibraryEntry,
   type CaseLibraryLoadStatus,
   type CaseLibrarySource,
 } from "@/engine/caseLibraryStore";
+import {
+  buildCaseProvenanceModel,
+  type CaseProvenanceSource,
+} from "@/engine/caseProvenance";
+import {
+  buildExportReviewOutput,
+  createCaseBundleExportReviewPlan,
+  createDiffExportReviewPlan,
+  createRunExportReviewPlan,
+  type ExportReviewPlan,
+} from "@/engine/exportReview";
 import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
@@ -410,6 +420,9 @@ export default function Home() {
   const [confirmCaseLibraryDeleteId, setConfirmCaseLibraryDeleteId] = useState<string | null>(null);
   const [caseNotesDraft, setCaseNotesDraft] = useState("");
   const [caseModeNotice, setCaseModeNotice] = useState<string | null>(null);
+  const [caseModeSource, setCaseModeSource] = useState<CaseProvenanceSource>("unknown");
+  const [caseImportedAtIso, setCaseImportedAtIso] = useState<string | null>(null);
+  const [exportReviewPlan, setExportReviewPlan] = useState<ExportReviewPlan | null>(null);
   const [runDetailsExpanded, setRunDetailsExpanded] = useState<Record<RunDetailsSection, boolean>>({
     input: false,
     output: false,
@@ -492,6 +505,9 @@ export default function Home() {
   const bundleExportCloseRef = useRef<HTMLButtonElement | null>(null);
   const bundleExportDialogRef = useRef<HTMLDivElement | null>(null);
   const bundleExportOpenerRef = useRef<HTMLElement | null>(null);
+  const exportReviewCloseRef = useRef<HTMLButtonElement | null>(null);
+  const exportReviewDialogRef = useRef<HTMLDivElement | null>(null);
+  const exportReviewOpenerRef = useRef<HTMLElement | null>(null);
   const explorerPrimaryInputRef = useRef<HTMLInputElement | null>(null);
   const explorerSecondaryInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -882,6 +898,20 @@ export default function Home() {
     bundleExportOpenerRef.current?.focus();
   }, []);
 
+  const openExportReview = useCallback((plan: ExportReviewPlan): void => {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      exportReviewOpenerRef.current = document.activeElement;
+    }
+    setExportReviewPlan(plan);
+    setLiveMessage("Export review opened.");
+  }, []);
+
+  const closeExportReview = useCallback((): void => {
+    setExportReviewPlan(null);
+    setLiveMessage("Export review closed.");
+    exportReviewOpenerRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!shortcutsOpen) {
       return;
@@ -904,11 +934,26 @@ export default function Home() {
   }, [bundleExportOpen]);
 
   useEffect(() => {
+    if (!exportReviewPlan) {
+      return;
+    }
+    exportReviewCloseRef.current?.focus();
+  }, [exportReviewPlan]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (bundleExportOpen) {
         if (event.key === "Escape") {
           event.preventDefault();
           closeBundleExport();
+        }
+        return;
+      }
+
+      if (exportReviewPlan) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeExportReview();
         }
         return;
       }
@@ -974,9 +1019,11 @@ export default function Home() {
     activeView,
     bundleExportOpen,
     closeBundleExport,
+    closeExportReview,
     closeConsoleHelp,
     closeKeyboardShortcuts,
     consoleHelpOpen,
+    exportReviewPlan,
     openKeyboardShortcuts,
     setViewByShortcut,
     shortcutState,
@@ -1767,6 +1814,48 @@ export default function Home() {
     [closeBundleExport],
   );
 
+  const handleExportReviewDialogKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeExportReview();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const container = exportReviewDialogRef.current;
+      if (!container) {
+        return;
+      }
+
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+
+      if (focusables.length === 0) {
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    },
+    [closeExportReview],
+  );
+
   const motionTransition = useMemo(
     () => (effectiveReducedMotion ? { duration: 0 } : { duration: 0.22 }),
     [effectiveReducedMotion],
@@ -1945,6 +2034,37 @@ export default function Home() {
     () => (caseBundleMode ? buildCaseBundleFingerprint(caseBundleMode) : null),
     [caseBundleMode],
   );
+
+  const caseLibraryIntegrity = useMemo(
+    () => summarizeCaseLibraryIntegrity(caseLibraryEntries),
+    [caseLibraryEntries],
+  );
+
+  const caseLibraryIntegrityById = useMemo(
+    () => new Map(caseLibraryIntegrity.map((entry) => [entry.caseId, entry])),
+    [caseLibraryIntegrity],
+  );
+
+  const caseProvenance = useMemo(() => {
+    if (!caseBundleMode || !caseModeFingerprint) {
+      return null;
+    }
+    return buildCaseProvenanceModel({
+      bundle: caseBundleMode,
+      caseLabel: activeCaseLibraryEntry?.name ?? "Unsaved case",
+      fingerprint: caseModeFingerprint,
+      source: caseModeSource,
+      importedAt: caseImportedAtIso,
+      savedAt: activeCaseLibraryEntry?.savedAt ?? null,
+      includeLibraryVersion: Boolean(activeCaseLibraryEntry),
+    });
+  }, [
+    activeCaseLibraryEntry,
+    caseBundleMode,
+    caseImportedAtIso,
+    caseModeFingerprint,
+    caseModeSource,
+  ]);
 
   const runHistoryVisibleIds = useMemo(
     () => activeRunHistoryRows.map((entry) => entry.id),
@@ -2498,19 +2618,13 @@ export default function Home() {
     setLiveMessage("Compare roles swapped.");
   }, []);
 
-  const copyRunHistoryCompareDiff = useCallback(async (): Promise<void> => {
+  const requestRunHistoryCompareDiffExport = useCallback((): void => {
     if (!runHistoryCompareDiff) {
       setFriendlyMessage("Select both base and target runs to copy a diff.");
       return;
     }
-    const payload = buildRunHistoryShareSafeDiffCopyText(runHistoryCompareDiff);
-    try {
-      await navigator.clipboard.writeText(payload);
-      setFriendlyMessage("Copied share-safe run diff.");
-    } catch {
-      setFriendlyMessage("Clipboard write failed in this browser context.");
-    }
-  }, [runHistoryCompareDiff]);
+    openExportReview(createDiffExportReviewPlan(runHistoryCompareDiff));
+  }, [openExportReview, runHistoryCompareDiff]);
 
   const clearStoredRunHistoryImmediately = useCallback((): void => {
     if (typeof window !== "undefined") {
@@ -2619,16 +2733,14 @@ export default function Home() {
     window.URL.revokeObjectURL(url);
   }, []);
 
-  const exportSelectedRunShareSafe = useCallback((): void => {
+  const requestRunExportReview = useCallback((): void => {
     if (!selectedRunShareSafeExport || !selectedRunHistoryId) {
       setFriendlyMessage("Select a run history entry first.");
       return;
     }
-
-    const json = buildShareSafeRunExportJsonFromPayload(selectedRunShareSafeExport);
-    downloadTextPayload(`nlx-run-share-safe-${selectedRunHistoryId}.json`, json);
-    setFriendlyMessage("Exported share-safe run JSON.");
-  }, [downloadTextPayload, selectedRunHistoryId, selectedRunShareSafeExport]);
+    const fileName = `nlx-run-share-safe-${selectedRunHistoryId}.json`;
+    openExportReview(createRunExportReviewPlan(selectedRunShareSafeExport, fileName));
+  }, [openExportReview, selectedRunHistoryId, selectedRunShareSafeExport]);
 
   const buildVisibleCaseBundle = useCallback((): CaseBundle | null => {
     if (activeRunHistoryRows.length === 0) {
@@ -2656,20 +2768,48 @@ export default function Home() {
     });
   }, [activeRunHistoryRows, runHistoryCompareSelection, runHistoryVisibleIds]);
 
-  const exportCaseBundleFile = useCallback((): void => {
+  const requestCaseBundleExportReview = useCallback((): void => {
     const bundle = buildVisibleCaseBundle();
     if (!bundle) {
       setFriendlyMessage("No visible runs available for case bundle export.");
       return;
     }
     const fileStamp = bundle.createdAt.replace(/[:]/g, "-");
-    downloadTextPayload(`nlx-case-bundle-${fileStamp}.json`, buildCaseBundleJson(bundle));
-    setCaseModeNotice("Exported share-safe case bundle.");
-    setFriendlyMessage("Case bundle exported (share-safe).");
-  }, [buildVisibleCaseBundle, downloadTextPayload]);
+    openExportReview(createCaseBundleExportReviewPlan(bundle, `nlx-case-bundle-${fileStamp}.json`));
+  }, [buildVisibleCaseBundle, openExportReview]);
+
+  const confirmExportReview = useCallback(async (): Promise<void> => {
+    if (!exportReviewPlan) {
+      return;
+    }
+    const payload = buildExportReviewOutput(exportReviewPlan);
+    if (exportReviewPlan.kind === "diff") {
+      try {
+        await navigator.clipboard.writeText(payload);
+        setFriendlyMessage("Copied share-safe diff.");
+      } catch {
+        setFriendlyMessage("Clipboard write failed in this browser context.");
+        return;
+      }
+    } else {
+      const fileName = exportReviewPlan.filename ?? "nlx-share-safe-export.txt";
+      downloadTextPayload(fileName, payload);
+      if (exportReviewPlan.kind === "run") {
+        setFriendlyMessage("Exported share-safe run JSON.");
+      } else {
+        setCaseModeNotice("Exported share-safe case bundle.");
+        setFriendlyMessage("Case bundle exported (share-safe).");
+      }
+    }
+    closeExportReview();
+  }, [closeExportReview, downloadTextPayload, exportReviewPlan]);
 
   const saveCurrentCaseToLibrary = useCallback((): void => {
-    const source: CaseLibrarySource = caseBundleMode ? "import" : "export";
+    const source: CaseLibrarySource = activeCaseLibraryEntry
+      ? activeCaseLibraryEntry.source
+      : caseModeSource === "generated"
+        ? "export"
+        : "import";
     const candidateBundle = caseBundleMode ?? buildVisibleCaseBundle();
     if (!candidateBundle) {
       setFriendlyMessage("No case bundle available to save.");
@@ -2689,12 +2829,16 @@ export default function Home() {
     setSelectedCaseLibraryId(result.entry.id);
     if (caseBundleMode) {
       setActiveCaseLibraryId(result.entry.id);
+      setCaseModeSource(result.entry.source === "import" ? "library-import" : "library-export");
+      if (result.entry.source === "import" && !caseImportedAtIso) {
+        setCaseImportedAtIso(result.entry.savedAt);
+      }
     }
     setCaseLibraryNotice(`Saved case "${result.entry.name}" (${result.entry.fingerprint}).`);
     setCaseModeNotice("Case saved locally. Notes remain private by default and are not exported.");
     setFriendlyMessage(result.updatedExisting ? "Updated existing case library entry." : "Saved case to local library.");
     setLiveMessage("Case saved to local library.");
-  }, [buildVisibleCaseBundle, caseBundleMode, caseLibraryEntries]);
+  }, [activeCaseLibraryEntry, buildVisibleCaseBundle, caseBundleMode, caseImportedAtIso, caseLibraryEntries, caseModeSource]);
 
   const openCaseBundleImportPicker = useCallback((): void => {
     caseBundleImportInputRef.current?.click();
@@ -2721,7 +2865,10 @@ export default function Home() {
         setFriendlyMessage("Case bundle import failed.");
         return;
       }
+      const importedAt = new Date().toISOString();
       setCaseBundleMode(parsed.bundle);
+      setCaseModeSource("imported");
+      setCaseImportedAtIso(importedAt);
       setActiveCaseLibraryId(null);
       setSelectedCaseLibraryId(null);
       setSelectedRunHistoryId(parsed.bundle.runs[0]?.runId ?? null);
@@ -2737,9 +2884,15 @@ export default function Home() {
       }
       const fingerprint = buildCaseBundleFingerprint(parsed.bundle);
       if (parsed.warnings.length > 0) {
-        setCaseModeNotice(`Imported with warnings: ${parsed.warnings.join(" ")} Fingerprint ${fingerprint}.`);
+        setCaseModeNotice(
+          `Imported with warnings: ${parsed.warnings.join(" ")} Fingerprint ${fingerprint}. Imported ${formatTimestamp(
+            importedAt,
+          )}.`,
+        );
       } else {
-        setCaseModeNotice(`Case mode active (session-only, read-only). Fingerprint ${fingerprint}.`);
+        setCaseModeNotice(
+          `Case mode active (session-only, read-only). Fingerprint ${fingerprint}. Imported ${formatTimestamp(importedAt)}.`,
+        );
       }
       setFriendlyMessage(`Imported case bundle with ${parsed.bundle.runs.length} run(s).`);
       setLiveMessage("Case mode active.");
@@ -2757,6 +2910,8 @@ export default function Home() {
       setCaseBundleMode(result.entry.bundle);
       setActiveCaseLibraryId(result.entry.id);
       setSelectedCaseLibraryId(result.entry.id);
+      setCaseModeSource(result.entry.source === "import" ? "library-import" : "library-export");
+      setCaseImportedAtIso(result.entry.source === "import" ? result.entry.savedAt : null);
       setSelectedRunHistoryId(result.entry.bundle.runs[0]?.runId ?? null);
       const firstCompare = result.entry.bundle.compares[0];
       if (firstCompare) {
@@ -2796,6 +2951,8 @@ export default function Home() {
       if (activeCaseLibraryId === caseId) {
         setCaseBundleMode(null);
         setActiveCaseLibraryId(null);
+        setCaseModeSource("unknown");
+        setCaseImportedAtIso(null);
         setSelectedRunHistoryId(null);
         setRunHistoryCompareSelection(createRunHistoryCompareSelection());
         setCaseModeNotice("Deleted active case and exited case mode.");
@@ -2821,6 +2978,36 @@ export default function Home() {
     setLiveMessage("Case notes saved.");
   }, [activeCaseLibraryId, caseLibraryEntries, caseNotesDraft]);
 
+  const copyCaseProvenance = useCallback(async (): Promise<void> => {
+    if (!caseProvenance) {
+      setFriendlyMessage("No case provenance available.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(caseProvenance.copyText);
+      setFriendlyMessage("Copied deterministic case provenance.");
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, [caseProvenance]);
+
+  const copyCaseLibraryFingerprint = useCallback(
+    async (caseId: string): Promise<void> => {
+      const summary = caseLibraryIntegrityById.get(caseId);
+      if (!summary) {
+        setFriendlyMessage("Fingerprint not available for this case.");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(summary.storedFingerprint);
+        setFriendlyMessage("Copied case fingerprint.");
+      } catch {
+        setFriendlyMessage("Clipboard write failed in this browser context.");
+      }
+    },
+    [caseLibraryIntegrityById],
+  );
+
   const clearStoredCaseLibraryImmediately = useCallback((): void => {
     if (typeof window !== "undefined") {
       clearCaseLibraryStorage(window.localStorage);
@@ -2832,6 +3019,8 @@ export default function Home() {
     setCaseNotesDraft("");
     if (caseBundleMode) {
       setCaseBundleMode(null);
+      setCaseModeSource("unknown");
+      setCaseImportedAtIso(null);
       setRunHistoryCompareSelection(createRunHistoryCompareSelection());
       setSelectedRunHistoryId(null);
     }
@@ -2844,6 +3033,8 @@ export default function Home() {
   const exitCaseMode = useCallback((): void => {
     setCaseBundleMode(null);
     setActiveCaseLibraryId(null);
+    setCaseModeSource("unknown");
+    setCaseImportedAtIso(null);
     setRunHistoryCompareSelection(createRunHistoryCompareSelection());
     setSelectedRunHistoryId(null);
     setCaseModeNotice("Exited case mode.");
@@ -3207,7 +3398,7 @@ export default function Home() {
 
   useEffect(() => {
     const onTasksKeyDown = (event: KeyboardEvent): void => {
-      if (activeView !== "tasks" || shortcutsOpen) {
+      if (activeView !== "tasks" || shortcutsOpen || exportReviewPlan) {
         return;
       }
 
@@ -3266,6 +3457,7 @@ export default function Home() {
   }, [
     activeView,
     clearTaskSelection,
+    exportReviewPlan,
     focusTaskSearch,
     handleRunSelectedFromKeyboard,
     selectedTaskName,
@@ -3275,7 +3467,7 @@ export default function Home() {
 
   useEffect(() => {
     const onSessionKeyDown = (event: KeyboardEvent): void => {
-      if (activeView !== "output" || shortcutsOpen) {
+      if (activeView !== "output" || shortcutsOpen || exportReviewPlan) {
         return;
       }
 
@@ -3331,11 +3523,11 @@ export default function Home() {
 
     window.addEventListener("keydown", onSessionKeyDown);
     return () => window.removeEventListener("keydown", onSessionKeyDown);
-  }, [activeView, filteredSessions, openSession, selectedSessionId, sessionsPanelOpen, shortcutsOpen]);
+  }, [activeView, exportReviewPlan, filteredSessions, openSession, selectedSessionId, sessionsPanelOpen, shortcutsOpen]);
 
   useEffect(() => {
     const onRunHistoryKeyDown = (event: KeyboardEvent): void => {
-      if (activeView !== "output" || shortcutsOpen || bundleExportOpen || consoleHelpOpen) {
+      if (activeView !== "output" || shortcutsOpen || bundleExportOpen || consoleHelpOpen || exportReviewPlan) {
         return;
       }
       if (!runHistoryPanelRef.current) {
@@ -3422,6 +3614,7 @@ export default function Home() {
     bundleExportOpen,
     clearRunHistoryCompare,
     consoleHelpOpen,
+    exportReviewPlan,
     activeRunHistoryRows,
     assignRunHistoryCompareRole,
     runHistoryCompareSelection.enabled,
@@ -4555,7 +4748,7 @@ export default function Home() {
                             <button
                               className="btn-theme"
                               type="button"
-                              onClick={exportCaseBundleFile}
+                              onClick={requestCaseBundleExportReview}
                               disabled={activeRunHistoryRows.length === 0}
                               aria-label="Export case bundle from visible runs"
                             >
@@ -4613,9 +4806,64 @@ export default function Home() {
                         {caseBundleMode && (
                           <p className="meta-muted">
                             Case mode is active. Imported runs are read-only and session-only. Fingerprint:{" "}
-                            {caseModeFingerprint ?? "n/a"}
+                            {caseModeFingerprint ? toShortFingerprint(caseModeFingerprint) : "n/a"}
                             {activeCaseLibraryEntry ? ` | Library case: ${activeCaseLibraryEntry.name}` : ""}
                           </p>
+                        )}
+                        {caseProvenance && (
+                          <section className="empty-state-card" aria-label="Case provenance">
+                            <div className="sessions-header">
+                              <h3>Provenance</h3>
+                              <div className="sessions-header-actions">
+                                <button
+                                  className="btn-muted"
+                                  type="button"
+                                  onClick={() => void copyCaseProvenance()}
+                                  aria-label="Copy case provenance text"
+                                >
+                                  <Copy className="w-4 h-4" /> Copy Provenance
+                                </button>
+                              </div>
+                            </div>
+                            <dl className="inspector-grid">
+                              <div>
+                                <dt>Case</dt>
+                                <dd>{caseProvenance.caseLabel}</dd>
+                              </div>
+                              <div>
+                                <dt>Source</dt>
+                                <dd>{caseProvenance.sourceLabel}</dd>
+                              </div>
+                              <div>
+                                <dt>Fingerprint</dt>
+                                <dd>{caseProvenance.fingerprint}</dd>
+                              </div>
+                              <div>
+                                <dt>Bundle schema</dt>
+                                <dd>{caseProvenance.bundleSchemaVersion}</dd>
+                              </div>
+                              <div>
+                                <dt>Library schema</dt>
+                                <dd>{caseProvenance.librarySchemaVersion ?? "n/a"}</dd>
+                              </div>
+                              <div>
+                                <dt>Created</dt>
+                                <dd>{formatTimestamp(caseProvenance.createdAt)}</dd>
+                              </div>
+                              <div>
+                                <dt>Imported</dt>
+                                <dd>{caseProvenance.importedAt ? formatTimestamp(caseProvenance.importedAt) : "n/a"}</dd>
+                              </div>
+                              <div>
+                                <dt>Saved</dt>
+                                <dd>{caseProvenance.savedAt ? formatTimestamp(caseProvenance.savedAt) : "n/a"}</dd>
+                              </div>
+                              <div>
+                                <dt>Run count</dt>
+                                <dd>{caseProvenance.runCount}</dd>
+                              </div>
+                            </dl>
+                          </section>
                         )}
                         {!runHistoryCanCompareEntries && (
                           <p className="meta-muted">Compare mode needs at least two visible runs.</p>
@@ -4737,6 +4985,9 @@ export default function Home() {
                               {filteredCaseLibraryEntries.map((entry) => {
                                 const isSelected = selectedCaseLibraryEntry?.id === entry.id;
                                 const isDeleteConfirming = confirmCaseLibraryDeleteId === entry.id;
+                                const integrity = caseLibraryIntegrityById.get(entry.id);
+                                const shortFingerprint = integrity?.shortFingerprint ?? toShortFingerprint(entry.fingerprint);
+                                const hasMismatch = integrity?.mismatch ?? false;
                                 return (
                                   <div
                                     key={entry.id}
@@ -4752,12 +5003,13 @@ export default function Home() {
                                     >
                                       <div className="session-row-heading">
                                         <span className="status-pill status-skip">{entry.source.toUpperCase()}</span>
+                                        {hasMismatch && <span className="status-pill status-fail">FINGERPRINT MISMATCH</span>}
                                         <strong>{entry.name}</strong>
                                       </div>
                                       <div className="session-row-meta">
                                         <span>{formatTimestamp(entry.savedAt)}</span>
-                                        <span>{entry.bundle.runs.length} runs</span>
-                                        <span>{entry.fingerprint}</span>
+                                        <span>{integrity?.runCount ?? entry.bundle.runs.length} runs</span>
+                                        <span>{shortFingerprint}</span>
                                       </div>
                                     </button>
                                     <div className="sessions-export-center">
@@ -4768,6 +5020,14 @@ export default function Home() {
                                         aria-label={`Open saved case ${entry.name} in case mode`}
                                       >
                                         <ListChecks className="w-4 h-4" /> Open
+                                      </button>
+                                      <button
+                                        className="btn-muted"
+                                        type="button"
+                                        onClick={() => void copyCaseLibraryFingerprint(entry.id)}
+                                        aria-label={`Copy fingerprint for ${entry.name}`}
+                                      >
+                                        <Copy className="w-4 h-4" /> Copy Fingerprint
                                       </button>
                                       {!isDeleteConfirming ? (
                                         <button
@@ -4987,7 +5247,7 @@ export default function Home() {
                                 <button
                                   className="btn-theme"
                                   type="button"
-                                  onClick={() => void copyRunHistoryCompareDiff()}
+                                  onClick={requestRunHistoryCompareDiffExport}
                                   disabled={!runHistoryCompareDiff}
                                   aria-label="Copy share-safe run diff"
                                 >
@@ -5158,7 +5418,7 @@ export default function Home() {
                                 <button
                                   className="btn-theme"
                                   type="button"
-                                  onClick={exportSelectedRunShareSafe}
+                                  onClick={requestRunExportReview}
                                   aria-label="Export selected run share-safe json"
                                 >
                                   <Download className="w-4 h-4" /> Export Run
@@ -5927,6 +6187,82 @@ export default function Home() {
                     ))}
                   </ul>
                 )}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportReviewPlan && (
+        <div className="shortcut-overlay" role="presentation">
+          <div
+            ref={exportReviewDialogRef}
+            className="shortcut-dialog glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-review-title"
+            onKeyDown={handleExportReviewDialogKeyDown}
+          >
+            <header className="shortcut-header">
+              <h2 id="export-review-title" className="section-title">
+                {exportReviewPlan.title}
+              </h2>
+              <button ref={exportReviewCloseRef} className="btn-muted" type="button" onClick={closeExportReview}>
+                <X className="w-4 h-4" /> Close
+              </button>
+            </header>
+
+            <div className="help-body">
+              <section className="help-section">
+                <h3>Included</h3>
+                <ul className="shortcut-list">
+                  {exportReviewPlan.included.map((item) => (
+                    <li key={`included-${item}`}>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <section className="help-section">
+                <h3>Excluded</h3>
+                <ul className="shortcut-list">
+                  {exportReviewPlan.excluded.map((item) => (
+                    <li key={`excluded-${item}`}>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <section className="help-section">
+                <h3>Summary</h3>
+                <p className="meta-muted">Type: {exportReviewPlan.kind}</p>
+                <p className="meta-muted">
+                  Destination: {exportReviewPlan.kind === "diff" ? "Clipboard (text)" : `${exportReviewPlan.filename ?? "export.txt"} (download)`}
+                </p>
+                <ul className="shortcut-list">
+                  {exportReviewPlan.counts.map((count) => (
+                    <li key={`${count.label}-${count.value}`}>
+                      <span>
+                        {count.label}: {count.value}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {exportReviewPlan.empty && (
+                  <p className="meta-muted">
+                    This export is empty or contains only minimal data. Review before continuing.
+                  </p>
+                )}
+                <div className="settings-actions">
+                  <button className="btn-theme" type="button" onClick={() => void confirmExportReview()}>
+                    <CheckCircle2 className="w-4 h-4" /> {exportReviewPlan.actionLabel}
+                  </button>
+                  <button className="btn-muted" type="button" onClick={closeExportReview}>
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                </div>
               </section>
             </div>
           </div>
