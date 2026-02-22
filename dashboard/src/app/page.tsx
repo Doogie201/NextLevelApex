@@ -133,7 +133,18 @@ import {
   buildSessionExportJson,
   buildSessionOperatorReport,
 } from "@/engine/sessionExport";
-import { buildInvestigationBundleJson, type BundlePresetSelection } from "@/engine/bundleExport";
+import {
+  buildInvestigationBundleJson,
+  type BundlePresetSelection,
+  type InvestigationBundle,
+} from "@/engine/bundleExport";
+import {
+  applyInvestigationBundleImport,
+  previewInvestigationBundleImport,
+  validateInvestigationBundleInput,
+  type BundleImportPreview,
+  type BundleImportValidationError,
+} from "@/engine/bundleImport";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
@@ -302,6 +313,10 @@ export default function Home() {
   const [bundlePresetSelection, setBundlePresetSelection] = useState<BundlePresetSelection>("current");
   const [bundleSessionIds, setBundleSessionIds] = useState<string[]>([]);
   const [bundleViewNames, setBundleViewNames] = useState<string[]>([]);
+  const [bundleImportRaw, setBundleImportRaw] = useState("");
+  const [bundleImportErrors, setBundleImportErrors] = useState<BundleImportValidationError[]>([]);
+  const [bundleImportPreview, setBundleImportPreview] = useState<BundleImportPreview | null>(null);
+  const [validatedBundle, setValidatedBundle] = useState<InvestigationBundle | null>(null);
   const [shortcutState, setShortcutState] = useState<ShortcutState>(() => initialShortcutState());
   const [liveMessage, setLiveMessage] = useState("Ready.");
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
@@ -645,12 +660,19 @@ export default function Home() {
     setBundleSessionIds(defaultSessionId ? [defaultSessionId] : []);
     setBundleViewNames(savedViews.map((view) => view.name));
     setBundlePresetSelection(selectedPreset ? "preset" : runCenterModel.config ? "current" : "none");
+    setBundleImportRaw("");
+    setBundleImportErrors([]);
+    setBundleImportPreview(null);
+    setValidatedBundle(null);
     setBundleExportOpen(true);
     setLiveMessage("Bundle export opened.");
   }, [runCenterModel.config, runSessions, savedViews, selectedPreset, selectedSessionId]);
 
   const closeBundleExport = useCallback((): void => {
     setBundleExportOpen(false);
+    setBundleImportErrors([]);
+    setBundleImportPreview(null);
+    setValidatedBundle(null);
     setLiveMessage("Bundle export closed.");
     bundleExportOpenerRef.current?.focus();
   }, []);
@@ -1838,6 +1860,47 @@ export default function Home() {
     selectedBundleViews,
     selectedPreset,
   ]);
+
+  const validateBundleImport = useCallback((): void => {
+    const validation = validateInvestigationBundleInput(bundleImportRaw);
+    if (!validation.ok) {
+      setBundleImportErrors(validation.errors);
+      setBundleImportPreview(null);
+      setValidatedBundle(null);
+      setFriendlyMessage(validation.errors[0]?.message ?? "Bundle validation failed.");
+      return;
+    }
+
+    const preview = previewInvestigationBundleImport(validation.bundle, presets, runSessions);
+    setBundleImportErrors([]);
+    setBundleImportPreview(preview);
+    setValidatedBundle(validation.bundle);
+    setFriendlyMessage(
+      `Bundle validated (${preview.bundleKind}): presets ${preview.presetCandidates}, sessions ${preview.sessionCandidates}, duplicates ${preview.duplicateSessions + preview.duplicatePresets}.`,
+    );
+  }, [bundleImportRaw, presets, runSessions]);
+
+  const importValidatedBundle = useCallback((): void => {
+    if (!validatedBundle) {
+      setFriendlyMessage("Validate a bundle before importing.");
+      return;
+    }
+
+    const applied = applyInvestigationBundleImport({
+      bundle: validatedBundle,
+      existingPresets: presets,
+      existingSessions: runSessions,
+    });
+
+    setPresets(applied.presets);
+    setRunSessions(applied.sessions);
+    setBundleImportPreview(applied.preview);
+    setBundleImportErrors([]);
+    setLiveMessage("Bundle import complete.");
+    setFriendlyMessage(
+      `Imported bundle: presets +${applied.addedPresets} (skipped ${applied.skippedPresets}), sessions +${applied.addedSessions} (skipped ${applied.skippedSessions}).`,
+    );
+  }, [presets, runSessions, validatedBundle]);
 
   const copyConsoleDiagnostics = useCallback(async (): Promise<void> => {
     if (typeof navigator === "undefined") {
@@ -3565,6 +3628,49 @@ export default function Home() {
                     <Download className="w-4 h-4" /> Download Bundle JSON
                   </button>
                 </div>
+              </section>
+
+              <section className="help-section">
+                <h3>Import Bundle</h3>
+                <p className="meta-muted">
+                  Paste a previously exported bundle JSON. Validation is strict and rejects unredacted-looking content.
+                </p>
+                <textarea
+                  className="bundle-import-textarea"
+                  value={bundleImportRaw}
+                  onChange={(event) => {
+                    setBundleImportRaw(event.target.value);
+                    setBundleImportErrors([]);
+                    setBundleImportPreview(null);
+                    setValidatedBundle(null);
+                  }}
+                  placeholder="Paste investigation bundle JSON here..."
+                  aria-label="Bundle import JSON"
+                />
+                <div className="settings-actions">
+                  <button className="btn-muted" type="button" onClick={validateBundleImport}>
+                    <CheckCircle2 className="w-4 h-4" /> Validate
+                  </button>
+                  <button className="btn-theme" type="button" onClick={importValidatedBundle} disabled={!validatedBundle}>
+                    <Download className="w-4 h-4" /> Import
+                  </button>
+                </div>
+                {bundleImportPreview && (
+                  <p className="meta-muted">
+                    kind={bundleImportPreview.bundleKind} presets={bundleImportPreview.presetCandidates} sessions=
+                    {bundleImportPreview.sessionCandidates} views={bundleImportPreview.viewCandidates} duplicates=
+                    {bundleImportPreview.duplicatePresets + bundleImportPreview.duplicateSessions}
+                  </p>
+                )}
+                {bundleImportErrors.length > 0 && (
+                  <ul className="bundle-validation-list">
+                    {bundleImportErrors.map((error) => (
+                      <li key={`${error.code}-${error.path}-${error.message}`}>
+                        <strong>{error.code}</strong> <span>{error.path}</span> {error.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             </div>
           </div>

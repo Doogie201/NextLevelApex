@@ -1118,6 +1118,46 @@ details summary {
   color: #f0f5ff;
 }
 
+.bundle-import-textarea {
+  width: 100%;
+  min-height: 140px;
+  border-radius: 10px;
+  border: 1px solid rgba(149, 158, 201, 0.3);
+  background: rgba(7, 12, 22, 0.86);
+  color: #e4ebff;
+  padding: 10px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  font-family: "IBM Plex Mono", "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  resize: vertical;
+}
+
+.bundle-import-textarea:focus-visible {
+  border-color: rgba(143, 194, 255, 0.7);
+}
+
+.bundle-validation-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bundle-validation-list li {
+  border: 1px solid rgba(255, 210, 117, 0.4);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 210, 117, 0.08);
+  color: rgba(250, 229, 169, 0.95);
+  font-size: 0.78rem;
+}
+
+.bundle-validation-list strong {
+  color: #ffde9e;
+}
+
 .reduce-motion .aurora-background,
 .reduce-motion .aurora-background::after {
   animation: none !important;
