@@ -12,6 +12,14 @@ export const MAX_RUN_HISTORY_ENTRIES = 40;
 const REPLAY_COMMAND_IDS = new Set<RunPresetCommandId>(["diagnose", "dryRunAll", "dryRunTask"]);
 
 export type RunHistorySource = "session" | "import" | "export";
+export type RunHistoryStatusFilter = "all" | "success" | "error";
+export type RunHistorySortOrder = "newest" | "oldest";
+
+export interface RunHistoryFilter {
+  query: string;
+  status: RunHistoryStatusFilter;
+  order: RunHistorySortOrder;
+}
 
 export interface RunHistoryEntry {
   id: string;
@@ -171,23 +179,29 @@ function isEntryShareSafe(entry: RunHistoryEntry): boolean {
   return validation.ok;
 }
 
-function sortEntries(entries: RunHistoryEntry[]): RunHistoryEntry[] {
+function compareEntries(left: RunHistoryEntry, right: RunHistoryEntry, order: RunHistorySortOrder): number {
+  if (left.pinned !== right.pinned) {
+    return left.pinned ? -1 : 1;
+  }
+
+  const leftMs = left.startedAt ? Date.parse(left.startedAt) : Number.NaN;
+  const rightMs = right.startedAt ? Date.parse(right.startedAt) : Number.NaN;
+  const normalizedLeft = Number.isNaN(leftMs) ? 0 : leftMs;
+  const normalizedRight = Number.isNaN(rightMs) ? 0 : rightMs;
+  if (normalizedLeft !== normalizedRight) {
+    return order === "oldest" ? normalizedLeft - normalizedRight : normalizedRight - normalizedLeft;
+  }
+
+  const byBundle = left.bundleId.localeCompare(right.bundleId);
+  if (byBundle !== 0) {
+    return byBundle;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function sortEntries(entries: RunHistoryEntry[], order: RunHistorySortOrder = "newest"): RunHistoryEntry[] {
   return [...entries].sort((left, right) => {
-    if (left.pinned !== right.pinned) {
-      return left.pinned ? -1 : 1;
-    }
-    const leftMs = left.startedAt ? Date.parse(left.startedAt) : Number.NaN;
-    const rightMs = right.startedAt ? Date.parse(right.startedAt) : Number.NaN;
-    const normalizedLeft = Number.isNaN(leftMs) ? 0 : leftMs;
-    const normalizedRight = Number.isNaN(rightMs) ? 0 : rightMs;
-    if (normalizedLeft !== normalizedRight) {
-      return normalizedRight - normalizedLeft;
-    }
-    const byBundle = left.bundleId.localeCompare(right.bundleId);
-    if (byBundle !== 0) {
-      return byBundle;
-    }
-    return left.id.localeCompare(right.id);
+    return compareEntries(left, right, order);
   });
 }
 
@@ -207,6 +221,81 @@ function normalizeEntries(entries: RunHistoryEntry[]): RunHistoryEntry[] {
     });
   }
   return sortEntries(Array.from(deduped.values())).slice(0, MAX_RUN_HISTORY_ENTRIES);
+}
+
+function summarizeBundleForSearch(bundle: InvestigationBundle): string[] {
+  const segments: string[] = [];
+
+  if (bundle.preset?.mode === "preset") {
+    segments.push(bundle.preset.name, bundle.preset.id, bundle.preset.config.commandId, ...bundle.preset.config.taskNames);
+  } else if (bundle.preset?.mode === "ad-hoc") {
+    segments.push(bundle.preset.config.commandId, ...bundle.preset.config.taskNames);
+  }
+
+  for (const report of sortSessionsForSummary(bundle)) {
+    const session = report.session;
+    segments.push(session.commandId, session.reasonCode, session.note);
+    if (session.taskName) {
+      segments.push(session.taskName);
+    }
+
+    for (const taskResult of session.taskResults) {
+      segments.push(taskResult.taskName, taskResult.reason);
+    }
+
+    for (const event of session.events) {
+      segments.push(event.msg);
+    }
+  }
+
+  return segments;
+}
+
+function buildSearchCorpus(entry: RunHistoryEntry): string {
+  const segments: string[] = [
+    entry.bundleLabel,
+    entry.bundleId,
+    entry.commandId ?? "",
+    entry.reasonCode ?? "",
+    entry.sessionId ?? "",
+  ];
+
+  const bundle = parseHistoryBundle(entry);
+  if (bundle) {
+    segments.push(...summarizeBundleForSearch(bundle));
+  }
+
+  return segments
+    .map((value) => redactOutput(value).toLowerCase())
+    .filter((value) => value.length > 0)
+    .join("\n");
+}
+
+function normalizeFilter(filter?: Partial<RunHistoryFilter>): RunHistoryFilter {
+  return {
+    query: typeof filter?.query === "string" ? filter.query.trim().toLowerCase() : "",
+    status:
+      filter?.status === "success" || filter?.status === "error" || filter?.status === "all" ? filter.status : "all",
+    order: filter?.order === "oldest" || filter?.order === "newest" ? filter.order : "newest",
+  };
+}
+
+export function filterRunHistoryEntries(entries: RunHistoryEntry[], filter?: Partial<RunHistoryFilter>): RunHistoryEntry[] {
+  const normalizedFilter = normalizeFilter(filter);
+  const sorted = sortEntries(entries, normalizedFilter.order);
+
+  return sorted.filter((entry) => {
+    if (normalizedFilter.status === "success" && entry.badge !== "OK") {
+      return false;
+    }
+    if (normalizedFilter.status === "error" && entry.badge === "OK") {
+      return false;
+    }
+    if (!normalizedFilter.query) {
+      return true;
+    }
+    return buildSearchCorpus(entry).includes(normalizedFilter.query);
+  });
 }
 
 export function createRunHistoryEntryFromBundle(
