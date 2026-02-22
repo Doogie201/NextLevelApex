@@ -122,6 +122,39 @@ textarea:focus-visible,
   gap: 16px;
 }
 
+.meta-shell.layout-focus-output {
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-areas:
+    "top top"
+    "main right";
+}
+
+.meta-shell.layout-focus-output .left-nav {
+  display: none;
+}
+
+.meta-shell.layout-focus-tasks {
+  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-areas:
+    "top top"
+    "left main";
+}
+
+.meta-shell.layout-focus-tasks .inspector-panel {
+  display: none;
+}
+
+.meta-shell.layout-focus-inspector {
+  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-areas:
+    "top top"
+    "main right";
+}
+
+.meta-shell.layout-focus-inspector .left-nav {
+  display: none;
+}
+
 .glass-card {
   border: 1px solid var(--surface-border);
   background: var(--surface-base);
@@ -910,6 +943,12 @@ details summary {
 .btn-muted:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.workspace-chip-active {
+  border-color: rgba(143, 194, 255, 0.65);
+  background: rgba(70, 128, 255, 0.2);
+  color: #f4f8ff;
 }
 
 .badge-status {
