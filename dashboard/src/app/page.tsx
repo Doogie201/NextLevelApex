@@ -122,14 +122,18 @@ import {
 import {
   addOrUpdateRunHistoryEntry,
   buildReplayConfigFromBundle,
+  clearRunHistoryStorage,
   clearRunHistory,
   createRunHistoryEntryFromBundle,
   createRunHistoryEntryFromSession,
   filterRunHistoryEntries,
-  loadRunHistory,
+  loadRunHistorySelection,
+  loadRunHistoryState,
   parseHistoryBundle,
+  storeRunHistorySelection,
   storeRunHistory,
   toggleRunHistoryPinned,
+  type RunHistoryLoadStatus,
   type RunHistoryFilter,
   type RunHistoryEntry,
   type RunHistorySortOrder,
@@ -220,6 +224,19 @@ function formatDuration(durationMs?: number): string {
     return `${durationMs}ms`;
   }
   return `${(durationMs / 1000).toFixed(2)}s`;
+}
+
+function runHistoryStatusNotice(status: RunHistoryLoadStatus): string | null {
+  if (status === "cleared_corrupt" || status === "cleared_oversize") {
+    return "Stored history could not be loaded and was cleared.";
+  }
+  if (status === "ignored_newer_schema") {
+    return "Stored history version is newer than this app build and was ignored.";
+  }
+  if (status === "migrated") {
+    return "Stored history was migrated to the latest schema.";
+  }
+  return null;
 }
 
 function statusClass(status: CommandOutcome | TaskResult["status"]): string {
@@ -313,6 +330,7 @@ export default function Home() {
   const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>("all");
   const [runHistorySortOrder, setRunHistorySortOrder] = useState<RunHistorySortOrder>("newest");
   const [confirmRunHistoryClear, setConfirmRunHistoryClear] = useState(false);
+  const [runHistoryPersistenceNotice, setRunHistoryPersistenceNotice] = useState<string | null>(null);
   const [runDetailsExpanded, setRunDetailsExpanded] = useState<Record<RunDetailsSection, boolean>>({
     input: false,
     output: false,
@@ -538,11 +556,15 @@ export default function Home() {
     const loadedSavedViews = loadSavedViews(window.localStorage);
     setSavedViews(loadedSavedViews);
 
-    const loadedRunHistory = loadRunHistory(window.localStorage);
-    setRunHistoryEntries(loadedRunHistory);
-    if (loadedRunHistory.length > 0) {
-      setSelectedRunHistoryId(loadedRunHistory[0].id);
+    const runHistoryState = loadRunHistoryState(window.localStorage);
+    setRunHistoryEntries(runHistoryState.entries);
+    const persistedRunSelection = loadRunHistorySelection(window.localStorage);
+    if (persistedRunSelection) {
+      setSelectedRunHistoryId(persistedRunSelection);
+    } else if (runHistoryState.entries.length > 0) {
+      setSelectedRunHistoryId(runHistoryState.entries[0].id);
     }
+    setRunHistoryPersistenceNotice(runHistoryStatusNotice(runHistoryState.status));
   }, []);
 
   useEffect(() => {
@@ -579,6 +601,13 @@ export default function Home() {
     }
     storeRunHistory(window.localStorage, runHistoryEntries);
   }, [runHistoryEntries]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeRunHistorySelection(window.localStorage, selectedRunHistoryId);
+  }, [selectedRunHistoryId]);
 
   useEffect(() => {
     if (presets.length === 0) {
@@ -2127,10 +2156,14 @@ export default function Home() {
   }, []);
 
   const clearRunHistoryConfirmed = useCallback((): void => {
+    if (typeof window !== "undefined") {
+      clearRunHistoryStorage(window.localStorage);
+    }
     setRunHistoryEntries(clearRunHistory());
     setSelectedRunHistoryId(null);
     setRunHistoryErrors([]);
     setConfirmRunHistoryClear(false);
+    setRunHistoryPersistenceNotice("Stored run history was cleared.");
     setFriendlyMessage("Cleared run history bundles.");
     setLiveMessage("Run history cleared.");
   }, []);
@@ -2146,6 +2179,19 @@ export default function Home() {
   const cancelRunHistoryClear = useCallback((): void => {
     setConfirmRunHistoryClear(false);
     setFriendlyMessage("Run history clear canceled.");
+  }, []);
+
+  const clearStoredRunHistoryImmediately = useCallback((): void => {
+    if (typeof window !== "undefined") {
+      clearRunHistoryStorage(window.localStorage);
+    }
+    setRunHistoryEntries(clearRunHistory());
+    setSelectedRunHistoryId(null);
+    setRunHistoryErrors([]);
+    setConfirmRunHistoryClear(false);
+    setRunHistoryPersistenceNotice("Stored run history was cleared.");
+    setFriendlyMessage("Cleared stored run history.");
+    setLiveMessage("Stored history cleared.");
   }, []);
 
   const toggleRunDetailsExpandedSection = useCallback((section: RunDetailsSection): void => {
@@ -3856,6 +3902,29 @@ export default function Home() {
                           Stores share-safe bundle snapshots only. Replay runs immediately using validated configuration; Load
                           hydrates inputs without starting a run.
                         </p>
+                        {runHistoryPersistenceNotice && (
+                          <div className="empty-state-card" aria-live="polite" aria-label="Run history persistence notice">
+                            <p className="meta-muted">{runHistoryPersistenceNotice}</p>
+                            <div className="sessions-header-actions">
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={clearStoredRunHistoryImmediately}
+                                aria-label="Clear stored run history"
+                              >
+                                <Trash2 className="w-4 h-4" /> Clear Stored History
+                              </button>
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={() => setRunHistoryPersistenceNotice(null)}
+                                aria-label="Dismiss run history notice"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <div className="output-controls">
                           <label className="search-control" aria-label="Search run history">
                             <Search className="w-4 h-4" />
