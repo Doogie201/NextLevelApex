@@ -139,3 +139,6 @@ etc-pihole/tls.pem
 
 # NextLevelApex generated runtime artifacts
 reports/
+
+# Vite cache (can be created at repo root by dashboard tooling)
+/.vite/
