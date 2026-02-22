@@ -88,7 +88,7 @@ describe("runShareSafeExport", () => {
     const second = buildHistoryEntry("evt-3", "2026-02-22T03:30:00.000Z");
     const entries = addOrUpdateRunHistoryEntry(addOrUpdateRunHistoryEntry([], first), second);
 
-    expect(resolveRunHistorySelection(entries, null)).toBe(entries[0]?.id);
+    expect(resolveRunHistorySelection(entries, null)).toBeNull();
     expect(resolveRunHistorySelection(entries, second.id)).toBe(second.id);
     expect(resolveRunHistorySelection([first], second.id)).toBeNull();
     expect(resolveRunHistorySelection([], second.id)).toBeNull();

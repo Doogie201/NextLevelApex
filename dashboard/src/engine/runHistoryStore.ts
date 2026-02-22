@@ -16,6 +16,26 @@ const REPLAY_COMMAND_IDS = new Set<RunPresetCommandId>(["diagnose", "dryRunAll",
 export type RunHistorySource = "session" | "import" | "export";
 export type RunHistoryStatusFilter = "all" | "success" | "error";
 export type RunHistorySortOrder = "newest" | "oldest";
+export type RunHistorySelectionDirection = "next" | "prev";
+
+export const RUN_HISTORY_SEARCH_FIELD_WHITELIST = [
+  "entry.bundleLabel",
+  "entry.bundleId",
+  "entry.commandId",
+  "entry.reasonCode",
+  "entry.sessionId",
+  "bundle.preset.name",
+  "bundle.preset.id",
+  "bundle.preset.commandId",
+  "bundle.preset.taskNames",
+  "bundle.sessions.commandId",
+  "bundle.sessions.reasonCode",
+  "bundle.sessions.note",
+  "bundle.sessions.taskName",
+  "bundle.sessions.taskResults.taskName",
+  "bundle.sessions.taskResults.reason",
+  "bundle.sessions.events.msg",
+] as const;
 
 export interface RunHistoryFilter {
   query: string;
@@ -319,6 +339,10 @@ function summarizeBundleForSearch(bundle: InvestigationBundle): string[] {
   return segments;
 }
 
+function normalizeSearchToken(value: string): string {
+  return redactOutput(value).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function buildSearchCorpus(entry: RunHistoryEntry): string {
   const segments: string[] = [
     entry.bundleLabel,
@@ -334,14 +358,18 @@ function buildSearchCorpus(entry: RunHistoryEntry): string {
   }
 
   return segments
-    .map((value) => redactOutput(value).toLowerCase())
+    .map((value) => normalizeSearchToken(value))
     .filter((value) => value.length > 0)
-    .join("\n");
+    .join(" ");
+}
+
+export function buildRunHistorySearchCorpus(entry: RunHistoryEntry): string {
+  return buildSearchCorpus(entry);
 }
 
 function normalizeFilter(filter?: Partial<RunHistoryFilter>): RunHistoryFilter {
   return {
-    query: typeof filter?.query === "string" ? filter.query.trim().toLowerCase() : "",
+    query: typeof filter?.query === "string" ? filter.query.toLowerCase().replace(/\s+/g, " ").trim() : "",
     status:
       filter?.status === "success" || filter?.status === "error" || filter?.status === "all" ? filter.status : "all",
     order: filter?.order === "oldest" || filter?.order === "newest" ? filter.order : "newest",
@@ -364,6 +392,23 @@ export function filterRunHistoryEntries(entries: RunHistoryEntry[], filter?: Par
     }
     return buildSearchCorpus(entry).includes(normalizedFilter.query);
   });
+}
+
+export function moveRunHistorySelection(
+  entryIds: string[],
+  selectedRunId: string | null,
+  direction: RunHistorySelectionDirection,
+): string | null {
+  if (entryIds.length === 0) {
+    return null;
+  }
+  const currentIndex = selectedRunId ? entryIds.indexOf(selectedRunId) : -1;
+  if (currentIndex < 0) {
+    return direction === "next" ? entryIds[0] ?? null : entryIds[entryIds.length - 1] ?? null;
+  }
+  const delta = direction === "next" ? 1 : -1;
+  const nextIndex = (currentIndex + delta + entryIds.length) % entryIds.length;
+  return entryIds[nextIndex] ?? null;
 }
 
 export function createRunHistoryEntryFromBundle(

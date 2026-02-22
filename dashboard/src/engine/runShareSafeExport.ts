@@ -175,7 +175,7 @@ export function resolveRunHistorySelection(entries: RunHistoryEntry[], selectedR
     return null;
   }
   if (!selectedRunId) {
-    return entries[0].id;
+    return null;
   }
   if (entries.some((entry) => entry.id === selectedRunId)) {
     return selectedRunId;
