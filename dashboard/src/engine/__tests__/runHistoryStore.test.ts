@@ -4,7 +4,9 @@ import {
   clearRunHistory,
   createRunHistoryEntryFromBundle,
   createRunHistoryEntryFromSession,
+  filterRunHistoryEntries,
   loadRunHistory,
+  MAX_RUN_HISTORY_ENTRIES,
   parseHistoryBundle,
   RUN_HISTORY_STORAGE_KEY,
   storeRunHistory,
@@ -177,6 +179,60 @@ describe("runHistoryStore", () => {
     const pinned = toggleRunHistoryPinned(ordered, early.id);
     expect(pinned[0]?.id).toBe(early.id);
     expect(pinned[0]?.pinned).toBe(true);
+  });
+
+  it("filters run history entries by query, status, and deterministic order", () => {
+    const successSession = buildSession("evt-6", "2026-02-22T00:30:00.000Z", "dryRunTask");
+    const errorSession = createRunSessionFromResult({
+      eventId: "evt-7",
+      commandId: "diagnose",
+      label: "Run diagnose",
+      note: "Session failed",
+      startedAtMs: Date.parse("2026-02-22T00:40:00.000Z"),
+      finishedAtIso: "2026-02-22T00:40:02.000Z",
+      durationMs: 2000,
+      result: buildResponse({
+        commandId: "diagnose",
+        ok: false,
+        badge: "BROKEN",
+        reasonCode: "EXEC_ERROR",
+        stderr: "error",
+        events: [{ ts: "2026-02-22T00:40:01.000Z", level: "error", msg: "pipeline failed" }],
+      }),
+    });
+
+    const successEntry = createRunHistoryEntryFromSession(successSession, "phase19");
+    const errorEntry = createRunHistoryEntryFromSession(errorSession, "phase19");
+    const all = addOrUpdateRunHistoryEntry([successEntry], errorEntry);
+
+    const errorOnly = filterRunHistoryEntries(all, { status: "error", order: "newest" });
+    expect(errorOnly).toHaveLength(1);
+    expect(errorOnly[0]?.id).toBe(errorEntry.id);
+
+    const successByQuery = filterRunHistoryEntries(all, { query: "ready", status: "success", order: "newest" });
+    expect(successByQuery).toHaveLength(1);
+    expect(successByQuery[0]?.id).toBe(successEntry.id);
+
+    const byOldest = filterRunHistoryEntries(all, { order: "oldest" });
+    expect(byOldest[0]?.id).toBe(successEntry.id);
+    expect(byOldest[1]?.id).toBe(errorEntry.id);
+  });
+
+  it("caps history entries and drops oldest first", () => {
+    let entries = [] as ReturnType<typeof clearRunHistory>;
+
+    for (let index = 0; index < MAX_RUN_HISTORY_ENTRIES + 5; index += 1) {
+      const minute = String(index).padStart(2, "0");
+      const session = buildSession(`evt-cap-${index}`, `2026-02-22T01:${minute}:00.000Z`, "dryRunTask");
+      entries = addOrUpdateRunHistoryEntry(entries, createRunHistoryEntryFromSession(session, "phase19"));
+    }
+
+    expect(entries).toHaveLength(MAX_RUN_HISTORY_ENTRIES);
+
+    const newest = entries[0];
+    const oldest = entries[entries.length - 1];
+    expect(newest?.startedAt).toBe("2026-02-22T01:44:00.000Z");
+    expect(oldest?.startedAt).toBe("2026-02-22T01:05:00.000Z");
   });
 
   it("uses expected storage key and supports clear", () => {

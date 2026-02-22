@@ -125,11 +125,15 @@ import {
   clearRunHistory,
   createRunHistoryEntryFromBundle,
   createRunHistoryEntryFromSession,
+  filterRunHistoryEntries,
   loadRunHistory,
   parseHistoryBundle,
   storeRunHistory,
   toggleRunHistoryPinned,
+  type RunHistoryFilter,
   type RunHistoryEntry,
+  type RunHistorySortOrder,
+  type RunHistoryStatusFilter,
 } from "@/engine/runHistoryStore";
 import {
   buildSessionCompareReportBundle,
@@ -296,6 +300,10 @@ export default function Home() {
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
   const [runHistoryEntries, setRunHistoryEntries] = useState<RunHistoryEntry[]>([]);
   const [selectedRunHistoryId, setSelectedRunHistoryId] = useState<string | null>(null);
+  const [runHistoryQuery, setRunHistoryQuery] = useState("");
+  const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>("all");
+  const [runHistorySortOrder, setRunHistorySortOrder] = useState<RunHistorySortOrder>("newest");
+  const [confirmRunHistoryClear, setConfirmRunHistoryClear] = useState(false);
   const [runHistoryErrors, setRunHistoryErrors] = useState<BundleImportValidationError[]>([]);
   const [presets, setPresets] = useState<RunPreset[]>([]);
   const [savedViews, setSavedViews] = useState<SavedViewEntry[]>([]);
@@ -1711,12 +1719,26 @@ export default function Home() {
     return runSessions.find((session) => session.id === compareSessionId) ?? null;
   }, [compareSessionId, runSessions]);
 
+  const runHistoryFilter = useMemo<RunHistoryFilter>(
+    () => ({
+      query: runHistoryQuery,
+      status: runHistoryStatusFilter,
+      order: runHistorySortOrder,
+    }),
+    [runHistoryQuery, runHistorySortOrder, runHistoryStatusFilter],
+  );
+
+  const filteredRunHistoryEntries = useMemo(
+    () => filterRunHistoryEntries(runHistoryEntries, runHistoryFilter),
+    [runHistoryEntries, runHistoryFilter],
+  );
+
   const selectedRunHistoryEntry = useMemo(() => {
     if (!selectedRunHistoryId) {
-      return runHistoryEntries[0] ?? null;
+      return filteredRunHistoryEntries[0] ?? null;
     }
-    return runHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? null;
-  }, [runHistoryEntries, selectedRunHistoryId]);
+    return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? filteredRunHistoryEntries[0] ?? null;
+  }, [filteredRunHistoryEntries, selectedRunHistoryId]);
 
   const selectedBundleSessions = useMemo(
     () => runSessions.filter((session) => bundleSessionIds.includes(session.id)),
@@ -1887,14 +1909,23 @@ export default function Home() {
   }, [savedViews]);
 
   useEffect(() => {
-    if (runHistoryEntries.length === 0) {
+    if (filteredRunHistoryEntries.length === 0) {
       setSelectedRunHistoryId(null);
       return;
     }
-    if (!selectedRunHistoryId || !runHistoryEntries.some((entry) => entry.id === selectedRunHistoryId)) {
-      setSelectedRunHistoryId(runHistoryEntries[0].id);
+    if (!selectedRunHistoryId || !filteredRunHistoryEntries.some((entry) => entry.id === selectedRunHistoryId)) {
+      setSelectedRunHistoryId(filteredRunHistoryEntries[0].id);
     }
-  }, [runHistoryEntries, selectedRunHistoryId]);
+  }, [filteredRunHistoryEntries, selectedRunHistoryId]);
+
+  useEffect(() => {
+    if (!confirmRunHistoryClear) {
+      return;
+    }
+    if (runHistoryEntries.length === 0) {
+      setConfirmRunHistoryClear(false);
+    }
+  }, [confirmRunHistoryClear, runHistoryEntries.length]);
 
   useEffect(() => {
     if (runSessions.length === 0) {
@@ -1944,12 +1975,12 @@ export default function Home() {
     setRunSessions((previous) => togglePinnedSession(previous, sessionId));
   }, []);
 
-  const replayRunHistory = useCallback(
-    (entryId: string): void => {
+  const hydrateRunHistoryIntoRunCenter = useCallback(
+    (entryId: string): RunPresetConfig | null => {
       const entry = runHistoryEntries.find((candidate) => candidate.id === entryId);
       if (!entry) {
         setFriendlyMessage("Run history entry not found.");
-        return;
+        return null;
       }
 
       const bundle = parseHistoryBundle(entry);
@@ -1962,7 +1993,7 @@ export default function Home() {
           },
         ]);
         setFriendlyMessage("Run history entry failed validation. Remove it or import a valid bundle.");
-        return;
+        return null;
       }
 
       const config = buildReplayConfigFromBundle(bundle);
@@ -1975,7 +2006,7 @@ export default function Home() {
           },
         ]);
         setFriendlyMessage("Replay unavailable: this bundle does not contain a supported run configuration.");
-        return;
+        return null;
       }
 
       setRunHistoryErrors([]);
@@ -1994,28 +2025,64 @@ export default function Home() {
       }
 
       setSelectedRunHistoryId(entry.id);
-      setLiveMessage("Run replay queued.");
-      setFriendlyMessage("Replay loaded into Run Center. Review configuration and run when ready.");
+      return config;
     },
     [runHistoryEntries, runSessions],
+  );
+
+  const replayRunHistory = useCallback(
+    async (entryId: string): Promise<void> => {
+      if (isBusy) {
+        setFriendlyMessage("Runner is already active. Cancel the current run before replaying history.");
+        return;
+      }
+      const config = hydrateRunHistoryIntoRunCenter(entryId);
+      if (!config) {
+        return;
+      }
+      setLiveMessage("Replay started.");
+      setFriendlyMessage("Replay running from stored history configuration.");
+      await runFromPresetConfig(config);
+    },
+    [hydrateRunHistoryIntoRunCenter, isBusy, runFromPresetConfig],
+  );
+
+  const loadRunHistoryIntoEditor = useCallback(
+    (entryId: string): void => {
+      const config = hydrateRunHistoryIntoRunCenter(entryId);
+      if (!config) {
+        return;
+      }
+      setLiveMessage("Run history loaded.");
+      setFriendlyMessage("Run history loaded into Run Center. Review configuration and run when ready.");
+    },
+    [hydrateRunHistoryIntoRunCenter],
   );
 
   const toggleRunHistoryPinnedState = useCallback((entryId: string): void => {
     setRunHistoryEntries((previous) => toggleRunHistoryPinned(previous, entryId));
   }, []);
 
-  const clearRunHistoryWithConfirm = useCallback((): void => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (!window.confirm("Clear run history bundles? This removes replay snapshots from local storage.")) {
-      return;
-    }
+  const clearRunHistoryConfirmed = useCallback((): void => {
     setRunHistoryEntries(clearRunHistory());
     setSelectedRunHistoryId(null);
     setRunHistoryErrors([]);
+    setConfirmRunHistoryClear(false);
     setFriendlyMessage("Cleared run history bundles.");
     setLiveMessage("Run history cleared.");
+  }, []);
+
+  const requestRunHistoryClear = useCallback((): void => {
+    if (runHistoryEntries.length === 0) {
+      return;
+    }
+    setConfirmRunHistoryClear(true);
+    setFriendlyMessage("Confirm clear to remove replay snapshots from local storage.");
+  }, [runHistoryEntries.length]);
+
+  const cancelRunHistoryClear = useCallback((): void => {
+    setConfirmRunHistoryClear(false);
+    setFriendlyMessage("Run history clear canceled.");
   }, []);
 
   const pinRunHistoryAsSavedView = useCallback(
@@ -3642,24 +3709,84 @@ export default function Home() {
                             <button
                               className="btn-muted"
                               type="button"
-                              onClick={clearRunHistoryWithConfirm}
-                              disabled={runHistoryEntries.length === 0}
+                              onClick={requestRunHistoryClear}
+                              disabled={runHistoryEntries.length === 0 || confirmRunHistoryClear}
                               aria-label="Clear run history bundles"
                             >
                               <Trash2 className="w-4 h-4" /> Clear
                             </button>
+                            {confirmRunHistoryClear && (
+                              <>
+                                <button
+                                  className="btn-theme"
+                                  type="button"
+                                  onClick={clearRunHistoryConfirmed}
+                                  aria-label="Confirm clear run history bundles"
+                                >
+                                  Confirm Clear
+                                </button>
+                                <button
+                                  className="btn-muted"
+                                  type="button"
+                                  onClick={cancelRunHistoryClear}
+                                  aria-label="Cancel clear run history bundles"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                         <p className="meta-muted">
-                          Stores share-safe bundle snapshots only. Replay loads Run Center configuration and never starts a run
-                          automatically.
+                          Stores share-safe bundle snapshots only. Replay runs immediately using validated configuration; Load
+                          hydrates inputs without starting a run.
+                        </p>
+                        <div className="output-controls">
+                          <label className="search-control" aria-label="Search run history">
+                            <Search className="w-4 h-4" />
+                            <input
+                              type="search"
+                              placeholder="Search history label or output preview"
+                              value={runHistoryQuery}
+                              onChange={(event) => setRunHistoryQuery(event.target.value)}
+                              aria-label="Search run history text"
+                            />
+                          </label>
+                          <label className="select-control" aria-label="Filter run history status">
+                            <span>Status</span>
+                            <select
+                              value={runHistoryStatusFilter}
+                              onChange={(event) => setRunHistoryStatusFilter(event.target.value as RunHistoryStatusFilter)}
+                              aria-label="Run history status filter"
+                            >
+                              <option value="all">All</option>
+                              <option value="success">Success</option>
+                              <option value="error">Error</option>
+                            </select>
+                          </label>
+                          <label className="select-control" aria-label="Sort run history by time">
+                            <span>Order</span>
+                            <select
+                              value={runHistorySortOrder}
+                              onChange={(event) => setRunHistorySortOrder(event.target.value as RunHistorySortOrder)}
+                              aria-label="Run history time order"
+                            >
+                              <option value="newest">Newest first</option>
+                              <option value="oldest">Oldest first</option>
+                            </select>
+                          </label>
+                        </div>
+                        <p className="meta-muted" aria-live="polite">
+                          Showing {filteredRunHistoryEntries.length} of {runHistoryEntries.length} run bundles.
                         </p>
 
                         {runHistoryEntries.length === 0 ? (
                           <p className="meta-muted">No replay bundles stored yet.</p>
+                        ) : filteredRunHistoryEntries.length === 0 ? (
+                          <p className="meta-muted">No history entries match the current filters.</p>
                         ) : (
                           <div className="sessions-list" role="list" aria-label="Run history list">
-                            {runHistoryEntries.map((entry) => {
+                            {filteredRunHistoryEntries.map((entry) => {
                               const isSelected = selectedRunHistoryEntry?.id === entry.id;
                               return (
                                 <div key={entry.id} className={`session-row ${isSelected ? "session-row-active" : ""}`} role="listitem">
@@ -3695,10 +3822,19 @@ export default function Home() {
                                     <button
                                       className="btn-theme"
                                       type="button"
-                                      onClick={() => replayRunHistory(entry.id)}
+                                      onClick={() => void replayRunHistory(entry.id)}
+                                      disabled={isBusy}
                                       aria-label={`Replay run history ${entry.bundleLabel}`}
                                     >
                                       <Play className="w-4 h-4" /> Replay
+                                    </button>
+                                    <button
+                                      className="btn-muted"
+                                      type="button"
+                                      onClick={() => loadRunHistoryIntoEditor(entry.id)}
+                                      aria-label={`Load run history ${entry.bundleLabel} into editor`}
+                                    >
+                                      <ListChecks className="w-4 h-4" /> Load
                                     </button>
                                     <button
                                       className="btn-muted"
