@@ -513,6 +513,8 @@ export default function Home() {
   const exportReviewOpenerRef = useRef<HTMLElement | null>(null);
   const explorerPrimaryInputRef = useRef<HTMLInputElement | null>(null);
   const explorerSecondaryInputRef = useRef<HTMLInputElement | null>(null);
+  const initializationRanRef = useRef(false);
+  const navViewPushPendingRef = useRef(false);
 
   const effectiveReducedMotion = useMemo(
     () => resolveReducedMotionEffective(reduceMotionOverride, prefersReducedMotion),
@@ -585,6 +587,17 @@ export default function Home() {
     const parsed = parseUrlState(window.location.search);
     applyParsedUrlState(parsed);
     setIsUrlStateReady(true);
+  }, [applyParsedUrlState]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handlePopState = (): void => {
+      applyParsedUrlState(parseUrlState(window.location.search));
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, [applyParsedUrlState]);
 
   useEffect(() => {
@@ -790,8 +803,14 @@ export default function Home() {
     });
     const nextQuery = nextSearch.length > 0 ? `?${nextSearch}` : "";
     if (window.location.search !== nextQuery) {
-      window.history.replaceState(null, "", `${window.location.pathname}${nextQuery}`);
+      const nextPath = `${window.location.pathname}${nextQuery}`;
+      if (navViewPushPendingRef.current) {
+        window.history.pushState(null, "", nextPath);
+      } else {
+        window.history.replaceState(null, "", nextPath);
+      }
     }
+    navViewPushPendingRef.current = false;
   }, [
     activeView,
     inspectorSection,
@@ -841,6 +860,13 @@ export default function Home() {
   const setViewByShortcut = useCallback((viewId: ViewId): void => {
     setActiveView(viewId);
     setLiveMessage(`Switched to ${viewId} view.`);
+  }, []);
+
+  const setActiveViewFromNav = useCallback((viewId: ViewId): void => {
+    setActiveView((previous) => {
+      navViewPushPendingRef.current = previous !== viewId;
+      return previous === viewId ? previous : viewId;
+    });
   }, []);
 
   const openKeyboardShortcuts = useCallback((): void => {
@@ -1237,8 +1263,10 @@ export default function Home() {
     setTaskLoadError(null);
   }, [executeCommand]);
 
-  const runDiagnose = useCallback(async (): Promise<void> => {
-    setActiveView("dashboard");
+  const runDiagnose = useCallback(async (options?: { preserveView?: boolean }): Promise<void> => {
+    if (!options?.preserveView) {
+      setActiveView("dashboard");
+    }
     setIsBusy(true);
     setFriendlyMessage("Running diagnose command...");
     setLastRunConfig({
@@ -3626,11 +3654,15 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    if (initializationRanRef.current) {
+      return;
+    }
+    initializationRanRef.current = true;
     void (async () => {
       try {
         await loadConfig();
         await loadTasks();
-        await runDiagnose();
+        await runDiagnose({ preserveView: true });
       } catch {
         setFriendlyMessage("Failed to initialize dashboard diagnostics.");
       }
@@ -3750,7 +3782,7 @@ export default function Home() {
           <button
             type="button"
             className={`nav-item ${activeView === "dashboard" ? "nav-item-active" : ""}`}
-            onClick={() => setActiveView("dashboard")}
+            onClick={() => setActiveViewFromNav("dashboard")}
             aria-label="Open dashboard view"
           >
             <Activity className="w-4 h-4" /> Dashboard
@@ -3758,7 +3790,7 @@ export default function Home() {
           <button
             type="button"
             className={`nav-item ${activeView === "tasks" ? "nav-item-active" : ""}`}
-            onClick={() => setActiveView("tasks")}
+            onClick={() => setActiveViewFromNav("tasks")}
             aria-label="Open tasks view"
           >
             <ListChecks className="w-4 h-4" /> Tasks
@@ -3766,7 +3798,7 @@ export default function Home() {
           <button
             type="button"
             className={`nav-item ${activeView === "output" ? "nav-item-active" : ""}`}
-            onClick={() => setActiveView("output")}
+            onClick={() => setActiveViewFromNav("output")}
             aria-label="Open output view"
           >
             <TerminalSquare className="w-4 h-4" /> Output
@@ -3774,7 +3806,7 @@ export default function Home() {
           <button
             type="button"
             className={`nav-item ${activeView === "bundles" ? "nav-item-active" : ""}`}
-            onClick={() => setActiveView("bundles")}
+            onClick={() => setActiveViewFromNav("bundles")}
             aria-label="Open bundles view"
           >
             <FileJson2 className="w-4 h-4" /> Bundles
