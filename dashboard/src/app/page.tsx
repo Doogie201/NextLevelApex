@@ -145,6 +145,8 @@ import {
   type BundleImportPreview,
   type BundleImportValidationError,
 } from "@/engine/bundleImport";
+import { buildBundleDiff } from "@/engine/bundleDiff";
+import { buildBundlePreviewText } from "@/engine/bundleNormalize";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
@@ -159,8 +161,9 @@ interface TaskRowSummary {
 }
 
 const TASK_VISIBLE_STEP = 200;
-const GUI_BUILD_ID = "phase11";
+const GUI_BUILD_ID = "phase17";
 const MAX_PRESET_NAME_LENGTH = 64;
+type BundleCompareMode = "bundle-b" | "local-session" | "local-preset";
 
 function taskRowId(taskName: string): string {
   return `task-row-${encodeURIComponent(taskName)}`;
@@ -317,6 +320,13 @@ export default function Home() {
   const [bundleImportErrors, setBundleImportErrors] = useState<BundleImportValidationError[]>([]);
   const [bundleImportPreview, setBundleImportPreview] = useState<BundleImportPreview | null>(null);
   const [validatedBundle, setValidatedBundle] = useState<InvestigationBundle | null>(null);
+  const [explorerBundlePrimary, setExplorerBundlePrimary] = useState<InvestigationBundle | null>(null);
+  const [explorerBundleSecondary, setExplorerBundleSecondary] = useState<InvestigationBundle | null>(null);
+  const [explorerCompareMode, setExplorerCompareMode] = useState<BundleCompareMode>("bundle-b");
+  const [explorerLocalSessionId, setExplorerLocalSessionId] = useState<string | null>(null);
+  const [explorerLocalPresetId, setExplorerLocalPresetId] = useState<string | null>(null);
+  const [explorerValidationErrors, setExplorerValidationErrors] = useState<BundleImportValidationError[]>([]);
+  const [explorerStatusMessage, setExplorerStatusMessage] = useState("Import a bundle to inspect and compare.");
   const [shortcutState, setShortcutState] = useState<ShortcutState>(() => initialShortcutState());
   const [liveMessage, setLiveMessage] = useState("Ready.");
   const [activeCommandLabel, setActiveCommandLabel] = useState<string>("");
@@ -344,6 +354,8 @@ export default function Home() {
   const bundleExportCloseRef = useRef<HTMLButtonElement | null>(null);
   const bundleExportDialogRef = useRef<HTMLDivElement | null>(null);
   const bundleExportOpenerRef = useRef<HTMLElement | null>(null);
+  const explorerPrimaryInputRef = useRef<HTMLInputElement | null>(null);
+  const explorerSecondaryInputRef = useRef<HTMLInputElement | null>(null);
 
   const effectiveReducedMotion = useMemo(
     () => resolveReducedMotionEffective(reduceMotionOverride, prefersReducedMotion),
@@ -527,6 +539,26 @@ export default function Home() {
       setSelectedPresetId(presets[0].id);
     }
   }, [presets, selectedPresetId]);
+
+  useEffect(() => {
+    if (runSessions.length === 0) {
+      setExplorerLocalSessionId(null);
+      return;
+    }
+    if (!explorerLocalSessionId || !runSessions.some((session) => session.id === explorerLocalSessionId)) {
+      setExplorerLocalSessionId(runSessions[0].id);
+    }
+  }, [explorerLocalSessionId, runSessions]);
+
+  useEffect(() => {
+    if (presets.length === 0) {
+      setExplorerLocalPresetId(null);
+      return;
+    }
+    if (!explorerLocalPresetId || !presets.some((preset) => preset.id === explorerLocalPresetId)) {
+      setExplorerLocalPresetId(presets[0].id);
+    }
+  }, [explorerLocalPresetId, presets]);
 
   useEffect(() => {
     if (runCenterModel.canRun && showRunCenterDisabledReason) {
@@ -1661,6 +1693,122 @@ export default function Home() {
     [bundleViewNames, savedViews],
   );
 
+  const selectedExplorerLocalSession = useMemo(
+    () => (explorerLocalSessionId ? runSessions.find((session) => session.id === explorerLocalSessionId) ?? null : null),
+    [explorerLocalSessionId, runSessions],
+  );
+
+  const selectedExplorerLocalPreset = useMemo(
+    () => (explorerLocalPresetId ? presets.find((preset) => preset.id === explorerLocalPresetId) ?? null : null),
+    [explorerLocalPresetId, presets],
+  );
+
+  const explorerLeftSource = useMemo(() => {
+    if (!explorerBundlePrimary) {
+      return null;
+    }
+    return {
+      label: `Bundle A (${explorerBundlePrimary.bundleId})`,
+      value: explorerBundlePrimary as unknown,
+    };
+  }, [explorerBundlePrimary]);
+
+  const explorerRightSource = useMemo(() => {
+    if (explorerCompareMode === "bundle-b") {
+      if (!explorerBundleSecondary) {
+        return null;
+      }
+      return {
+        label: `Bundle B (${explorerBundleSecondary.bundleId})`,
+        value: explorerBundleSecondary as unknown,
+      };
+    }
+
+    if (explorerCompareMode === "local-session") {
+      if (!selectedExplorerLocalSession) {
+        return null;
+      }
+      return {
+        label: `Local session (${selectedExplorerLocalSession.id})`,
+        value: {
+          source: "local-session",
+          session: {
+            id: selectedExplorerLocalSession.id,
+            commandId: selectedExplorerLocalSession.commandId,
+            taskName: selectedExplorerLocalSession.taskName,
+            badge: selectedExplorerLocalSession.badge,
+            reasonCode: selectedExplorerLocalSession.reasonCode,
+            startedAt: selectedExplorerLocalSession.startedAt,
+            finishedAt: selectedExplorerLocalSession.finishedAt,
+            durationMs: selectedExplorerLocalSession.durationMs,
+            durationLabel: selectedExplorerLocalSession.durationLabel,
+            degraded: selectedExplorerLocalSession.degraded,
+            redacted: selectedExplorerLocalSession.redacted,
+            note: selectedExplorerLocalSession.note,
+            taskResults: [...selectedExplorerLocalSession.taskResults].sort((left, right) => {
+              const taskCmp = left.taskName.localeCompare(right.taskName);
+              if (taskCmp !== 0) {
+                return taskCmp;
+              }
+              return left.status.localeCompare(right.status);
+            }),
+            events: [...selectedExplorerLocalSession.events].sort((left, right) => {
+              if (left.offsetMs !== right.offsetMs) {
+                return left.offsetMs - right.offsetMs;
+              }
+              return left.id.localeCompare(right.id);
+            }),
+          },
+        } as unknown,
+      };
+    }
+
+    if (!selectedExplorerLocalPreset) {
+      return null;
+    }
+
+    return {
+      label: `Local preset (${selectedExplorerLocalPreset.name})`,
+      value: {
+        source: "local-preset",
+        preset: {
+          id: selectedExplorerLocalPreset.id,
+          name: selectedExplorerLocalPreset.name,
+          commandId: selectedExplorerLocalPreset.config.commandId,
+          taskNames: [...selectedExplorerLocalPreset.config.taskNames].sort((left, right) => left.localeCompare(right)),
+          dryRun: selectedExplorerLocalPreset.config.dryRun,
+          readOnly: selectedExplorerLocalPreset.config.toggles.readOnly,
+        },
+      } as unknown,
+    };
+  }, [
+    explorerBundleSecondary,
+    explorerCompareMode,
+    selectedExplorerLocalPreset,
+    selectedExplorerLocalSession,
+  ]);
+
+  const explorerDiff = useMemo(() => {
+    if (!explorerLeftSource || !explorerRightSource) {
+      return null;
+    }
+    return buildBundleDiff(explorerLeftSource.value, explorerRightSource.value);
+  }, [explorerLeftSource, explorerRightSource]);
+
+  const explorerPrimaryPreview = useMemo(() => {
+    if (!explorerBundlePrimary) {
+      return null;
+    }
+    return buildBundlePreviewText(explorerBundlePrimary, { maxOutputChars: 8000 }).text;
+  }, [explorerBundlePrimary]);
+
+  const explorerSecondaryPreview = useMemo(() => {
+    if (!explorerBundleSecondary) {
+      return null;
+    }
+    return buildBundlePreviewText(explorerBundleSecondary, { maxOutputChars: 8000 }).text;
+  }, [explorerBundleSecondary]);
+
   const sessionComparison = useMemo(() => {
     if (!selectedSession || !selectedCompareSession) {
       return null;
@@ -1901,6 +2049,62 @@ export default function Home() {
       `Imported bundle: presets +${applied.addedPresets} (skipped ${applied.skippedPresets}), sessions +${applied.addedSessions} (skipped ${applied.skippedSessions}).`,
     );
   }, [presets, runSessions, validatedBundle]);
+
+  const validateAndStoreExplorerBundle = useCallback(
+    async (target: "primary" | "secondary", file: File): Promise<void> => {
+      const raw = await file.text();
+      const validation = validateInvestigationBundleInput(raw);
+      if (!validation.ok) {
+        setExplorerValidationErrors(validation.errors);
+        setExplorerStatusMessage(validation.errors[0]?.message ?? "Bundle validation failed.");
+        return;
+      }
+
+      setExplorerValidationErrors([]);
+      if (target === "primary") {
+        setExplorerBundlePrimary(validation.bundle);
+      } else {
+        setExplorerBundleSecondary(validation.bundle);
+      }
+
+      const preview = previewInvestigationBundleImport(validation.bundle, presets, runSessions);
+      setExplorerStatusMessage(
+        `${target === "primary" ? "Bundle A" : "Bundle B"} loaded (${preview.bundleKind}) | sessions ${preview.sessionCandidates} | presets ${preview.presetCandidates} | views ${preview.viewCandidates}.`,
+      );
+    },
+    [presets, runSessions],
+  );
+
+  const triggerExplorerFilePick = useCallback((target: "primary" | "secondary"): void => {
+    if (target === "primary") {
+      explorerPrimaryInputRef.current?.click();
+      return;
+    }
+    explorerSecondaryInputRef.current?.click();
+  }, []);
+
+  const onExplorerBundleSelected = useCallback(
+    async (target: "primary" | "secondary", event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+      try {
+        await validateAndStoreExplorerBundle(target, file);
+      } catch {
+        setExplorerValidationErrors([
+          {
+            code: "INVALID_SCHEMA",
+            path: "$",
+            message: "Failed to parse selected bundle file.",
+          },
+        ]);
+        setExplorerStatusMessage("Bundle parsing failed.");
+      }
+    },
+    [validateAndStoreExplorerBundle],
+  );
 
   const copyConsoleDiagnostics = useCallback(async (): Promise<void> => {
     if (typeof navigator === "undefined") {
@@ -2312,6 +2516,14 @@ export default function Home() {
             aria-label="Open output view"
           >
             <TerminalSquare className="w-4 h-4" /> Output
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${activeView === "bundles" ? "nav-item-active" : ""}`}
+            onClick={() => setActiveView("bundles")}
+            aria-label="Open bundles view"
+          >
+            <FileJson2 className="w-4 h-4" /> Bundles
           </button>
         </nav>
 
@@ -2810,6 +3022,216 @@ export default function Home() {
                   >
                     Show more
                   </button>
+                )}
+              </motion.div>
+            )}
+
+            {activeView === "bundles" && (
+              <motion.div
+                key="bundles"
+                className="glass-card content-card"
+                initial={motionInitial}
+                animate={{ opacity: 1, y: 0 }}
+                exit={motionExit}
+                transition={motionTransition}
+              >
+                <h2 className="section-title">Bundle Explorer</h2>
+                <p className="meta-muted">
+                  Inspect imported investigation bundles in read-only mode and compare against local safe snapshots.
+                </p>
+
+                <section className="sessions-panel" aria-label="Bundle explorer controls">
+                  <div className="sessions-filters">
+                    <button
+                      className="btn-theme"
+                      type="button"
+                      onClick={() => triggerExplorerFilePick("primary")}
+                      aria-label="Load primary bundle file"
+                    >
+                      <FileJson2 className="w-4 h-4" /> Load Bundle A
+                    </button>
+                    <input
+                      ref={explorerPrimaryInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="sr-only"
+                      onChange={(event) => void onExplorerBundleSelected("primary", event)}
+                    />
+                    <button
+                      className="btn-muted"
+                      type="button"
+                      onClick={() => triggerExplorerFilePick("secondary")}
+                      aria-label="Load secondary bundle file"
+                    >
+                      <FileJson2 className="w-4 h-4" /> Load Bundle B
+                    </button>
+                    <input
+                      ref={explorerSecondaryInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="sr-only"
+                      onChange={(event) => void onExplorerBundleSelected("secondary", event)}
+                    />
+                    <label className="select-control" aria-label="Bundle compare mode">
+                      <span>Compare</span>
+                      <select
+                        value={explorerCompareMode}
+                        onChange={(event) => setExplorerCompareMode(event.target.value as BundleCompareMode)}
+                      >
+                        <option value="bundle-b">Bundle A vs Bundle B</option>
+                        <option value="local-session">Bundle A vs Local Session</option>
+                        <option value="local-preset">Bundle A vs Local Preset</option>
+                      </select>
+                    </label>
+                    {explorerCompareMode === "local-session" && (
+                      <label className="select-control" aria-label="Local session compare target">
+                        <span>Session</span>
+                        <select
+                          value={explorerLocalSessionId ?? ""}
+                          onChange={(event) => setExplorerLocalSessionId(event.target.value || null)}
+                        >
+                          {runSessions.length === 0 ? (
+                            <option value="">No local sessions</option>
+                          ) : (
+                            sortRunSessions(runSessions).map((session) => (
+                              <option key={session.id} value={session.id}>
+                                {session.label} ({session.id})
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </label>
+                    )}
+                    {explorerCompareMode === "local-preset" && (
+                      <label className="select-control" aria-label="Local preset compare target">
+                        <span>Preset</span>
+                        <select
+                          value={explorerLocalPresetId ?? ""}
+                          onChange={(event) => setExplorerLocalPresetId(event.target.value || null)}
+                        >
+                          {presets.length === 0 ? (
+                            <option value="">No local presets</option>
+                          ) : (
+                            presets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>
+                                {preset.name} ({preset.config.commandId})
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                  <p className="meta-muted" aria-live="polite">
+                    {explorerStatusMessage}
+                  </p>
+                  {explorerValidationErrors.length > 0 && (
+                    <ul className="bundle-validation-list">
+                      {explorerValidationErrors.map((error) => (
+                        <li key={`explorer-${error.code}-${error.path}-${error.message}`}>
+                          <strong>{error.code}</strong> <span>{error.path}</span> {error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                {!explorerBundlePrimary ? (
+                  <section className="empty-state-card" aria-live="polite" aria-label="Bundle explorer empty state">
+                    <h3>No bundle loaded</h3>
+                    <p className="meta-muted">
+                      Load Bundle A to start exploration. Bundle content is validated before rendering and compared safely.
+                    </p>
+                  </section>
+                ) : (
+                  <>
+                    <section className="empty-state-card" aria-label="Bundle explorer summary">
+                      <h3>Bundle Summary</h3>
+                      <div className="diagnose-grid">
+                        <div className="diagnose-tile">
+                          <span>Bundle A</span>
+                          <strong>{explorerBundlePrimary.bundleId}</strong>
+                        </div>
+                        <div className="diagnose-tile">
+                          <span>Kind</span>
+                          <strong>{explorerBundlePrimary.bundleKind}</strong>
+                        </div>
+                        <div className="diagnose-tile">
+                          <span>Sessions</span>
+                          <strong>{explorerBundlePrimary.sessions.length}</strong>
+                        </div>
+                        <div className="diagnose-tile">
+                          <span>Saved Views</span>
+                          <strong>{explorerBundlePrimary.views.length}</strong>
+                        </div>
+                      </div>
+                    </section>
+
+                    {!explorerRightSource ? (
+                      <section className="empty-state-card" aria-label="Bundle compare target missing">
+                        <h3>Comparison target unavailable</h3>
+                        <p className="meta-muted">
+                          Load Bundle B or choose an available local session/preset for comparison.
+                        </p>
+                      </section>
+                    ) : (
+                      <section className="sessions-panel" aria-label="Bundle diff preview">
+                        <h3>Safe Diff Preview</h3>
+                        <p className="meta-muted">
+                          Left: {explorerLeftSource?.label ?? "Bundle A"} | Right: {explorerRightSource.label}
+                        </p>
+                        {explorerDiff ? (
+                          <>
+                            <p className="meta-muted">
+                              added={explorerDiff.summary.added} removed={explorerDiff.summary.removed} changed=
+                              {explorerDiff.summary.changed} total={explorerDiff.summary.total}
+                            </p>
+                            {explorerDiff.truncated && (
+                              <p className="meta-muted">Preview is truncated to keep rendering bounded and deterministic.</p>
+                            )}
+                            {explorerDiff.entries.length === 0 ? (
+                              <p className="meta-muted">No differences detected after canonical normalization.</p>
+                            ) : (
+                              <ul className="bundle-diff-list">
+                                {explorerDiff.entries.map((entry, index) => (
+                                  <li key={`${entry.path}-${entry.kind}-${index}`}>
+                                    <strong>{entry.kind.toUpperCase()}</strong>
+                                    <span>{entry.path}</span>
+                                    <p className="meta-muted">
+                                      left={entry.left ?? "<none>"} | right={entry.right ?? "<none>"}
+                                    </p>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="bundle-preview-grid">
+                              <section className="empty-state-card" aria-label="Left bundle snapshot">
+                                <h3>Left Snapshot</h3>
+                                <pre className="terminal-window">{explorerDiff.leftPreview}</pre>
+                              </section>
+                              <section className="empty-state-card" aria-label="Right bundle snapshot">
+                                <h3>Right Snapshot</h3>
+                                <pre className="terminal-window">{explorerDiff.rightPreview}</pre>
+                              </section>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="meta-muted">Diff unavailable until both sources are valid.</p>
+                        )}
+                      </section>
+                    )}
+
+                    <section className="bundle-preview-grid" aria-label="Bundle raw previews">
+                      <section className="empty-state-card">
+                        <h3>Bundle A JSON Preview</h3>
+                        <pre className="terminal-window">{explorerPrimaryPreview ?? "(not available)"}</pre>
+                      </section>
+                      <section className="empty-state-card">
+                        <h3>Bundle B JSON Preview</h3>
+                        <pre className="terminal-window">{explorerSecondaryPreview ?? "(not loaded)"}</pre>
+                      </section>
+                    </section>
+                  </>
                 )}
               </motion.div>
             )}
