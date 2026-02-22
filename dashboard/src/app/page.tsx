@@ -142,16 +142,19 @@ import {
 } from "@/engine/runHistoryStore";
 import {
   buildRunDetailsModel,
-  buildShareSafeRunExportJson,
-  resolveRunHistorySelection,
+  buildRunDetailsModelFromShareSafeExport,
+  buildShareSafeRunExport,
+  buildShareSafeRunExportJsonFromPayload,
   RUN_DETAILS_ERROR_PREVIEW_LIMIT,
   RUN_DETAILS_PREVIEW_LIMIT,
   truncateRunDetails,
   type RunDetailsSection,
+  type ShareSafeRunExport,
 } from "@/engine/runShareSafeExport";
 import {
   buildRunHistoryShareSafeDiff,
   buildRunHistoryShareSafeDiffCopyText,
+  buildRunHistoryShareSafeDiffFromExports,
   canCompareRunHistory,
   createRunHistoryCompareSelection,
   sanitizeRunHistoryCompareSelection,
@@ -160,6 +163,15 @@ import {
   swapRunHistoryCompareSelection,
   type RunHistoryCompareRole,
 } from "@/engine/runHistoryCompare";
+import {
+  buildCaseBundle,
+  buildCaseBundleJson,
+  filterCaseBundleRunListItems,
+  parseCaseBundleJson,
+  toCaseBundleRunListItems,
+  type CaseBundle,
+  type CaseBundleRunListItem,
+} from "@/engine/caseBundle";
 import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
@@ -199,6 +211,20 @@ interface TaskRowSummary {
   reason: string;
   lastRunAt: string | null;
   outputSnippet: string;
+}
+
+interface RunHistoryListRow {
+  id: string;
+  bundleLabel: string;
+  badge: HealthBadge | null;
+  commandId: string | null;
+  reasonCode: string | null;
+  bundleId: string;
+  startedAt: string | null;
+  pinned: boolean;
+  source: "history" | "case";
+  entry?: RunHistoryEntry;
+  shareSafeExport: ShareSafeRunExport;
 }
 
 const TASK_VISIBLE_STEP = 200;
@@ -348,6 +374,8 @@ export default function Home() {
   const [runHistorySortOrder, setRunHistorySortOrder] = useState<RunHistorySortOrder>("newest");
   const [confirmRunHistoryClear, setConfirmRunHistoryClear] = useState(false);
   const [runHistoryPersistenceNotice, setRunHistoryPersistenceNotice] = useState<string | null>(null);
+  const [caseBundleMode, setCaseBundleMode] = useState<CaseBundle | null>(null);
+  const [caseModeNotice, setCaseModeNotice] = useState<string | null>(null);
   const [runDetailsExpanded, setRunDetailsExpanded] = useState<Record<RunDetailsSection, boolean>>({
     input: false,
     output: false,
@@ -417,6 +445,7 @@ export default function Home() {
   const runHistoryPanelRef = useRef<HTMLElement | null>(null);
   const runHistorySearchInputRef = useRef<HTMLInputElement | null>(null);
   const runHistoryDetailsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const caseBundleImportInputRef = useRef<HTMLInputElement | null>(null);
   const presetsImportInputRef = useRef<HTMLInputElement | null>(null);
   const sessionsListRef = useRef<HTMLDivElement | null>(null);
   const tasksSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1796,9 +1825,60 @@ export default function Home() {
     [runHistoryEntries, runHistoryFilter],
   );
 
+  const filteredCaseBundleRuns = useMemo<CaseBundleRunListItem[]>(() => {
+    if (!caseBundleMode) {
+      return [];
+    }
+    return filterCaseBundleRunListItems(toCaseBundleRunListItems(caseBundleMode), runHistoryFilter);
+  }, [caseBundleMode, runHistoryFilter]);
+
+  const activeRunHistoryRows = useMemo<RunHistoryListRow[]>(() => {
+    if (caseBundleMode) {
+      return filteredCaseBundleRuns.map((item) => ({
+        id: item.id,
+        bundleLabel: item.bundleLabel,
+        badge: item.badge,
+        commandId: item.commandId,
+        reasonCode: item.reasonCode,
+        bundleId: item.bundleId,
+        startedAt: item.startedAt,
+        pinned: false,
+        source: "case",
+        shareSafeExport: item.run,
+      }));
+    }
+
+    const rows: RunHistoryListRow[] = [];
+    for (const entry of filteredRunHistoryEntries) {
+      const shareSafeExport = buildShareSafeRunExport(entry);
+      if (!shareSafeExport) {
+        continue;
+      }
+      rows.push({
+        id: entry.id,
+        bundleLabel: entry.bundleLabel,
+        badge: entry.badge,
+        commandId: entry.commandId,
+        reasonCode: entry.reasonCode,
+        bundleId: entry.bundleId,
+        startedAt: entry.startedAt,
+        pinned: entry.pinned,
+        source: "history",
+        entry,
+        shareSafeExport,
+      });
+    }
+    return rows;
+  }, [caseBundleMode, filteredCaseBundleRuns, filteredRunHistoryEntries]);
+
+  const runHistoryTotalCount = useMemo(
+    () => (caseBundleMode ? caseBundleMode.runs.length : runHistoryEntries.length),
+    [caseBundleMode, runHistoryEntries.length],
+  );
+
   const runHistoryVisibleIds = useMemo(
-    () => filteredRunHistoryEntries.map((entry) => entry.id),
-    [filteredRunHistoryEntries],
+    () => activeRunHistoryRows.map((entry) => entry.id),
+    [activeRunHistoryRows],
   );
 
   const runHistoryCanCompareEntries = useMemo(
@@ -1806,39 +1886,62 @@ export default function Home() {
     [runHistoryVisibleIds],
   );
 
-  const selectedRunHistoryEntry = useMemo(() => {
+  const selectedRunHistoryRow = useMemo(() => {
     if (!selectedRunHistoryId) {
       return null;
     }
-    return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? null;
-  }, [filteredRunHistoryEntries, selectedRunHistoryId]);
+    return activeRunHistoryRows.find((entry) => entry.id === selectedRunHistoryId) ?? null;
+  }, [activeRunHistoryRows, selectedRunHistoryId]);
 
-  const compareBaseRunHistoryEntry = useMemo(
-    () =>
-      runHistoryCompareSelection.baseRunId
-        ? filteredRunHistoryEntries.find((entry) => entry.id === runHistoryCompareSelection.baseRunId) ?? null
-        : null,
-    [filteredRunHistoryEntries, runHistoryCompareSelection.baseRunId],
+  const selectedRunHistoryEntry = useMemo(
+    () => (selectedRunHistoryRow?.source === "history" ? selectedRunHistoryRow.entry ?? null : null),
+    [selectedRunHistoryRow],
   );
 
-  const compareTargetRunHistoryEntry = useMemo(
+  const selectedRunShareSafeExport = useMemo(() => selectedRunHistoryRow?.shareSafeExport ?? null, [selectedRunHistoryRow]);
+
+  const compareBaseRunHistoryRow = useMemo(
+    () =>
+      runHistoryCompareSelection.baseRunId
+        ? activeRunHistoryRows.find((entry) => entry.id === runHistoryCompareSelection.baseRunId) ?? null
+        : null,
+    [activeRunHistoryRows, runHistoryCompareSelection.baseRunId],
+  );
+
+  const compareTargetRunHistoryRow = useMemo(
     () =>
       runHistoryCompareSelection.targetRunId
-        ? filteredRunHistoryEntries.find((entry) => entry.id === runHistoryCompareSelection.targetRunId) ?? null
+        ? activeRunHistoryRows.find((entry) => entry.id === runHistoryCompareSelection.targetRunId) ?? null
         : null,
-    [filteredRunHistoryEntries, runHistoryCompareSelection.targetRunId],
+    [activeRunHistoryRows, runHistoryCompareSelection.targetRunId],
   );
 
   const runHistoryCompareDiff = useMemo(() => {
-    if (!runHistoryCompareSelection.enabled || !compareBaseRunHistoryEntry || !compareTargetRunHistoryEntry) {
+    if (!runHistoryCompareSelection.enabled || !compareBaseRunHistoryRow || !compareTargetRunHistoryRow) {
       return null;
     }
-    return buildRunHistoryShareSafeDiff(compareBaseRunHistoryEntry, compareTargetRunHistoryEntry);
-  }, [compareBaseRunHistoryEntry, compareTargetRunHistoryEntry, runHistoryCompareSelection.enabled]);
+    if (compareBaseRunHistoryRow.source === "history" && compareTargetRunHistoryRow.source === "history") {
+      const baseEntry = compareBaseRunHistoryRow.entry;
+      const targetEntry = compareTargetRunHistoryRow.entry;
+      if (!baseEntry || !targetEntry) {
+        return null;
+      }
+      return buildRunHistoryShareSafeDiff(baseEntry, targetEntry);
+    }
+    return buildRunHistoryShareSafeDiffFromExports(
+      compareBaseRunHistoryRow.shareSafeExport,
+      compareTargetRunHistoryRow.shareSafeExport,
+    );
+  }, [compareBaseRunHistoryRow, compareTargetRunHistoryRow, runHistoryCompareSelection.enabled]);
 
   const selectedRunDetails = useMemo(
-    () => (selectedRunHistoryEntry ? buildRunDetailsModel(selectedRunHistoryEntry) : null),
-    [selectedRunHistoryEntry],
+    () =>
+      selectedRunShareSafeExport
+        ? buildRunDetailsModelFromShareSafeExport(selectedRunShareSafeExport)
+        : selectedRunHistoryEntry
+          ? buildRunDetailsModel(selectedRunHistoryEntry)
+          : null,
+    [selectedRunHistoryEntry, selectedRunShareSafeExport],
   );
 
   const inputDetailsPreview = useMemo(
@@ -2049,11 +2152,13 @@ export default function Home() {
   }, [savedViews]);
 
   useEffect(() => {
-    const resolvedSelection = resolveRunHistorySelection(filteredRunHistoryEntries, selectedRunHistoryId);
-    if (resolvedSelection !== selectedRunHistoryId) {
-      setSelectedRunHistoryId(resolvedSelection);
+    if (!selectedRunHistoryId) {
+      return;
     }
-  }, [filteredRunHistoryEntries, selectedRunHistoryId]);
+    if (!runHistoryVisibleIds.includes(selectedRunHistoryId)) {
+      setSelectedRunHistoryId(null);
+    }
+  }, [runHistoryVisibleIds, selectedRunHistoryId]);
 
   useEffect(() => {
     setRunHistoryCompareSelection((previous) => {
@@ -2417,20 +2522,99 @@ export default function Home() {
   }, []);
 
   const exportSelectedRunShareSafe = useCallback((): void => {
-    if (!selectedRunHistoryEntry) {
+    if (!selectedRunShareSafeExport || !selectedRunHistoryId) {
       setFriendlyMessage("Select a run history entry first.");
       return;
     }
 
-    const json = buildShareSafeRunExportJson(selectedRunHistoryEntry);
-    if (!json) {
-      setFriendlyMessage("Run history entry failed share-safe export validation.");
+    const json = buildShareSafeRunExportJsonFromPayload(selectedRunShareSafeExport);
+    downloadTextPayload(`nlx-run-share-safe-${selectedRunHistoryId}.json`, json);
+    setFriendlyMessage("Exported share-safe run JSON.");
+  }, [downloadTextPayload, selectedRunHistoryId, selectedRunShareSafeExport]);
+
+  const exportCaseBundleFile = useCallback((): void => {
+    if (activeRunHistoryRows.length === 0) {
+      setFriendlyMessage("No visible runs available for case bundle export.");
       return;
     }
+    const createdAt = new Date().toISOString();
+    const comparePairs =
+      runHistoryCompareSelection.enabled && runHistoryCompareSelection.baseRunId && runHistoryCompareSelection.targetRunId
+        ? [
+            {
+              baseRunId: runHistoryCompareSelection.baseRunId,
+              targetRunId: runHistoryCompareSelection.targetRunId,
+            },
+          ]
+        : [];
+    const bundle = buildCaseBundle({
+      createdAt,
+      guiBuildId: GUI_BUILD_ID,
+      runs: activeRunHistoryRows.map((entry) => entry.shareSafeExport),
+      comparePairs,
+    });
+    const fileStamp = createdAt.replace(/[:]/g, "-");
+    downloadTextPayload(`nlx-case-bundle-${fileStamp}.json`, buildCaseBundleJson(bundle));
+    setCaseModeNotice("Exported share-safe case bundle.");
+    setFriendlyMessage("Case bundle exported (share-safe).");
+  }, [activeRunHistoryRows, downloadTextPayload, runHistoryCompareSelection]);
 
-    downloadTextPayload(`nlx-run-share-safe-${selectedRunHistoryEntry.id}.json`, json);
-    setFriendlyMessage("Exported share-safe run JSON.");
-  }, [downloadTextPayload, selectedRunHistoryEntry]);
+  const openCaseBundleImportPicker = useCallback((): void => {
+    caseBundleImportInputRef.current?.click();
+  }, []);
+
+  const importCaseBundleFromFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+      let payload = "";
+      try {
+        payload = await file.text();
+      } catch {
+        setCaseModeNotice("Failed to read case bundle file.");
+        setFriendlyMessage("Case bundle import failed.");
+        return;
+      }
+      const parsed = parseCaseBundleJson(payload);
+      if (!parsed.ok) {
+        setCaseModeNotice(parsed.error);
+        setFriendlyMessage("Case bundle import failed.");
+        return;
+      }
+      setCaseBundleMode(parsed.bundle);
+      setSelectedRunHistoryId(parsed.bundle.runs[0]?.runId ?? null);
+      const firstCompare = parsed.bundle.compares[0];
+      if (firstCompare) {
+        setRunHistoryCompareSelection({
+          enabled: true,
+          baseRunId: firstCompare.baseRunId,
+          targetRunId: firstCompare.targetRunId,
+        });
+      } else {
+        setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+      }
+      if (parsed.warnings.length > 0) {
+        setCaseModeNotice(`Imported with warnings: ${parsed.warnings.join(" ")}`);
+      } else {
+        setCaseModeNotice("Case mode active (session-only, read-only).");
+      }
+      setFriendlyMessage(`Imported case bundle with ${parsed.bundle.runs.length} run(s).`);
+      setLiveMessage("Case mode active.");
+    },
+    [],
+  );
+
+  const exitCaseMode = useCallback((): void => {
+    setCaseBundleMode(null);
+    setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+    setSelectedRunHistoryId(null);
+    setCaseModeNotice("Exited case mode.");
+    setFriendlyMessage("Returned to local run history.");
+    setLiveMessage("Case mode exited.");
+  }, []);
 
   const exportSelectedSessionJson = useCallback((): void => {
     if (!selectedSession) {
@@ -2955,7 +3139,7 @@ export default function Home() {
         return;
       }
 
-      const entryIds = filteredRunHistoryEntries.map((entry) => entry.id);
+      const entryIds = activeRunHistoryRows.map((entry) => entry.id);
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const nextRunId = moveRunHistorySelection(
@@ -3003,7 +3187,7 @@ export default function Home() {
     bundleExportOpen,
     clearRunHistoryCompare,
     consoleHelpOpen,
-    filteredRunHistoryEntries,
+    activeRunHistoryRows,
     assignRunHistoryCompareRole,
     runHistoryCompareSelection.enabled,
     selectedRunHistoryId,
@@ -4105,6 +4289,16 @@ export default function Home() {
                         <div className="sessions-header">
                           <h3>Run History + Replay</h3>
                           <div className="sessions-header-actions">
+                            <input
+                              ref={caseBundleImportInputRef}
+                              type="file"
+                              accept="application/json"
+                              className="sr-only"
+                              onChange={(event) => {
+                                void importCaseBundleFromFile(event);
+                              }}
+                              aria-label="Import case bundle file"
+                            />
                             <button
                               className={runHistoryCompareSelection.enabled ? "btn-theme" : "btn-muted"}
                               type="button"
@@ -4115,10 +4309,37 @@ export default function Home() {
                               <ChevronRight className="w-4 h-4" /> {runHistoryCompareSelection.enabled ? "Exit Compare" : "Compare"}
                             </button>
                             <button
+                              className="btn-theme"
+                              type="button"
+                              onClick={exportCaseBundleFile}
+                              disabled={activeRunHistoryRows.length === 0}
+                              aria-label="Export case bundle from visible runs"
+                            >
+                              <Download className="w-4 h-4" /> Export Case Bundle
+                            </button>
+                            <button
+                              className="btn-muted"
+                              type="button"
+                              onClick={openCaseBundleImportPicker}
+                              aria-label="Import case bundle"
+                            >
+                              <FileJson2 className="w-4 h-4" /> Import Case Bundle
+                            </button>
+                            {caseBundleMode && (
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={exitCaseMode}
+                                aria-label="Exit imported case mode"
+                              >
+                                <X className="w-4 h-4" /> Exit Case Mode
+                              </button>
+                            )}
+                            <button
                               className="btn-muted"
                               type="button"
                               onClick={requestRunHistoryClear}
-                              disabled={runHistoryEntries.length === 0 || confirmRunHistoryClear}
+                              disabled={caseBundleMode !== null || runHistoryEntries.length === 0 || confirmRunHistoryClear}
                               aria-label="Clear run history bundles"
                             >
                               <Trash2 className="w-4 h-4" /> Clear
@@ -4145,6 +4366,7 @@ export default function Home() {
                             )}
                           </div>
                         </div>
+                        {caseBundleMode && <p className="meta-muted">Case mode is active. Imported runs are read-only and session-only.</p>}
                         {!runHistoryCanCompareEntries && (
                           <p className="meta-muted">Compare mode needs at least two visible runs.</p>
                         )}
@@ -4169,6 +4391,21 @@ export default function Home() {
                                 type="button"
                                 onClick={() => setRunHistoryPersistenceNotice(null)}
                                 aria-label="Dismiss run history notice"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {caseModeNotice && (
+                          <div className="empty-state-card" aria-live="polite" aria-label="Case mode notice">
+                            <p className="meta-muted">{caseModeNotice}</p>
+                            <div className="sessions-header-actions">
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={() => setCaseModeNotice(null)}
+                                aria-label="Dismiss case mode notice"
                               >
                                 Dismiss
                               </button>
@@ -4212,12 +4449,12 @@ export default function Home() {
                           </label>
                         </div>
                         <p className="meta-muted" aria-live="polite">
-                          Showing {filteredRunHistoryEntries.length} of {runHistoryEntries.length} run bundles.
+                          Showing {activeRunHistoryRows.length} of {runHistoryTotalCount} run bundles.
                         </p>
 
-                        {runHistoryEntries.length === 0 ? (
+                        {runHistoryTotalCount === 0 ? (
                           <p className="meta-muted">No replay bundles stored yet.</p>
-                        ) : filteredRunHistoryEntries.length === 0 ? (
+                        ) : activeRunHistoryRows.length === 0 ? (
                           <div className="empty-state-card">
                             <p className="meta-muted">No runs match your search/filters.</p>
                             <div className="sessions-header-actions">
@@ -4233,8 +4470,8 @@ export default function Home() {
                           </div>
                         ) : (
                           <div className="sessions-list" role="list" aria-label="Run history list">
-                            {filteredRunHistoryEntries.map((entry) => {
-                              const isSelected = selectedRunHistoryEntry?.id === entry.id;
+                            {activeRunHistoryRows.map((entry) => {
+                              const isSelected = selectedRunHistoryRow?.id === entry.id;
                               return (
                                 <div key={entry.id} className={`session-row ${isSelected ? "session-row-active" : ""}`} role="listitem">
                                   <button
@@ -4279,7 +4516,7 @@ export default function Home() {
                                       className="btn-theme"
                                       type="button"
                                       onClick={() => void replayRunHistory(entry.id)}
-                                      disabled={isBusy}
+                                      disabled={isBusy || entry.source === "case"}
                                       aria-label={`Replay run history ${entry.bundleLabel}`}
                                     >
                                       <Play className="w-4 h-4" /> Replay
@@ -4288,6 +4525,7 @@ export default function Home() {
                                       className="btn-muted"
                                       type="button"
                                       onClick={() => loadRunHistoryIntoEditor(entry.id)}
+                                      disabled={entry.source === "case"}
                                       aria-label={`Load run history ${entry.bundleLabel} into editor`}
                                     >
                                       <ListChecks className="w-4 h-4" /> Load Editor
@@ -4296,6 +4534,7 @@ export default function Home() {
                                       className="btn-muted"
                                       type="button"
                                       onClick={() => pinRunHistoryAsSavedView(entry.id)}
+                                      disabled={entry.source === "case"}
                                       aria-label={`Pin ${entry.bundleLabel} as saved view`}
                                     >
                                       <Link2 className="w-4 h-4" /> Pin View
@@ -4326,6 +4565,7 @@ export default function Home() {
                                       className="btn-muted session-pin-btn"
                                       type="button"
                                       onClick={() => toggleRunHistoryPinnedState(entry.id)}
+                                      disabled={entry.source === "case"}
                                       aria-label={entry.pinned ? "Unpin run history entry" : "Pin run history entry"}
                                     >
                                       {entry.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
@@ -4371,8 +4611,8 @@ export default function Home() {
                               </div>
                             </div>
                             <p className="meta-muted">
-                              Base: {compareBaseRunHistoryEntry?.bundleLabel ?? "none selected"} | Target:{" "}
-                              {compareTargetRunHistoryEntry?.bundleLabel ?? "none selected"}
+                              Base: {compareBaseRunHistoryRow?.bundleLabel ?? "none selected"} | Target:{" "}
+                              {compareTargetRunHistoryRow?.bundleLabel ?? "none selected"}
                             </p>
                             <p className="meta-muted">
                               Keyboard: use arrow keys to select a row, then press <kbd>b</kbd> for Base, <kbd>t</kbd> for Target,{" "}
