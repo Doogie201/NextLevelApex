@@ -31,6 +31,24 @@ describe("urlState helpers", () => {
     expect(parseUrlState("?layout=bogus").workspace).toBe("balanced");
   });
 
+  it("supports bundles view in parse and serialize paths", () => {
+    expect(parseUrlState("?view=bundles").view).toBe("bundles");
+
+    const search = toUrlSearch({
+      view: "bundles",
+      eventId: null,
+      sessionId: null,
+      compareSessionId: null,
+      severity: "ALL",
+      inspectorSection: "summary",
+      timelineGroup: "chronological",
+      workspace: "balanced",
+      q: "",
+    });
+    const params = new URLSearchParams(search);
+    expect(params.get("view")).toBe("bundles");
+  });
+
   it("serializes state to canonical query params", () => {
     const search = toUrlSearch({
       view: "tasks",

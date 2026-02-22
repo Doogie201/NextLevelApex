@@ -1,4 +1,4 @@
-export type UrlViewId = "dashboard" | "tasks" | "output";
+export type UrlViewId = "dashboard" | "tasks" | "output" | "bundles";
 export type UrlSeverityFilter = "ALL" | "PASS" | "WARN" | "FAIL" | "RUNNING";
 export type UrlInspectorSection = "summary" | "events" | "tasks";
 export type UrlTimelineGroup = "chronological" | "severity" | "phase";
@@ -28,7 +28,7 @@ const DEFAULT_URL_STATE: UrlState = {
   q: "",
 };
 
-const VIEW_VALUES = new Set<UrlViewId>(["dashboard", "tasks", "output"]);
+const VIEW_VALUES = new Set<UrlViewId>(["dashboard", "tasks", "output", "bundles"]);
 const INSPECTOR_VALUES = new Set<UrlInspectorSection>(["summary", "events", "tasks"]);
 const TIMELINE_GROUP_VALUES = new Set<UrlTimelineGroup>(["chronological", "severity", "phase"]);
 const WORKSPACE_VALUES = new Set<UrlWorkspaceMode>(["balanced", "focus-output", "focus-tasks", "focus-inspector"]);
