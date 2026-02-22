@@ -1,6 +1,8 @@
 export type UrlViewId = "dashboard" | "tasks" | "output";
 export type UrlSeverityFilter = "ALL" | "PASS" | "WARN" | "FAIL" | "RUNNING";
 export type UrlInspectorSection = "summary" | "events" | "tasks";
+export type UrlTimelineGroup = "chronological" | "severity" | "phase";
+export type UrlWorkspaceMode = "balanced" | "focus-output" | "focus-tasks" | "focus-inspector";
 
 export interface UrlState {
   view: UrlViewId;
@@ -9,6 +11,8 @@ export interface UrlState {
   compareSessionId: string | null;
   severity: UrlSeverityFilter;
   inspectorSection: UrlInspectorSection;
+  timelineGroup: UrlTimelineGroup;
+  workspace: UrlWorkspaceMode;
   q: string;
 }
 
@@ -19,11 +23,15 @@ const DEFAULT_URL_STATE: UrlState = {
   compareSessionId: null,
   severity: "ALL",
   inspectorSection: "summary",
+  timelineGroup: "chronological",
+  workspace: "balanced",
   q: "",
 };
 
 const VIEW_VALUES = new Set<UrlViewId>(["dashboard", "tasks", "output"]);
 const INSPECTOR_VALUES = new Set<UrlInspectorSection>(["summary", "events", "tasks"]);
+const TIMELINE_GROUP_VALUES = new Set<UrlTimelineGroup>(["chronological", "severity", "phase"]);
+const WORKSPACE_VALUES = new Set<UrlWorkspaceMode>(["balanced", "focus-output", "focus-tasks", "focus-inspector"]);
 
 function parseInspectorSection(value: string | null): UrlInspectorSection {
   if (!value) {
@@ -47,6 +55,20 @@ function parseSeverity(value: string | null): UrlSeverityFilter {
     return "RUNNING";
   }
   return "ALL";
+}
+
+function parseTimelineGroup(value: string | null): UrlTimelineGroup {
+  if (!value) {
+    return "chronological";
+  }
+  return TIMELINE_GROUP_VALUES.has(value as UrlTimelineGroup) ? (value as UrlTimelineGroup) : "chronological";
+}
+
+function parseWorkspace(value: string | null): UrlWorkspaceMode {
+  if (!value) {
+    return "balanced";
+  }
+  return WORKSPACE_VALUES.has(value as UrlWorkspaceMode) ? (value as UrlWorkspaceMode) : "balanced";
 }
 
 function serializeSeverity(value: UrlSeverityFilter): string {
@@ -80,6 +102,8 @@ export function parseUrlState(search: string): UrlState {
     compareSessionId: compareValue && compareValue.trim().length > 0 ? compareValue.trim() : null,
     severity: parseSeverity(params.get("severity")),
     inspectorSection: parseInspectorSection(params.get("panel")),
+    timelineGroup: parseTimelineGroup(params.get("group")),
+    workspace: parseWorkspace(params.get("layout")),
     q: qValue ?? "",
   };
 }
@@ -101,6 +125,12 @@ export function toUrlSearch(state: UrlState): string {
   }
   if (state.inspectorSection !== "summary") {
     params.set("panel", state.inspectorSection);
+  }
+  if (state.timelineGroup !== "chronological") {
+    params.set("group", state.timelineGroup);
+  }
+  if (state.workspace !== "balanced") {
+    params.set("layout", state.workspace);
   }
   const trimmedQuery = state.q.trim();
   if (trimmedQuery.length > 0) {

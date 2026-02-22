@@ -3,7 +3,9 @@ import { parseUrlState, toUrlSearch } from "../urlState";
 describe("urlState helpers", () => {
   it("parses valid deep-link values", () => {
     expect(
-      parseUrlState("?view=output&event=evt-123&session=run-1&compare=run-2&panel=events&severity=warn&q=cloudflared"),
+      parseUrlState(
+        "?view=output&event=evt-123&session=run-1&compare=run-2&panel=events&severity=warn&group=severity&layout=focus-output&q=cloudflared",
+      ),
     ).toEqual({
       view: "output",
       eventId: "evt-123",
@@ -11,6 +13,8 @@ describe("urlState helpers", () => {
       compareSessionId: "run-2",
       severity: "WARN",
       inspectorSection: "events",
+      timelineGroup: "severity",
+      workspace: "focus-output",
       q: "cloudflared",
     });
   });
@@ -23,6 +27,8 @@ describe("urlState helpers", () => {
     expect(parseUrlState("?view=bad&event=   ").eventId).toBeNull();
     expect(parseUrlState("?compare=   ").compareSessionId).toBeNull();
     expect(parseUrlState("?panel=bogus").inspectorSection).toBe("summary");
+    expect(parseUrlState("?group=bogus").timelineGroup).toBe("chronological");
+    expect(parseUrlState("?layout=bogus").workspace).toBe("balanced");
   });
 
   it("serializes state to canonical query params", () => {
@@ -33,6 +39,8 @@ describe("urlState helpers", () => {
       compareSessionId: "run-43",
       severity: "FAIL",
       inspectorSection: "tasks",
+      timelineGroup: "phase",
+      workspace: "focus-inspector",
       q: "dns leak",
     });
     const params = new URLSearchParams(search);
@@ -43,6 +51,8 @@ describe("urlState helpers", () => {
     expect(params.get("compare")).toBe("run-43");
     expect(params.get("severity")).toBe("error");
     expect(params.get("panel")).toBe("tasks");
+    expect(params.get("group")).toBe("phase");
+    expect(params.get("layout")).toBe("focus-inspector");
     expect(params.get("q")).toBe("dns leak");
   });
 
@@ -54,6 +64,8 @@ describe("urlState helpers", () => {
       compareSessionId: null,
       severity: "ALL",
       inspectorSection: "summary",
+      timelineGroup: "chronological",
+      workspace: "balanced",
       q: "   ",
     });
     const params = new URLSearchParams(search);
@@ -64,6 +76,8 @@ describe("urlState helpers", () => {
     expect(params.has("compare")).toBe(false);
     expect(params.has("severity")).toBe(false);
     expect(params.has("panel")).toBe(false);
+    expect(params.has("group")).toBe(false);
+    expect(params.has("layout")).toBe(false);
     expect(params.has("q")).toBe(false);
   });
 });

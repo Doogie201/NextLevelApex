@@ -54,6 +54,7 @@ import {
   parseUrlState,
   toUrlSearch,
   type UrlInspectorSection,
+  type UrlWorkspaceMode,
   type UrlSeverityFilter,
   type UrlViewId,
 } from "@/engine/urlState";
@@ -93,6 +94,13 @@ import {
   parsePresetsImportJson,
 } from "@/engine/presetsExport";
 import {
+  addSavedView,
+  deleteSavedView,
+  loadSavedViews,
+  storeSavedViews,
+  type SavedViewEntry,
+} from "@/engine/savedViewsStore";
+import {
   buildRunCenterModel,
   validatePresetName,
   type RunCenterCommandId,
@@ -129,6 +137,7 @@ import {
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
 type InspectorSection = UrlInspectorSection;
+type WorkspaceMode = UrlWorkspaceMode;
 interface TaskRowSummary {
   taskName: string;
   status: TaskResult["status"];
@@ -259,6 +268,8 @@ export default function Home() {
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
   const [presets, setPresets] = useState<RunPreset[]>([]);
+  const [savedViews, setSavedViews] = useState<SavedViewEntry[]>([]);
+  const [savedViewName, setSavedViewName] = useState("Workspace");
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [presetName, setPresetName] = useState("Diagnose baseline");
   const [presetCommandId, setPresetCommandId] = useState<RunCenterCommandId>("diagnose");
@@ -272,6 +283,7 @@ export default function Home() {
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [timelineGroupMode, setTimelineGroupMode] = useState<TimelineGroupMode>("chronological");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("balanced");
   const [sessionCommandFilter, setSessionCommandFilter] = useState<"ALL" | CommandId>("ALL");
   const [sessionBadgeFilter, setSessionBadgeFilter] = useState<"ALL" | HealthBadge>("ALL");
   const [sessionTimeRange, setSessionTimeRange] = useState<RunSessionTimeRange>("all");
@@ -332,6 +344,21 @@ export default function Home() {
     [presets, selectedPresetId],
   );
 
+  const applyParsedUrlState = useCallback(
+    (parsed: ReturnType<typeof parseUrlState>): void => {
+      setActiveView(parsed.view);
+      setSelectedEventId(parsed.eventId);
+      setSelectedSessionId(parsed.sessionId);
+      setCompareSessionId(parsed.compareSessionId);
+      setSeverityFilter(parsed.severity);
+      setInspectorSection(parsed.inspectorSection);
+      setTimelineGroupMode(parsed.timelineGroup);
+      setWorkspaceMode(parsed.workspace);
+      setSearchQuery(parsed.q);
+    },
+    [],
+  );
+
   const runCenterTaskNames = useMemo(() => parsePresetTaskInput(presetTaskInput), [presetTaskInput]);
 
   const runCenterModel = useMemo(
@@ -364,15 +391,9 @@ export default function Home() {
       return;
     }
     const parsed = parseUrlState(window.location.search);
-    setActiveView(parsed.view);
-    setSelectedEventId(parsed.eventId);
-    setSelectedSessionId(parsed.sessionId);
-    setCompareSessionId(parsed.compareSessionId);
-    setSeverityFilter(parsed.severity);
-    setInspectorSection(parsed.inspectorSection);
-    setSearchQuery(parsed.q);
+    applyParsedUrlState(parsed);
     setIsUrlStateReady(true);
-  }, []);
+  }, [applyParsedUrlState]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -441,6 +462,9 @@ export default function Home() {
     if (loadedPresets.length > 0) {
       setSelectedPresetId(loadedPresets[0].id);
     }
+
+    const loadedSavedViews = loadSavedViews(window.localStorage);
+    setSavedViews(loadedSavedViews);
   }, []);
 
   useEffect(() => {
@@ -463,6 +487,13 @@ export default function Home() {
     }
     storeRunPresets(window.localStorage, presets);
   }, [presets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeSavedViews(window.localStorage, savedViews);
+  }, [savedViews]);
 
   useEffect(() => {
     if (presets.length === 0) {
@@ -506,6 +537,8 @@ export default function Home() {
       compareSessionId,
       severity: severityFilter,
       inspectorSection,
+      timelineGroup: timelineGroupMode,
+      workspace: workspaceMode,
       q: searchQuery,
     });
     const nextQuery = nextSearch.length > 0 ? `?${nextSearch}` : "";
@@ -516,11 +549,13 @@ export default function Home() {
     activeView,
     inspectorSection,
     isUrlStateReady,
+    timelineGroupMode,
     searchQuery,
     compareSessionId,
     selectedEventId,
     selectedSessionId,
     severityFilter,
+    workspaceMode,
   ]);
 
   useEffect(() => {
@@ -1248,11 +1283,10 @@ export default function Home() {
     tasksSearchInputRef.current?.select();
   }, []);
 
-  const copyCurrentDeepLink = useCallback(async (): Promise<void> => {
+  const buildCurrentViewUrl = useCallback((): string => {
     if (typeof window === "undefined") {
-      return;
+      return "";
     }
-
     const search = toUrlSearch({
       view: activeView,
       eventId: selectedEventId,
@@ -1260,17 +1294,80 @@ export default function Home() {
       compareSessionId,
       severity: severityFilter,
       inspectorSection,
+      timelineGroup: timelineGroupMode,
+      workspace: workspaceMode,
       q: searchQuery,
     });
-    const deepLink = `${window.location.origin}${window.location.pathname}${search.length > 0 ? `?${search}` : ""}`;
+    return `${window.location.origin}${window.location.pathname}${search.length > 0 ? `?${search}` : ""}`;
+  }, [
+    activeView,
+    compareSessionId,
+    inspectorSection,
+    searchQuery,
+    selectedEventId,
+    selectedSessionId,
+    severityFilter,
+    timelineGroupMode,
+    workspaceMode,
+  ]);
 
+  const copyCurrentDeepLink = useCallback(async (): Promise<void> => {
+    const deepLink = buildCurrentViewUrl();
+    if (!deepLink) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(deepLink);
       setFriendlyMessage("Copied deep link to current view and filters.");
     } catch {
       setFriendlyMessage("Clipboard write failed in this browser context.");
     }
-  }, [activeView, compareSessionId, inspectorSection, searchQuery, selectedEventId, selectedSessionId, severityFilter]);
+  }, [buildCurrentViewUrl]);
+
+  const saveCurrentView = useCallback((): void => {
+    const currentUrl = buildCurrentViewUrl();
+    if (!currentUrl) {
+      return;
+    }
+    setSavedViews((previous) => {
+      const result = addSavedView(previous, savedViewName, currentUrl);
+      setFriendlyMessage(`Saved view: ${result.savedName}.`);
+      return result.views;
+    });
+  }, [buildCurrentViewUrl, savedViewName]);
+
+  const copySavedViewLink = useCallback(async (savedView: SavedViewEntry): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(savedView.url);
+      setFriendlyMessage(`Copied saved view link: ${savedView.name}.`);
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, []);
+
+  const openSavedView = useCallback(
+    (savedView: SavedViewEntry): void => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      try {
+        const parsedUrl = new URL(savedView.url, window.location.origin);
+        const parsedState = parseUrlState(parsedUrl.search);
+        applyParsedUrlState(parsedState);
+        const nextSearch = parsedUrl.search;
+        window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}`);
+        setFriendlyMessage(`Opened saved view: ${savedView.name}.`);
+      } catch {
+        setFriendlyMessage(`Saved view is invalid: ${savedView.name}.`);
+      }
+    },
+    [applyParsedUrlState],
+  );
+
+  const removeSavedView = useCallback((name: string): void => {
+    setSavedViews((previous) => deleteSavedView(previous, name));
+    setFriendlyMessage(`Removed saved view: ${name}.`);
+  }, []);
 
   const handleShortcutDialogKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -1876,7 +1973,7 @@ export default function Home() {
         {liveMessage}
       </div>
       <div className="aurora-background" aria-hidden="true" />
-      <div className="meta-shell">
+      <div className={`meta-shell layout-${workspaceMode}`}>
         <header className="glass-card top-healthbar" aria-live="polite">
           <div className="health-title-row">
             <div>
@@ -2229,6 +2326,118 @@ export default function Home() {
                         ? ` | tasks ${selectedPreset.config.taskNames.join(", ")}`
                         : ""}
                     </p>
+                  )}
+                </section>
+
+                <section className="sessions-panel" aria-label="Workspace layout controls">
+                  <div className="sessions-header">
+                    <h3>Workspace</h3>
+                    <p className="meta-muted">Switch layout focus without changing execution behavior.</p>
+                  </div>
+                  <div className="sessions-export-center">
+                    <button
+                      type="button"
+                      className={`btn-muted ${workspaceMode === "balanced" ? "workspace-chip-active" : ""}`}
+                      onClick={() => setWorkspaceMode("balanced")}
+                      aria-pressed={workspaceMode === "balanced"}
+                    >
+                      Balanced
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-muted ${workspaceMode === "focus-output" ? "workspace-chip-active" : ""}`}
+                      onClick={() => setWorkspaceMode("focus-output")}
+                      aria-pressed={workspaceMode === "focus-output"}
+                    >
+                      Focus Output
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-muted ${workspaceMode === "focus-tasks" ? "workspace-chip-active" : ""}`}
+                      onClick={() => setWorkspaceMode("focus-tasks")}
+                      aria-pressed={workspaceMode === "focus-tasks"}
+                    >
+                      Focus Tasks
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-muted ${workspaceMode === "focus-inspector" ? "workspace-chip-active" : ""}`}
+                      onClick={() => setWorkspaceMode("focus-inspector")}
+                      aria-pressed={workspaceMode === "focus-inspector"}
+                    >
+                      Focus Inspector
+                    </button>
+                  </div>
+                </section>
+
+                <section className="sessions-panel" aria-label="Saved views">
+                  <div className="sessions-header">
+                    <h3>Saved Views</h3>
+                    <p className="meta-muted">Save a deterministic URL snapshot of current view, filters, and layout.</p>
+                  </div>
+                  <div className="sessions-filters">
+                    <label className="select-control" aria-label="Saved view name">
+                      <span>Name</span>
+                      <input
+                        type="text"
+                        value={savedViewName}
+                        maxLength={64}
+                        onChange={(event) => setSavedViewName(event.target.value)}
+                        aria-label="Saved view name"
+                      />
+                    </label>
+                    <div className="sessions-export-center">
+                      <button type="button" className="btn-theme" onClick={saveCurrentView} aria-label="Save current view">
+                        <FileJson2 className="w-4 h-4" /> Save View
+                      </button>
+                      <button type="button" className="btn-muted" onClick={() => void copyCurrentDeepLink()}>
+                        <Link2 className="w-4 h-4" /> Copy Current Link
+                      </button>
+                    </div>
+                  </div>
+                  {savedViews.length === 0 ? (
+                    <section className="empty-state-card" aria-live="polite" aria-label="Saved views empty state">
+                      <h3>No saved views yet</h3>
+                      <p className="meta-muted">
+                        Save the current workspace URL to quickly restore view, selected session/event, and filters.
+                      </p>
+                    </section>
+                  ) : (
+                    <div className="sessions-list" role="list" aria-label="Saved views list">
+                      {savedViews.map((savedView) => (
+                        <div key={`saved-view-${savedView.name}`} className="session-row" role="listitem">
+                          <button
+                            type="button"
+                            className="session-row-button"
+                            onClick={() => openSavedView(savedView)}
+                            aria-label={`Open saved view ${savedView.name}`}
+                          >
+                            <span className="session-row-heading">
+                              <strong>{savedView.name}</strong>
+                            </span>
+                            <span className="session-row-meta">{savedView.url}</span>
+                          </button>
+                          <div className="sessions-export-center">
+                            <button
+                              type="button"
+                              className="btn-muted session-pin-btn"
+                              onClick={() => void copySavedViewLink(savedView)}
+                              aria-label={`Copy link for ${savedView.name}`}
+                            >
+                              <Link2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-muted session-pin-btn"
+                              onClick={() => removeSavedView(savedView.name)}
+                              aria-label={`Delete saved view ${savedView.name}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </section>
               </motion.div>
