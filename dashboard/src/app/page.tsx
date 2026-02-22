@@ -150,6 +150,17 @@ import {
   type RunDetailsSection,
 } from "@/engine/runShareSafeExport";
 import {
+  buildRunHistoryShareSafeDiff,
+  buildRunHistoryShareSafeDiffCopyText,
+  canCompareRunHistory,
+  createRunHistoryCompareSelection,
+  sanitizeRunHistoryCompareSelection,
+  selectRunHistoryCompareRole,
+  setRunHistoryCompareMode,
+  swapRunHistoryCompareSelection,
+  type RunHistoryCompareRole,
+} from "@/engine/runHistoryCompare";
+import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
 } from "@/engine/sessionReport";
@@ -331,6 +342,7 @@ export default function Home() {
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
   const [runHistoryEntries, setRunHistoryEntries] = useState<RunHistoryEntry[]>([]);
   const [selectedRunHistoryId, setSelectedRunHistoryId] = useState<string | null>(null);
+  const [runHistoryCompareSelection, setRunHistoryCompareSelection] = useState(createRunHistoryCompareSelection);
   const [runHistoryQuery, setRunHistoryQuery] = useState("");
   const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>("all");
   const [runHistorySortOrder, setRunHistorySortOrder] = useState<RunHistorySortOrder>("newest");
@@ -1784,12 +1796,45 @@ export default function Home() {
     [runHistoryEntries, runHistoryFilter],
   );
 
+  const runHistoryVisibleIds = useMemo(
+    () => filteredRunHistoryEntries.map((entry) => entry.id),
+    [filteredRunHistoryEntries],
+  );
+
+  const runHistoryCanCompareEntries = useMemo(
+    () => canCompareRunHistory(runHistoryVisibleIds),
+    [runHistoryVisibleIds],
+  );
+
   const selectedRunHistoryEntry = useMemo(() => {
     if (!selectedRunHistoryId) {
       return null;
     }
     return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? null;
   }, [filteredRunHistoryEntries, selectedRunHistoryId]);
+
+  const compareBaseRunHistoryEntry = useMemo(
+    () =>
+      runHistoryCompareSelection.baseRunId
+        ? filteredRunHistoryEntries.find((entry) => entry.id === runHistoryCompareSelection.baseRunId) ?? null
+        : null,
+    [filteredRunHistoryEntries, runHistoryCompareSelection.baseRunId],
+  );
+
+  const compareTargetRunHistoryEntry = useMemo(
+    () =>
+      runHistoryCompareSelection.targetRunId
+        ? filteredRunHistoryEntries.find((entry) => entry.id === runHistoryCompareSelection.targetRunId) ?? null
+        : null,
+    [filteredRunHistoryEntries, runHistoryCompareSelection.targetRunId],
+  );
+
+  const runHistoryCompareDiff = useMemo(() => {
+    if (!runHistoryCompareSelection.enabled || !compareBaseRunHistoryEntry || !compareTargetRunHistoryEntry) {
+      return null;
+    }
+    return buildRunHistoryShareSafeDiff(compareBaseRunHistoryEntry, compareTargetRunHistoryEntry);
+  }, [compareBaseRunHistoryEntry, compareTargetRunHistoryEntry, runHistoryCompareSelection.enabled]);
 
   const selectedRunDetails = useMemo(
     () => (selectedRunHistoryEntry ? buildRunDetailsModel(selectedRunHistoryEntry) : null),
@@ -2011,6 +2056,20 @@ export default function Home() {
   }, [filteredRunHistoryEntries, selectedRunHistoryId]);
 
   useEffect(() => {
+    setRunHistoryCompareSelection((previous) => {
+      const next = sanitizeRunHistoryCompareSelection(previous, runHistoryVisibleIds);
+      if (
+        next.enabled === previous.enabled &&
+        next.baseRunId === previous.baseRunId &&
+        next.targetRunId === previous.targetRunId
+      ) {
+        return previous;
+      }
+      return next;
+    });
+  }, [runHistoryVisibleIds]);
+
+  useEffect(() => {
     if (!confirmRunHistoryClear) {
       return;
     }
@@ -2169,6 +2228,7 @@ export default function Home() {
     }
     setRunHistoryEntries(clearRunHistory());
     setSelectedRunHistoryId(null);
+    setRunHistoryCompareSelection(createRunHistoryCompareSelection());
     setRunHistoryErrors([]);
     setConfirmRunHistoryClear(false);
     setRunHistoryPersistenceNotice("Stored run history was cleared.");
@@ -2198,12 +2258,64 @@ export default function Home() {
     runHistorySearchInputRef.current?.focus();
   }, []);
 
+  const toggleRunHistoryCompareMode = useCallback((): void => {
+    setRunHistoryCompareSelection((previous) => {
+      const next = setRunHistoryCompareMode(previous, !previous.enabled, runHistoryVisibleIds);
+      if (next.enabled) {
+        setFriendlyMessage("Compare mode enabled. Pick base and target runs.");
+        setLiveMessage("Compare mode enabled.");
+      } else {
+        setFriendlyMessage("Compare mode disabled.");
+        setLiveMessage("Compare mode disabled.");
+      }
+      return next;
+    });
+  }, [runHistoryVisibleIds]);
+
+  const clearRunHistoryCompare = useCallback((): void => {
+    setRunHistoryCompareSelection(createRunHistoryCompareSelection());
+    setFriendlyMessage("Compare selection cleared.");
+    setLiveMessage("Compare selection cleared.");
+  }, []);
+
+  const assignRunHistoryCompareRole = useCallback(
+    (role: RunHistoryCompareRole, runId: string): void => {
+      setRunHistoryCompareSelection((previous) =>
+        selectRunHistoryCompareRole(previous, role, runId, runHistoryVisibleIds),
+      );
+      setFriendlyMessage(`${role === "base" ? "Base" : "Target"} run selected.`);
+      setLiveMessage(`${role === "base" ? "Base" : "Target"} run selected.`);
+    },
+    [runHistoryVisibleIds],
+  );
+
+  const swapRunHistoryCompareRoles = useCallback((): void => {
+    setRunHistoryCompareSelection((previous) => swapRunHistoryCompareSelection(previous));
+    setFriendlyMessage("Swapped base and target runs.");
+    setLiveMessage("Compare roles swapped.");
+  }, []);
+
+  const copyRunHistoryCompareDiff = useCallback(async (): Promise<void> => {
+    if (!runHistoryCompareDiff) {
+      setFriendlyMessage("Select both base and target runs to copy a diff.");
+      return;
+    }
+    const payload = buildRunHistoryShareSafeDiffCopyText(runHistoryCompareDiff);
+    try {
+      await navigator.clipboard.writeText(payload);
+      setFriendlyMessage("Copied share-safe run diff.");
+    } catch {
+      setFriendlyMessage("Clipboard write failed in this browser context.");
+    }
+  }, [runHistoryCompareDiff]);
+
   const clearStoredRunHistoryImmediately = useCallback((): void => {
     if (typeof window !== "undefined") {
       clearRunHistoryStorage(window.localStorage);
     }
     setRunHistoryEntries(clearRunHistory());
     setSelectedRunHistoryId(null);
+    setRunHistoryCompareSelection(createRunHistoryCompareSelection());
     setRunHistoryErrors([]);
     setConfirmRunHistoryClear(false);
     setRunHistoryPersistenceNotice("Stored run history was cleared.");
@@ -2825,6 +2937,11 @@ export default function Home() {
           setLiveMessage("Run history search blurred.");
           return;
         }
+        if (runHistoryCompareSelection.enabled) {
+          event.preventDefault();
+          clearRunHistoryCompare();
+          return;
+        }
         if (selectedRunHistoryId) {
           event.preventDefault();
           setSelectedRunHistoryId(null);
@@ -2859,6 +2976,19 @@ export default function Home() {
         return;
       }
 
+      if (runHistoryCompareSelection.enabled && selectedRunHistoryId) {
+        if (event.key.toLowerCase() === "b") {
+          event.preventDefault();
+          assignRunHistoryCompareRole("base", selectedRunHistoryId);
+          return;
+        }
+        if (event.key.toLowerCase() === "t") {
+          event.preventDefault();
+          assignRunHistoryCompareRole("target", selectedRunHistoryId);
+          return;
+        }
+      }
+
       if (event.key === "Enter" && selectedRunHistoryId) {
         event.preventDefault();
         runHistoryDetailsHeadingRef.current?.focus();
@@ -2871,8 +3001,11 @@ export default function Home() {
   }, [
     activeView,
     bundleExportOpen,
+    clearRunHistoryCompare,
     consoleHelpOpen,
     filteredRunHistoryEntries,
+    assignRunHistoryCompareRole,
+    runHistoryCompareSelection.enabled,
     selectedRunHistoryId,
     shortcutsOpen,
   ]);
@@ -3973,6 +4106,15 @@ export default function Home() {
                           <h3>Run History + Replay</h3>
                           <div className="sessions-header-actions">
                             <button
+                              className={runHistoryCompareSelection.enabled ? "btn-theme" : "btn-muted"}
+                              type="button"
+                              onClick={toggleRunHistoryCompareMode}
+                              disabled={!runHistoryCanCompareEntries}
+                              aria-label={runHistoryCompareSelection.enabled ? "Exit compare mode" : "Enter compare mode"}
+                            >
+                              <ChevronRight className="w-4 h-4" /> {runHistoryCompareSelection.enabled ? "Exit Compare" : "Compare"}
+                            </button>
+                            <button
                               className="btn-muted"
                               type="button"
                               onClick={requestRunHistoryClear}
@@ -4003,6 +4145,9 @@ export default function Home() {
                             )}
                           </div>
                         </div>
+                        {!runHistoryCanCompareEntries && (
+                          <p className="meta-muted">Compare mode needs at least two visible runs.</p>
+                        )}
                         <p className="meta-muted">
                           Stores share-safe bundle snapshots only. Replay runs immediately using validated configuration; Load
                           hydrates inputs without starting a run.
@@ -4114,6 +4259,13 @@ export default function Home() {
                                       >
                                         {entry.badge ?? "N/A"}
                                       </span>
+                                      {runHistoryCompareSelection.enabled && runHistoryCompareSelection.baseRunId === entry.id && (
+                                        <span className="status-pill status-warn">BASE</span>
+                                      )}
+                                      {runHistoryCompareSelection.enabled &&
+                                        runHistoryCompareSelection.targetRunId === entry.id && (
+                                          <span className="status-pill status-fail">TARGET</span>
+                                        )}
                                       <strong>{entry.bundleLabel}</strong>
                                     </div>
                                     <div className="session-row-meta">
@@ -4148,6 +4300,28 @@ export default function Home() {
                                     >
                                       <Link2 className="w-4 h-4" /> Pin View
                                     </button>
+                                    {runHistoryCompareSelection.enabled && (
+                                      <>
+                                        <button
+                                          className="btn-muted"
+                                          type="button"
+                                          onClick={() => assignRunHistoryCompareRole("base", entry.id)}
+                                          aria-pressed={runHistoryCompareSelection.baseRunId === entry.id}
+                                          aria-label={`Set ${entry.bundleLabel} as compare base`}
+                                        >
+                                          Base
+                                        </button>
+                                        <button
+                                          className="btn-muted"
+                                          type="button"
+                                          onClick={() => assignRunHistoryCompareRole("target", entry.id)}
+                                          aria-pressed={runHistoryCompareSelection.targetRunId === entry.id}
+                                          aria-label={`Set ${entry.bundleLabel} as compare target`}
+                                        >
+                                          Target
+                                        </button>
+                                      </>
+                                    )}
                                     <button
                                       className="btn-muted session-pin-btn"
                                       type="button"
@@ -4161,6 +4335,133 @@ export default function Home() {
                               );
                             })}
                           </div>
+                        )}
+
+                        {runHistoryCompareSelection.enabled && (
+                          <section className="empty-state-card" aria-label="Run history compare">
+                            <div className="sessions-header">
+                              <h3>Compare Runs</h3>
+                              <div className="sessions-header-actions">
+                                <button
+                                  className="btn-muted"
+                                  type="button"
+                                  onClick={swapRunHistoryCompareRoles}
+                                  disabled={!runHistoryCompareSelection.baseRunId || !runHistoryCompareSelection.targetRunId}
+                                  aria-label="Swap compare base and target runs"
+                                >
+                                  Swap
+                                </button>
+                                <button
+                                  className="btn-theme"
+                                  type="button"
+                                  onClick={() => void copyRunHistoryCompareDiff()}
+                                  disabled={!runHistoryCompareDiff}
+                                  aria-label="Copy share-safe run diff"
+                                >
+                                  <Copy className="w-4 h-4" /> Copy Share-Safe Diff
+                                </button>
+                                <button
+                                  className="btn-muted"
+                                  type="button"
+                                  onClick={clearRunHistoryCompare}
+                                  aria-label="Exit compare mode and clear compare selections"
+                                >
+                                  <X className="w-4 h-4" /> Exit
+                                </button>
+                              </div>
+                            </div>
+                            <p className="meta-muted">
+                              Base: {compareBaseRunHistoryEntry?.bundleLabel ?? "none selected"} | Target:{" "}
+                              {compareTargetRunHistoryEntry?.bundleLabel ?? "none selected"}
+                            </p>
+                            <p className="meta-muted">
+                              Keyboard: use arrow keys to select a row, then press <kbd>b</kbd> for Base, <kbd>t</kbd> for Target,{" "}
+                              and <kbd>Esc</kbd> to exit compare mode.
+                            </p>
+
+                            {!runHistoryCompareDiff ? (
+                              <p className="meta-muted">
+                                Select distinct Base and Target runs from the list to generate a share-safe diff.
+                              </p>
+                            ) : (
+                              <>
+                                <p className="meta-muted" aria-live="polite">
+                                  Added {runHistoryCompareDiff.diff.summary.added} | Removed {runHistoryCompareDiff.diff.summary.removed} |
+                                  Changed {runHistoryCompareDiff.diff.summary.changed} | Total{" "}
+                                  {runHistoryCompareDiff.diff.summary.total}
+                                </p>
+                                {runHistoryCompareDiff.diff.entries.length > 0 && (
+                                  <div className="sessions-header-actions">
+                                    {runHistoryCompareDiff.diff.entries.slice(0, 24).map((entry, index) => (
+                                      <button
+                                        key={`run-history-diff-jump-${entry.path}-${index}`}
+                                        className="btn-muted"
+                                        type="button"
+                                        onClick={() => {
+                                          if (typeof document === "undefined") {
+                                            return;
+                                          }
+                                          const target = document.getElementById(`run-history-diff-entry-${index}`);
+                                          if (target instanceof HTMLElement) {
+                                            target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                                            target.focus();
+                                          }
+                                        }}
+                                        aria-label={`Jump to diff path ${entry.path}`}
+                                      >
+                                        {entry.path}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {runHistoryCompareDiff.diff.entries.length === 0 ? (
+                                  <p className="meta-muted">No differences between selected runs.</p>
+                                ) : (
+                                  <div className="sessions-list" role="list" aria-label="Share-safe run diff entries">
+                                    {runHistoryCompareDiff.diff.entries.map((entry, index) => {
+                                      const leftLength = entry.left?.length ?? 0;
+                                      const rightLength = entry.right?.length ?? 0;
+                                      const isLarge = leftLength + rightLength > 280;
+                                      const heading = `${entry.kind.toUpperCase()} ${entry.path}`;
+                                      return (
+                                        <div
+                                          key={`run-history-diff-${entry.path}-${index}`}
+                                          id={`run-history-diff-entry-${index}`}
+                                          className="empty-state-card"
+                                          tabIndex={-1}
+                                          role="listitem"
+                                        >
+                                          {isLarge ? (
+                                            <details>
+                                              <summary>{heading}</summary>
+                                              {entry.left !== undefined && (
+                                                <pre className="terminal-window">before: {entry.left}</pre>
+                                              )}
+                                              {entry.right !== undefined && (
+                                                <pre className="terminal-window">after: {entry.right}</pre>
+                                              )}
+                                            </details>
+                                          ) : (
+                                            <>
+                                              <p>
+                                                <strong>{heading}</strong>
+                                              </p>
+                                              {entry.left !== undefined && (
+                                                <pre className="terminal-window">before: {entry.left}</pre>
+                                              )}
+                                              {entry.right !== undefined && (
+                                                <pre className="terminal-window">after: {entry.right}</pre>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </section>
                         )}
 
                         {selectedRunDetails && (
@@ -4998,6 +5299,10 @@ export default function Home() {
               <li>
                 <kbd>↑ / ↓ / Enter / Esc</kbd>
                 <span>Navigate, open, and clear selection in Run History panel</span>
+              </li>
+              <li>
+                <kbd>b / t</kbd>
+                <span>Assign selected Run History row as Compare Base or Target (Compare mode)</span>
               </li>
             </ul>
           </div>

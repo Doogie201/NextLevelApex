@@ -27,7 +27,7 @@ export interface RunDetailsModel {
   errorText: string;
 }
 
-interface ShareSafeRunExport {
+export interface ShareSafeRunExport {
   schemaVersion: typeof RUN_SHARE_SAFE_EXPORT_SCHEMA_VERSION;
   runId: string;
   bundleId: string;
