@@ -120,6 +120,18 @@ import {
   type RunSessionTimeRange,
 } from "@/engine/runSessions";
 import {
+  addOrUpdateRunHistoryEntry,
+  buildReplayConfigFromBundle,
+  clearRunHistory,
+  createRunHistoryEntryFromBundle,
+  createRunHistoryEntryFromSession,
+  loadRunHistory,
+  parseHistoryBundle,
+  storeRunHistory,
+  toggleRunHistoryPinned,
+  type RunHistoryEntry,
+} from "@/engine/runHistoryStore";
+import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
 } from "@/engine/sessionReport";
@@ -134,7 +146,7 @@ import {
   buildSessionOperatorReport,
 } from "@/engine/sessionExport";
 import {
-  buildInvestigationBundleJson,
+  buildInvestigationBundle,
   type BundlePresetSelection,
   type InvestigationBundle,
 } from "@/engine/bundleExport";
@@ -282,6 +294,9 @@ export default function Home() {
   const [taskResults, setTaskResults] = useState<TaskResult[]>([]);
   const [commandHistory, setCommandHistory] = useState<CommandEvent[]>([]);
   const [runSessions, setRunSessions] = useState<RunSession[]>([]);
+  const [runHistoryEntries, setRunHistoryEntries] = useState<RunHistoryEntry[]>([]);
+  const [selectedRunHistoryId, setSelectedRunHistoryId] = useState<string | null>(null);
+  const [runHistoryErrors, setRunHistoryErrors] = useState<BundleImportValidationError[]>([]);
   const [presets, setPresets] = useState<RunPreset[]>([]);
   const [savedViews, setSavedViews] = useState<SavedViewEntry[]>([]);
   const [savedViewName, setSavedViewName] = useState("Workspace");
@@ -500,6 +515,12 @@ export default function Home() {
 
     const loadedSavedViews = loadSavedViews(window.localStorage);
     setSavedViews(loadedSavedViews);
+
+    const loadedRunHistory = loadRunHistory(window.localStorage);
+    setRunHistoryEntries(loadedRunHistory);
+    if (loadedRunHistory.length > 0) {
+      setSelectedRunHistoryId(loadedRunHistory[0].id);
+    }
   }, []);
 
   useEffect(() => {
@@ -529,6 +550,13 @@ export default function Home() {
     }
     storeSavedViews(window.localStorage, savedViews);
   }, [savedViews]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storeRunHistory(window.localStorage, runHistoryEntries);
+  }, [runHistoryEntries]);
 
   useEffect(() => {
     if (presets.length === 0) {
@@ -1683,6 +1711,13 @@ export default function Home() {
     return runSessions.find((session) => session.id === compareSessionId) ?? null;
   }, [compareSessionId, runSessions]);
 
+  const selectedRunHistoryEntry = useMemo(() => {
+    if (!selectedRunHistoryId) {
+      return runHistoryEntries[0] ?? null;
+    }
+    return runHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? null;
+  }, [runHistoryEntries, selectedRunHistoryId]);
+
   const selectedBundleSessions = useMemo(
     () => runSessions.filter((session) => bundleSessionIds.includes(session.id)),
     [bundleSessionIds, runSessions],
@@ -1851,6 +1886,37 @@ export default function Home() {
     setBundleViewNames((previous) => previous.filter((name) => savedViews.some((view) => view.name === name)));
   }, [savedViews]);
 
+  useEffect(() => {
+    if (runHistoryEntries.length === 0) {
+      setSelectedRunHistoryId(null);
+      return;
+    }
+    if (!selectedRunHistoryId || !runHistoryEntries.some((entry) => entry.id === selectedRunHistoryId)) {
+      setSelectedRunHistoryId(runHistoryEntries[0].id);
+    }
+  }, [runHistoryEntries, selectedRunHistoryId]);
+
+  useEffect(() => {
+    if (runSessions.length === 0) {
+      return;
+    }
+    setRunHistoryEntries((previous) => {
+      let next = previous;
+      let changed = false;
+      for (const session of sortRunSessions(runSessions)) {
+        if (next.some((entry) => entry.sessionId === session.id)) {
+          continue;
+        }
+        next = addOrUpdateRunHistoryEntry(
+          next,
+          createRunHistoryEntryFromSession(session, GUI_BUILD_ID, "Doogie201/NextLevelApex"),
+        );
+        changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [runSessions]);
+
   const openSession = useCallback((sessionId: string): void => {
     const session = filteredSessions.find((item) => item.id === sessionId) ?? runSessions.find((item) => item.id === sessionId);
     if (!session) {
@@ -1877,6 +1943,110 @@ export default function Home() {
   const toggleSessionPinned = useCallback((sessionId: string): void => {
     setRunSessions((previous) => togglePinnedSession(previous, sessionId));
   }, []);
+
+  const replayRunHistory = useCallback(
+    (entryId: string): void => {
+      const entry = runHistoryEntries.find((candidate) => candidate.id === entryId);
+      if (!entry) {
+        setFriendlyMessage("Run history entry not found.");
+        return;
+      }
+
+      const bundle = parseHistoryBundle(entry);
+      if (!bundle) {
+        setRunHistoryErrors([
+          {
+            code: "INVALID_SCHEMA",
+            path: "$",
+            message: "Stored run history bundle is invalid. Re-export or remove this history entry.",
+          },
+        ]);
+        setFriendlyMessage("Run history entry failed validation. Remove it or import a valid bundle.");
+        return;
+      }
+
+      const config = buildReplayConfigFromBundle(bundle);
+      if (!config) {
+        setRunHistoryErrors([
+          {
+            code: "INVALID_SCHEMA",
+            path: "preset/config",
+            message: "Replay configuration could not be derived from this bundle.",
+          },
+        ]);
+        setFriendlyMessage("Replay unavailable: this bundle does not contain a supported run configuration.");
+        return;
+      }
+
+      setRunHistoryErrors([]);
+      setPresetCommandId(config.commandId);
+      setPresetTaskInput(config.taskNames.join(", "));
+      setShowRunCenterDisabledReason(false);
+      setActiveView("dashboard");
+
+      const replaySessionId = bundle.sessions[0]?.session.id ?? null;
+      if (replaySessionId) {
+        const matchingSession = runSessions.find((session) => session.id === replaySessionId);
+        if (matchingSession) {
+          setSelectedSessionId(matchingSession.id);
+          setSelectedEventId(matchingSession.eventId);
+        }
+      }
+
+      setSelectedRunHistoryId(entry.id);
+      setLiveMessage("Run replay queued.");
+      setFriendlyMessage("Replay loaded into Run Center. Review configuration and run when ready.");
+    },
+    [runHistoryEntries, runSessions],
+  );
+
+  const toggleRunHistoryPinnedState = useCallback((entryId: string): void => {
+    setRunHistoryEntries((previous) => toggleRunHistoryPinned(previous, entryId));
+  }, []);
+
+  const clearRunHistoryWithConfirm = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!window.confirm("Clear run history bundles? This removes replay snapshots from local storage.")) {
+      return;
+    }
+    setRunHistoryEntries(clearRunHistory());
+    setSelectedRunHistoryId(null);
+    setRunHistoryErrors([]);
+    setFriendlyMessage("Cleared run history bundles.");
+    setLiveMessage("Run history cleared.");
+  }, []);
+
+  const pinRunHistoryAsSavedView = useCallback(
+    (entryId: string): void => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      const entry = runHistoryEntries.find((candidate) => candidate.id === entryId);
+      if (!entry) {
+        setFriendlyMessage("Run history entry not found.");
+        return;
+      }
+      const bundle = parseHistoryBundle(entry);
+      if (!bundle) {
+        setFriendlyMessage("Cannot pin view: run history bundle failed validation.");
+        return;
+      }
+
+      const fallbackUrl = `${window.location.origin}${window.location.pathname}?view=output${
+        entry.sessionId ? `&session=${encodeURIComponent(entry.sessionId)}` : ""
+      }`;
+      const bundleViewUrl = bundle.views[0] ?? fallbackUrl;
+      const nameBase = `${entry.bundleLabel} (${entry.bundleId.slice(0, 8)})`;
+      setSavedViews((previous) => {
+        const result = addSavedView(previous, nameBase, bundleViewUrl);
+        setFriendlyMessage(`Pinned to saved views: ${result.savedName}.`);
+        return result.views;
+      });
+    },
+    [runHistoryEntries],
+  );
 
   const clearSessionHistoryWithConfirm = useCallback((): void => {
     if (typeof window === "undefined") {
@@ -1983,7 +2153,7 @@ export default function Home() {
       return;
     }
 
-    const json = buildInvestigationBundleJson({
+    const bundle = buildInvestigationBundle({
       guiVersionTag: GUI_BUILD_ID,
       repo: "Doogie201/NextLevelApex",
       presetSelection: bundlePresetSelection,
@@ -1992,9 +2162,13 @@ export default function Home() {
       viewUrls: selectedBundleViews.map((view) => view.url),
       sessions: selectedBundleSessions,
     });
+    const json = JSON.stringify(bundle, null, 2);
 
     const firstSession = selectedBundleSessions[0]?.id ?? "bundle";
     downloadTextPayload(`nlx-investigation-bundle-${firstSession}.json`, json);
+    setRunHistoryEntries((previous) =>
+      addOrUpdateRunHistoryEntry(previous, createRunHistoryEntryFromBundle(bundle, "export")),
+    );
     setFriendlyMessage(
       `Exported investigation bundle (sessions: ${selectedBundleSessions.length}, views: ${selectedBundleViews.length}).`,
     );
@@ -2042,8 +2216,12 @@ export default function Home() {
 
     setPresets(applied.presets);
     setRunSessions(applied.sessions);
+    setRunHistoryEntries((previous) =>
+      addOrUpdateRunHistoryEntry(previous, createRunHistoryEntryFromBundle(validatedBundle, "import")),
+    );
     setBundleImportPreview(applied.preview);
     setBundleImportErrors([]);
+    setRunHistoryErrors([]);
     setLiveMessage("Bundle import complete.");
     setFriendlyMessage(
       `Imported bundle: presets +${applied.addedPresets} (skipped ${applied.skippedPresets}), sessions +${applied.addedSessions} (skipped ${applied.skippedSessions}).`,
@@ -3456,6 +3634,105 @@ export default function Home() {
                           })}
                         </div>
                       )}
+
+                      <section className="empty-state-card" aria-label="Run history and replay">
+                        <div className="sessions-header">
+                          <h3>Run History + Replay</h3>
+                          <div className="sessions-header-actions">
+                            <button
+                              className="btn-muted"
+                              type="button"
+                              onClick={clearRunHistoryWithConfirm}
+                              disabled={runHistoryEntries.length === 0}
+                              aria-label="Clear run history bundles"
+                            >
+                              <Trash2 className="w-4 h-4" /> Clear
+                            </button>
+                          </div>
+                        </div>
+                        <p className="meta-muted">
+                          Stores share-safe bundle snapshots only. Replay loads Run Center configuration and never starts a run
+                          automatically.
+                        </p>
+
+                        {runHistoryEntries.length === 0 ? (
+                          <p className="meta-muted">No replay bundles stored yet.</p>
+                        ) : (
+                          <div className="sessions-list" role="list" aria-label="Run history list">
+                            {runHistoryEntries.map((entry) => {
+                              const isSelected = selectedRunHistoryEntry?.id === entry.id;
+                              return (
+                                <div key={entry.id} className={`session-row ${isSelected ? "session-row-active" : ""}`} role="listitem">
+                                  <button
+                                    type="button"
+                                    className="session-row-button"
+                                    onClick={() => setSelectedRunHistoryId(entry.id)}
+                                    aria-label={`Select run history ${entry.bundleLabel}`}
+                                  >
+                                    <div className="session-row-heading">
+                                      <span
+                                        className={`status-pill ${
+                                          entry.badge === "OK"
+                                            ? "status-pass"
+                                            : entry.badge === "DEGRADED"
+                                              ? "status-warn"
+                                              : entry.badge === "BROKEN"
+                                                ? "status-fail"
+                                                : "status-skip"
+                                        }`}
+                                      >
+                                        {entry.badge ?? "N/A"}
+                                      </span>
+                                      <strong>{entry.bundleLabel}</strong>
+                                    </div>
+                                    <div className="session-row-meta">
+                                      <span>{entry.startedAt ? formatTimestamp(entry.startedAt) : "n/a"}</span>
+                                      <span>{entry.commandId ?? "bundle-only"}</span>
+                                      <span>{entry.bundleId}</span>
+                                    </div>
+                                  </button>
+                                  <div className="sessions-export-center">
+                                    <button
+                                      className="btn-theme"
+                                      type="button"
+                                      onClick={() => replayRunHistory(entry.id)}
+                                      aria-label={`Replay run history ${entry.bundleLabel}`}
+                                    >
+                                      <Play className="w-4 h-4" /> Replay
+                                    </button>
+                                    <button
+                                      className="btn-muted"
+                                      type="button"
+                                      onClick={() => pinRunHistoryAsSavedView(entry.id)}
+                                      aria-label={`Pin ${entry.bundleLabel} as saved view`}
+                                    >
+                                      <Link2 className="w-4 h-4" /> Pin View
+                                    </button>
+                                    <button
+                                      className="btn-muted session-pin-btn"
+                                      type="button"
+                                      onClick={() => toggleRunHistoryPinnedState(entry.id)}
+                                      aria-label={entry.pinned ? "Unpin run history entry" : "Pin run history entry"}
+                                    >
+                                      {entry.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {runHistoryErrors.length > 0 && (
+                          <ul className="bundle-validation-list">
+                            {runHistoryErrors.map((error) => (
+                              <li key={`run-history-${error.code}-${error.path}-${error.message}`}>
+                                <strong>{error.code}</strong> <span>{error.path}</span> {error.message}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </section>
                     </>
                   )}
                 </section>
