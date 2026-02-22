@@ -1,5 +1,6 @@
 import {
   addOrUpdateRunHistoryEntry,
+  buildRunHistorySearchCorpus,
   buildReplayConfigFromBundle,
   clearRunHistoryStorage,
   clearRunHistory,
@@ -11,13 +12,16 @@ import {
   loadRunHistoryState,
   MAX_RUN_HISTORY_SERIALIZED_BYTES,
   MAX_RUN_HISTORY_ENTRIES,
+  moveRunHistorySelection,
   parseHistoryBundle,
   RUN_HISTORY_SCHEMA_VERSION,
+  RUN_HISTORY_SEARCH_FIELD_WHITELIST,
   RUN_HISTORY_SELECTION_STORAGE_KEY,
   RUN_HISTORY_STORAGE_KEY,
   storeRunHistory,
   storeRunHistorySelection,
   toggleRunHistoryPinned,
+  type RunHistoryEntry,
   type RunHistoryStorageLike,
 } from "../runHistoryStore";
 import { buildBundleId, buildInvestigationBundle, type InvestigationBundle } from "../bundleExport";
@@ -223,9 +227,64 @@ describe("runHistoryStore", () => {
     expect(successByQuery).toHaveLength(1);
     expect(successByQuery[0]?.id).toBe(successEntry.id);
 
+    const whitespaceTolerant = filterRunHistoryEntries(all, {
+      query: "run    dryruntask",
+      status: "all",
+      order: "newest",
+    });
+    expect(whitespaceTolerant.map((entry) => entry.id)).toContain(successEntry.id);
+
     const byOldest = filterRunHistoryEntries(all, { order: "oldest" });
     expect(byOldest[0]?.id).toBe(successEntry.id);
     expect(byOldest[1]?.id).toBe(errorEntry.id);
+  });
+
+  it("searches only explicit share-safe whitelist fields", () => {
+    const session = buildSession("evt-safe-search", "2026-02-22T00:50:00.000Z", "dryRunTask");
+    const entry = createRunHistoryEntryFromSession(session, "phase22");
+    const withUnsafe = {
+      ...entry,
+      unsafeRaw: "SUPER_SECRET_TOKEN_SHOULD_NOT_MATCH",
+    } as RunHistoryEntry & { unsafeRaw: string };
+
+    const corpus = buildRunHistorySearchCorpus(withUnsafe);
+    expect(corpus).toContain("run dryruntask");
+    expect(corpus).not.toContain("super_secret_token_should_not_match");
+    expect(RUN_HISTORY_SEARCH_FIELD_WHITELIST).toContain("bundle.sessions.events.msg");
+
+    const unsafeQuery = filterRunHistoryEntries([withUnsafe], {
+      query: "super secret token should not match",
+      status: "all",
+      order: "newest",
+    });
+    expect(unsafeQuery).toHaveLength(0);
+  });
+
+  it("uses deterministic tie-break ordering when timestamps are equal", () => {
+    const left = createRunHistoryEntryFromSession(buildSession("evt-tie-left", "2026-02-22T00:55:00.000Z"), "phase22");
+    const right = createRunHistoryEntryFromSession(buildSession("evt-tie-right", "2026-02-22T00:55:00.000Z"), "phase22");
+    const source = [right, left];
+
+    const ordered = filterRunHistoryEntries(source, { order: "newest" });
+    const expected = [left, right].sort((a, b) => {
+      const bundleCmp = a.bundleId.localeCompare(b.bundleId);
+      if (bundleCmp !== 0) {
+        return bundleCmp;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    expect(ordered.map((entry) => entry.id)).toEqual(expected.map((entry) => entry.id));
+  });
+
+  it("moves run history selection deterministically for keyboard navigation", () => {
+    const ids = ["run-a", "run-b", "run-c"];
+    expect(moveRunHistorySelection(ids, null, "next")).toBe("run-a");
+    expect(moveRunHistorySelection(ids, null, "prev")).toBe("run-c");
+    expect(moveRunHistorySelection(ids, "run-a", "next")).toBe("run-b");
+    expect(moveRunHistorySelection(ids, "run-a", "prev")).toBe("run-c");
+    expect(moveRunHistorySelection(ids, "run-z", "next")).toBe("run-a");
+    expect(moveRunHistorySelection([], "run-a", "next")).toBeNull();
   });
 
   it("caps history entries and drops oldest first", () => {

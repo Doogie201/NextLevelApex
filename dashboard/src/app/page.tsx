@@ -129,6 +129,7 @@ import {
   filterRunHistoryEntries,
   loadRunHistorySelection,
   loadRunHistoryState,
+  moveRunHistorySelection,
   parseHistoryBundle,
   storeRunHistorySelection,
   storeRunHistory,
@@ -196,6 +197,10 @@ type BundleCompareMode = "bundle-b" | "local-session" | "local-preset";
 
 function taskRowId(taskName: string): string {
   return `task-row-${encodeURIComponent(taskName)}`;
+}
+
+function runHistoryRowId(entryId: string): string {
+  return `run-history-row-${encodeURIComponent(entryId)}`;
 }
 
 function isTypingElement(target: EventTarget | null): boolean {
@@ -397,6 +402,9 @@ export default function Home() {
   const healthBadgeRef = useRef<HTMLSpanElement | null>(null);
   const outputHeaderRef = useRef<HTMLElement | null>(null);
   const outputSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const runHistoryPanelRef = useRef<HTMLElement | null>(null);
+  const runHistorySearchInputRef = useRef<HTMLInputElement | null>(null);
+  const runHistoryDetailsHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const presetsImportInputRef = useRef<HTMLInputElement | null>(null);
   const sessionsListRef = useRef<HTMLDivElement | null>(null);
   const tasksSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1778,9 +1786,9 @@ export default function Home() {
 
   const selectedRunHistoryEntry = useMemo(() => {
     if (!selectedRunHistoryId) {
-      return filteredRunHistoryEntries[0] ?? null;
+      return null;
     }
-    return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? filteredRunHistoryEntries[0] ?? null;
+    return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? null;
   }, [filteredRunHistoryEntries, selectedRunHistoryId]);
 
   const selectedRunDetails = useMemo(
@@ -2179,6 +2187,15 @@ export default function Home() {
   const cancelRunHistoryClear = useCallback((): void => {
     setConfirmRunHistoryClear(false);
     setFriendlyMessage("Run history clear canceled.");
+  }, []);
+
+  const resetRunHistoryFilters = useCallback((): void => {
+    setRunHistoryQuery("");
+    setRunHistoryStatusFilter("all");
+    setRunHistorySortOrder("newest");
+    setFriendlyMessage("Run history filters reset.");
+    setLiveMessage("Run history filters reset.");
+    runHistorySearchInputRef.current?.focus();
   }, []);
 
   const clearStoredRunHistoryImmediately = useCallback((): void => {
@@ -2734,6 +2751,14 @@ export default function Home() {
       const typingTarget = isTypingElement(event.target);
       const hasModifier = event.metaKey || event.ctrlKey || event.altKey;
 
+      if (
+        runHistoryPanelRef.current &&
+        event.target instanceof Node &&
+        runHistoryPanelRef.current.contains(event.target)
+      ) {
+        return;
+      }
+
       if (typingTarget || hasModifier) {
         return;
       }
@@ -2776,6 +2801,81 @@ export default function Home() {
     window.addEventListener("keydown", onSessionKeyDown);
     return () => window.removeEventListener("keydown", onSessionKeyDown);
   }, [activeView, filteredSessions, openSession, selectedSessionId, sessionsPanelOpen, shortcutsOpen]);
+
+  useEffect(() => {
+    const onRunHistoryKeyDown = (event: KeyboardEvent): void => {
+      if (activeView !== "output" || shortcutsOpen || bundleExportOpen || consoleHelpOpen) {
+        return;
+      }
+      if (!runHistoryPanelRef.current) {
+        return;
+      }
+      if (!(event.target instanceof Node) || !runHistoryPanelRef.current.contains(event.target)) {
+        return;
+      }
+
+      const typingTarget = isTypingElement(event.target);
+      const hasModifier = event.metaKey || event.ctrlKey || event.altKey;
+
+      if (event.key === "Escape") {
+        if (typingTarget) {
+          if (event.target instanceof HTMLElement) {
+            event.target.blur();
+          }
+          setLiveMessage("Run history search blurred.");
+          return;
+        }
+        if (selectedRunHistoryId) {
+          event.preventDefault();
+          setSelectedRunHistoryId(null);
+          setFriendlyMessage("Run history selection cleared.");
+          setLiveMessage("Run history selection cleared.");
+        }
+        return;
+      }
+
+      if (typingTarget || hasModifier) {
+        return;
+      }
+
+      const entryIds = filteredRunHistoryEntries.map((entry) => entry.id);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const nextRunId = moveRunHistorySelection(
+          entryIds,
+          selectedRunHistoryId,
+          event.key === "ArrowDown" ? "next" : "prev",
+        );
+        if (nextRunId) {
+          setSelectedRunHistoryId(nextRunId);
+          setLiveMessage("Run history selection updated.");
+          if (typeof document !== "undefined") {
+            const rowButton = document.getElementById(runHistoryRowId(nextRunId));
+            if (rowButton instanceof HTMLElement) {
+              rowButton.focus();
+            }
+          }
+        }
+        return;
+      }
+
+      if (event.key === "Enter" && selectedRunHistoryId) {
+        event.preventDefault();
+        runHistoryDetailsHeadingRef.current?.focus();
+        setLiveMessage("Run details opened.");
+      }
+    };
+
+    window.addEventListener("keydown", onRunHistoryKeyDown);
+    return () => window.removeEventListener("keydown", onRunHistoryKeyDown);
+  }, [
+    activeView,
+    bundleExportOpen,
+    consoleHelpOpen,
+    filteredRunHistoryEntries,
+    selectedRunHistoryId,
+    shortcutsOpen,
+  ]);
 
   useEffect(() => {
     void (async () => {
@@ -3863,7 +3963,12 @@ export default function Home() {
                         </div>
                       )}
 
-                      <section className="empty-state-card" aria-label="Run history and replay">
+                      <section
+                        ref={runHistoryPanelRef}
+                        className="empty-state-card"
+                        aria-label="Run history and replay"
+                        tabIndex={0}
+                      >
                         <div className="sessions-header">
                           <h3>Run History + Replay</h3>
                           <div className="sessions-header-actions">
@@ -3929,6 +4034,7 @@ export default function Home() {
                           <label className="search-control" aria-label="Search run history">
                             <Search className="w-4 h-4" />
                             <input
+                              ref={runHistorySearchInputRef}
                               type="search"
                               placeholder="Search history label or output preview"
                               value={runHistoryQuery}
@@ -3967,7 +4073,19 @@ export default function Home() {
                         {runHistoryEntries.length === 0 ? (
                           <p className="meta-muted">No replay bundles stored yet.</p>
                         ) : filteredRunHistoryEntries.length === 0 ? (
-                          <p className="meta-muted">No history entries match the current filters.</p>
+                          <div className="empty-state-card">
+                            <p className="meta-muted">No runs match your search/filters.</p>
+                            <div className="sessions-header-actions">
+                              <button
+                                className="btn-muted"
+                                type="button"
+                                onClick={resetRunHistoryFilters}
+                                aria-label="Reset run history search and filters"
+                              >
+                                Reset Filters
+                              </button>
+                            </div>
+                          </div>
                         ) : (
                           <div className="sessions-list" role="list" aria-label="Run history list">
                             {filteredRunHistoryEntries.map((entry) => {
@@ -3975,10 +4093,12 @@ export default function Home() {
                               return (
                                 <div key={entry.id} className={`session-row ${isSelected ? "session-row-active" : ""}`} role="listitem">
                                   <button
+                                    id={runHistoryRowId(entry.id)}
                                     type="button"
                                     className="session-row-button"
                                     onClick={() => setSelectedRunHistoryId(entry.id)}
                                     aria-label={`Select run history ${entry.bundleLabel}`}
+                                    aria-pressed={isSelected}
                                   >
                                     <div className="session-row-heading">
                                       <span
@@ -4046,7 +4166,9 @@ export default function Home() {
                         {selectedRunDetails && (
                           <section className="empty-state-card" aria-label="Selected run details">
                             <div className="sessions-header">
-                              <h3>Run Details</h3>
+                              <h3 ref={runHistoryDetailsHeadingRef} tabIndex={-1}>
+                                Run Details
+                              </h3>
                               <div className="sessions-header-actions">
                                 <button
                                   className="btn-theme"
@@ -4872,6 +4994,10 @@ export default function Home() {
               <li>
                 <kbd>↑ / ↓</kbd>
                 <span>Navigate sessions (Output view)</span>
+              </li>
+              <li>
+                <kbd>↑ / ↓ / Enter / Esc</kbd>
+                <span>Navigate, open, and clear selection in Run History panel</span>
               </li>
             </ul>
           </div>
