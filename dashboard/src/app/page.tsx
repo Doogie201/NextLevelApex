@@ -86,13 +86,17 @@ import {
   storeRunPresets,
   type RunPreset,
   type RunPresetConfig,
-  type RunPresetCommandId,
 } from "@/engine/presetsStore";
 import {
   buildPresetsExportJson,
   mergeImportedPresets,
   parsePresetsImportJson,
 } from "@/engine/presetsExport";
+import {
+  buildRunCenterModel,
+  validatePresetName,
+  type RunCenterCommandId,
+} from "@/engine/runCenterModel";
 import {
   addRunSession,
   clearRunSessions,
@@ -257,8 +261,9 @@ export default function Home() {
   const [presets, setPresets] = useState<RunPreset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [presetName, setPresetName] = useState("Diagnose baseline");
-  const [presetCommandId, setPresetCommandId] = useState<RunPresetCommandId>("diagnose");
+  const [presetCommandId, setPresetCommandId] = useState<RunCenterCommandId>("diagnose");
   const [presetTaskInput, setPresetTaskInput] = useState("");
+  const [showRunCenterDisabledReason, setShowRunCenterDisabledReason] = useState(false);
   const [lastRunConfig, setLastRunConfig] = useState<RunPresetConfig | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [compareSessionId, setCompareSessionId] = useState<string | null>(null);
@@ -325,6 +330,23 @@ export default function Home() {
   const selectedPreset = useMemo(
     () => (selectedPresetId ? presets.find((preset) => preset.id === selectedPresetId) ?? null : presets[0] ?? null),
     [presets, selectedPresetId],
+  );
+
+  const runCenterTaskNames = useMemo(() => parsePresetTaskInput(presetTaskInput), [presetTaskInput]);
+
+  const runCenterModel = useMemo(
+    () =>
+      buildRunCenterModel({
+        commandId: presetCommandId,
+        taskNames: runCenterTaskNames,
+        isBusy,
+        toggles: {
+          readOnly,
+          highContrast,
+          reducedMotion: effectiveReducedMotion,
+        },
+      }),
+    [effectiveReducedMotion, highContrast, isBusy, presetCommandId, readOnly, runCenterTaskNames],
   );
 
   useEffect(() => {
@@ -451,6 +473,12 @@ export default function Home() {
       setSelectedPresetId(presets[0].id);
     }
   }, [presets, selectedPresetId]);
+
+  useEffect(() => {
+    if (runCenterModel.canRun && showRunCenterDisabledReason) {
+      setShowRunCenterDisabledReason(false);
+    }
+  }, [runCenterModel.canRun, showRunCenterDisabledReason]);
 
   useEffect(() => {
     if (!isBusy || activeStartedAtRef.current === null) {
@@ -989,37 +1017,59 @@ export default function Home() {
   );
 
   const buildPresetConfigFromInputs = useCallback((): RunPresetConfig | null => {
-    const parsedTasks = parsePresetTaskInput(presetTaskInput);
-    if (presetCommandId === "dryRunTask" && parsedTasks.length === 0) {
-      setFriendlyMessage("Provide at least one task for dryRunTask presets.");
+    if (!runCenterModel.config) {
+      setFriendlyMessage(runCenterModel.disabledReason || "Run configuration is incomplete.");
+      setShowRunCenterDisabledReason(true);
       return null;
     }
-    return {
-      commandId: presetCommandId,
-      taskNames: presetCommandId === "dryRunTask" ? parsedTasks : [],
-      dryRun: true,
-      toggles: { readOnly },
-    };
-  }, [presetCommandId, presetTaskInput, readOnly]);
+    return runCenterModel.config;
+  }, [runCenterModel]);
 
   const savePresetFromInputs = useCallback((): void => {
     const config = buildPresetConfigFromInputs();
     if (!config) {
       return;
     }
+    const nameValidation = validatePresetName(
+      presetName,
+      presets.map((preset) => preset.name),
+    );
+    if (!nameValidation.valid) {
+      setFriendlyMessage(nameValidation.reason);
+      return;
+    }
+    if (nameValidation.duplicate && typeof window !== "undefined") {
+      const shouldOverwriteName = window.confirm(
+        `${nameValidation.reason} Continue and save another preset with this name?`,
+      );
+      if (!shouldOverwriteName) {
+        return;
+      }
+    }
     const nowIso = new Date().toISOString();
-    const normalizedName = presetName.trim().slice(0, MAX_PRESET_NAME_LENGTH);
-    const id = createPresetId(normalizedName || "preset", nowIso);
+    const normalizedName = nameValidation.normalized.slice(0, MAX_PRESET_NAME_LENGTH);
+    const id = createPresetId(normalizedName, nowIso);
     const preset = buildRunPreset({
       id,
-      name: normalizedName || "Untitled preset",
+      name: normalizedName,
       timestampIso: nowIso,
       config,
     });
     setPresets((previous) => addOrUpdatePreset(previous, preset));
     setSelectedPresetId(preset.id);
     setFriendlyMessage(`Saved preset: ${preset.name}.`);
-  }, [buildPresetConfigFromInputs, presetName]);
+  }, [buildPresetConfigFromInputs, presetName, presets]);
+
+  const applySelectedPresetToRunCenter = useCallback((): void => {
+    if (!selectedPreset) {
+      setFriendlyMessage("Select a preset first.");
+      return;
+    }
+    setPresetCommandId(selectedPreset.config.commandId);
+    setPresetTaskInput(selectedPreset.config.taskNames.join(", "));
+    setShowRunCenterDisabledReason(false);
+    setFriendlyMessage(`Applied preset: ${selectedPreset.name}.`);
+  }, [selectedPreset]);
 
   const runSelectedPreset = useCallback(async (): Promise<void> => {
     if (!selectedPreset) {
@@ -1055,6 +1105,15 @@ export default function Home() {
     setLiveMessage("Replaying last run configuration...");
     await runFromPresetConfig(lastRunConfig);
   }, [lastRunConfig, runFromPresetConfig]);
+
+  const runFromRunCenter = useCallback(async (): Promise<void> => {
+    if (!runCenterModel.config) {
+      setFriendlyMessage(runCenterModel.disabledReason || "Run configuration is incomplete.");
+      setShowRunCenterDisabledReason(true);
+      return;
+    }
+    await runFromPresetConfig(runCenterModel.config);
+  }, [runCenterModel, runFromPresetConfig]);
 
   const exportPresets = useCallback((): void => {
     if (typeof window === "undefined") {
@@ -1983,14 +2042,44 @@ export default function Home() {
                   <p className="meta-muted">No diagnose output available yet.</p>
                 )}
 
-                <section className="sessions-panel" aria-label="Command runner presets">
+                <section className="sessions-panel" aria-label="Guided run flow and presets">
                   <div className="sessions-header">
-                    <h3>Presets</h3>
-                    <p className="meta-muted">Client-only run templates with deterministic export/import.</p>
+                    <h3>Run Center</h3>
+                    <p className="meta-muted">
+                      Choose a command, review a deterministic summary, then run safely in read-only mode.
+                    </p>
                   </div>
                   <div className="sessions-filters">
+                    <label className="select-control" aria-label="Run Center command">
+                      <span>1. Command</span>
+                      <select
+                        value={presetCommandId}
+                        onChange={(event) => {
+                          setPresetCommandId(event.target.value as RunCenterCommandId);
+                          setShowRunCenterDisabledReason(false);
+                        }}
+                        aria-label="Run Center command"
+                      >
+                        <option value="">Select command…</option>
+                        <option value="diagnose">diagnose</option>
+                        <option value="dryRunAll">dryRunAll</option>
+                        <option value="dryRunTask">dryRunTask</option>
+                      </select>
+                    </label>
+                    {presetCommandId === "dryRunTask" && (
+                      <label className="search-control" aria-label="Run Center tasks">
+                        <Search className="w-4 h-4" />
+                        <input
+                          type="text"
+                          placeholder="2. Task names, comma-separated"
+                          value={presetTaskInput}
+                          onChange={(event) => setPresetTaskInput(event.target.value)}
+                          aria-label="Run Center task names comma separated"
+                        />
+                      </label>
+                    )}
                     <label className="select-control" aria-label="Preset name">
-                      <span>Name</span>
+                      <span>Preset Name</span>
                       <input
                         type="text"
                         value={presetName}
@@ -1999,52 +2088,67 @@ export default function Home() {
                         aria-label="Preset name"
                       />
                     </label>
-                    <label className="select-control" aria-label="Preset command">
-                      <span>Command</span>
-                      <select
-                        value={presetCommandId}
-                        onChange={(event) => setPresetCommandId(event.target.value as RunPresetCommandId)}
-                        aria-label="Preset command"
-                      >
-                        <option value="diagnose">diagnose</option>
-                        <option value="dryRunAll">dryRunAll</option>
-                        <option value="dryRunTask">dryRunTask</option>
-                      </select>
-                    </label>
-                    {presetCommandId === "dryRunTask" && (
-                      <label className="search-control" aria-label="Preset tasks">
-                        <Search className="w-4 h-4" />
-                        <input
-                          type="text"
-                          placeholder="Task names, comma-separated"
-                          value={presetTaskInput}
-                          onChange={(event) => setPresetTaskInput(event.target.value)}
-                          aria-label="Preset tasks comma separated"
-                        />
-                      </label>
-                    )}
                   </div>
+                  {!runCenterModel.summary.commandId && (
+                    <section className="empty-state-card" aria-live="polite" aria-label="Run Center empty state">
+                      <h3>Choose a command to begin</h3>
+                      <p className="meta-muted">
+                        Run actions stay disabled until you pick a command. This prevents accidental launches with incomplete
+                        configuration.
+                      </p>
+                    </section>
+                  )}
+                  <section className="empty-state-card" aria-label="Run Center configuration summary">
+                    <h3>3. Review configuration</h3>
+                    <dl className="inspector-grid">
+                      <dt>Command</dt>
+                      <dd>{runCenterModel.summary.commandId || "Not selected"}</dd>
+                      <dt>Tasks</dt>
+                      <dd>
+                        {runCenterModel.summary.taskCount > 0
+                          ? `${runCenterModel.summary.taskCount} (${runCenterModel.summary.orderedTaskNames.join(", ")})`
+                          : "None"}
+                      </dd>
+                      <dt>Dry Run</dt>
+                      <dd>{runCenterModel.summary.dryRun ? "true" : "false"}</dd>
+                      <dt>Toggles</dt>
+                      <dd>
+                        readOnly={String(runCenterModel.summary.toggles.readOnly)} highContrast=
+                        {String(runCenterModel.summary.toggles.highContrast)} reducedMotion=
+                        {String(runCenterModel.summary.toggles.reducedMotion)}
+                      </dd>
+                    </dl>
+                    {!runCenterModel.canRun && showRunCenterDisabledReason && (
+                      <p id="run-center-disabled-reason" className="meta-muted" aria-live="polite">
+                        Why disabled: {runCenterModel.disabledReason}
+                      </p>
+                    )}
+                  </section>
                   <div className="sessions-export-center">
-                    <button className="btn-theme" type="button" onClick={savePresetFromInputs} aria-label="Save preset">
-                      <FileJson2 className="w-4 h-4" /> Save Preset
-                    </button>
                     <button
                       className="btn-theme"
                       type="button"
-                      onClick={() => void runSelectedPreset()}
-                      disabled={!selectedPreset || isBusy}
-                      aria-label="Run selected preset"
+                      onClick={() => void runFromRunCenter()}
+                      disabled={!runCenterModel.canRun}
+                      aria-label="Run current configuration"
+                      aria-describedby={!runCenterModel.canRun ? "run-center-disabled-reason" : undefined}
                     >
-                      <Play className="w-4 h-4" /> Run Preset
+                      <Play className="w-4 h-4" /> 4. Run Current Configuration
                     </button>
-                    <button
-                      className="btn-muted"
-                      type="button"
-                      onClick={duplicateSelectedPreset}
-                      disabled={!selectedPreset}
-                      aria-label="Duplicate selected preset"
-                    >
-                      <Copy className="w-4 h-4" /> Duplicate Preset
+                    {!runCenterModel.canRun && (
+                      <button
+                        className="btn-muted"
+                        type="button"
+                        onClick={() => setShowRunCenterDisabledReason((previous) => !previous)}
+                        aria-label="Explain why run is disabled"
+                        aria-expanded={showRunCenterDisabledReason}
+                        aria-controls="run-center-disabled-reason"
+                      >
+                        <CircleHelp className="w-4 h-4" /> Why is this disabled?
+                      </button>
+                    )}
+                    <button className="btn-theme" type="button" onClick={savePresetFromInputs} aria-label="Save preset">
+                      <FileJson2 className="w-4 h-4" /> Save Preset
                     </button>
                     <button
                       className="btn-muted"
@@ -2055,38 +2159,69 @@ export default function Home() {
                     >
                       <Activity className="w-4 h-4" /> Repeat Last Run
                     </button>
-                    <button className="btn-muted" type="button" onClick={exportPresets} disabled={presets.length === 0}>
-                      <Download className="w-4 h-4" /> Export Presets
-                    </button>
-                    <button className="btn-muted" type="button" onClick={triggerPresetImport}>
-                      <FileJson2 className="w-4 h-4" /> Import Presets
-                    </button>
-                    <input
-                      ref={presetsImportInputRef}
-                      type="file"
-                      accept="application/json,.json"
-                      className="sr-only"
-                      onChange={(event) => void onPresetImportSelected(event)}
-                    />
                   </div>
-                  <label className="select-control" aria-label="Select existing preset">
-                    <span>Saved</span>
-                    <select
-                      value={selectedPreset?.id ?? ""}
-                      onChange={(event) => setSelectedPresetId(event.target.value || null)}
-                      disabled={presets.length === 0}
-                    >
-                      {presets.length === 0 ? (
-                        <option value="">No presets saved</option>
-                      ) : (
-                        presets.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.name} ({preset.config.commandId})
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
+                  <div className="sessions-filters">
+                    <label className="select-control" aria-label="Select existing preset">
+                      <span>Saved</span>
+                      <select
+                        value={selectedPreset?.id ?? ""}
+                        onChange={(event) => setSelectedPresetId(event.target.value || null)}
+                        disabled={presets.length === 0}
+                      >
+                        {presets.length === 0 ? (
+                          <option value="">No presets saved</option>
+                        ) : (
+                          presets.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.name} ({preset.config.commandId})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <div className="sessions-export-center">
+                      <button
+                        className="btn-muted"
+                        type="button"
+                        onClick={applySelectedPresetToRunCenter}
+                        disabled={!selectedPreset}
+                        aria-label="Apply selected preset to run center"
+                      >
+                        <ChevronRight className="w-4 h-4" /> Apply Preset
+                      </button>
+                      <button
+                        className="btn-theme"
+                        type="button"
+                        onClick={() => void runSelectedPreset()}
+                        disabled={!selectedPreset || isBusy}
+                        aria-label="Run selected preset"
+                      >
+                        <Play className="w-4 h-4" /> Run Preset
+                      </button>
+                      <button
+                        className="btn-muted"
+                        type="button"
+                        onClick={duplicateSelectedPreset}
+                        disabled={!selectedPreset}
+                        aria-label="Duplicate selected preset"
+                      >
+                        <Copy className="w-4 h-4" /> Duplicate Preset
+                      </button>
+                      <button className="btn-muted" type="button" onClick={exportPresets} disabled={presets.length === 0}>
+                        <Download className="w-4 h-4" /> Export Presets
+                      </button>
+                      <button className="btn-muted" type="button" onClick={triggerPresetImport}>
+                        <FileJson2 className="w-4 h-4" /> Import Presets
+                      </button>
+                      <input
+                        ref={presetsImportInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="sr-only"
+                        onChange={(event) => void onPresetImportSelected(event)}
+                      />
+                    </div>
+                  </div>
                   {selectedPreset && (
                     <p className="meta-muted" aria-live="polite">
                       Selected preset: {selectedPreset.name} | command {selectedPreset.config.commandId}
@@ -2140,6 +2275,11 @@ export default function Home() {
                     />
                   </label>
                 </div>
+                {!isBusy && selectedTasks.length === 0 && (
+                  <p className="meta-muted" aria-live="polite">
+                    Run Selected Tasks is disabled until you select at least one task.
+                  </p>
+                )}
 
                 {taskLoadError && (
                   <section className="empty-state-card" aria-live="polite" aria-label="Task loading failure guidance">
