@@ -96,6 +96,8 @@ describe("bundleExport", () => {
     expect(first).toBe(second);
 
     const parsed = JSON.parse(first) as ReturnType<typeof buildInvestigationBundle>;
+    expect(parsed.bundleKind).toBe("combined");
+    expect(parsed.bundleId).toMatch(/^bundle-[a-f0-9]{8}$/);
     expect(parsed.views).toEqual([
       "https://localhost:4010/?view=dashboard",
       "https://localhost:4010/?view=output&session=run-a&layout=focus-output",
@@ -105,12 +107,14 @@ describe("bundleExport", () => {
     );
   });
 
-  it("validates schema and rejects invalid bundle JSON", () => {
+  it("validates schema, bundle kind, and bundle id integrity", () => {
     expect(parseInvestigationBundleJson("{")).toBeNull();
     expect(
       parseInvestigationBundleJson(
         JSON.stringify({
           bundleSchemaVersion: "v0",
+          bundleKind: "combined",
+          bundleId: "bundle-00000000",
           createdFrom: { guiVersionTag: "phase15" },
           preset: null,
           views: [],
@@ -128,7 +132,12 @@ describe("bundleExport", () => {
       viewUrls: [],
       sessions: [],
     });
+
     expect(parseInvestigationBundleJson(valid)).not.toBeNull();
+
+    const tampered = JSON.parse(valid) as Record<string, unknown>;
+    tampered.bundleId = "bundle-deadbeef";
+    expect(parseInvestigationBundleJson(JSON.stringify(tampered))).toBeNull();
   });
 
   it("never includes known unredacted fields in bundle output", () => {
