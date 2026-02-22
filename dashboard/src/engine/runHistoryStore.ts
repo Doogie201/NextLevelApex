@@ -6,8 +6,10 @@ import type { RunSession } from "./runSessions";
 import type { CommandReasonCode, HealthBadge } from "./viewModel";
 
 export const RUN_HISTORY_STORAGE_KEY = "nlx.gui.runHistory.v1";
-export const RUN_HISTORY_SCHEMA_VERSION = 1;
+export const RUN_HISTORY_SCHEMA_VERSION = 2;
 export const MAX_RUN_HISTORY_ENTRIES = 40;
+export const MAX_RUN_HISTORY_SERIALIZED_BYTES = 450_000;
+export const RUN_HISTORY_SELECTION_STORAGE_KEY = "nlx.gui.runHistory.selected.v1";
 
 const REPLAY_COMMAND_IDS = new Set<RunPresetCommandId>(["diagnose", "dryRunAll", "dryRunTask"]);
 
@@ -44,6 +46,19 @@ interface RunHistoryEnvelope {
 export interface RunHistoryStorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
+}
+
+export type RunHistoryLoadStatus =
+  | "ok"
+  | "migrated"
+  | "cleared_corrupt"
+  | "cleared_oversize"
+  | "ignored_newer_schema";
+
+export interface RunHistoryLoadState {
+  entries: RunHistoryEntry[];
+  status: RunHistoryLoadStatus;
 }
 
 interface HistorySessionSummary {
@@ -205,6 +220,58 @@ function sortEntries(entries: RunHistoryEntry[], order: RunHistorySortOrder = "n
   });
 }
 
+function compareRetentionOldestFirst(left: RunHistoryEntry, right: RunHistoryEntry): number {
+  const leftMs = left.startedAt ? Date.parse(left.startedAt) : Number.NaN;
+  const rightMs = right.startedAt ? Date.parse(right.startedAt) : Number.NaN;
+  const normalizedLeft = Number.isNaN(leftMs) ? 0 : leftMs;
+  const normalizedRight = Number.isNaN(rightMs) ? 0 : rightMs;
+  if (normalizedLeft !== normalizedRight) {
+    return normalizedLeft - normalizedRight;
+  }
+
+  const byBundle = left.bundleId.localeCompare(right.bundleId);
+  if (byBundle !== 0) {
+    return byBundle;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function applyEntryCountRetention(entries: RunHistoryEntry[], maxEntries: number): RunHistoryEntry[] {
+  if (entries.length <= maxEntries) {
+    return [...entries];
+  }
+
+  const oldestFirst = [...entries].sort(compareRetentionOldestFirst);
+  const dropCount = oldestFirst.length - maxEntries;
+  const droppedIds = new Set(oldestFirst.slice(0, dropCount).map((entry) => entry.id));
+  return entries.filter((entry) => !droppedIds.has(entry.id));
+}
+
+function approximateSerializedBytes(value: unknown): number {
+  const json = JSON.stringify(value);
+  return new TextEncoder().encode(json).length;
+}
+
+function applySerializedBudget(entries: RunHistoryEntry[], maxBytes: number): RunHistoryEntry[] {
+  let kept = [...entries];
+  while (kept.length > 0) {
+    const envelope: RunHistoryEnvelope = {
+      schemaVersion: RUN_HISTORY_SCHEMA_VERSION,
+      entries: sortEntries(kept, "newest"),
+    };
+    if (approximateSerializedBytes(envelope) <= maxBytes) {
+      return envelope.entries;
+    }
+
+    const oldest = [...kept].sort(compareRetentionOldestFirst)[0];
+    if (!oldest) {
+      return [];
+    }
+    kept = kept.filter((entry) => entry.id !== oldest.id);
+  }
+  return [];
+}
+
 function normalizeEntries(entries: RunHistoryEntry[]): RunHistoryEntry[] {
   const deduped = new Map<string, RunHistoryEntry>();
   for (const entry of entries) {
@@ -220,7 +287,8 @@ function normalizeEntries(entries: RunHistoryEntry[]): RunHistoryEntry[] {
       bundleId: normalizeBundleLabel(entry.bundleId),
     });
   }
-  return sortEntries(Array.from(deduped.values())).slice(0, MAX_RUN_HISTORY_ENTRIES);
+  const retained = applyEntryCountRetention(Array.from(deduped.values()), MAX_RUN_HISTORY_ENTRIES);
+  return applySerializedBudget(retained, MAX_RUN_HISTORY_SERIALIZED_BYTES);
 }
 
 function summarizeBundleForSearch(bundle: InvestigationBundle): string[] {
@@ -394,21 +462,100 @@ export function clearRunHistory(): RunHistoryEntry[] {
   return [];
 }
 
-export function loadRunHistory(storage: RunHistoryStorageLike): RunHistoryEntry[] {
+function clearStoredHistoryKeys(storage: RunHistoryStorageLike): void {
+  if (typeof storage.removeItem === "function") {
+    storage.removeItem(RUN_HISTORY_STORAGE_KEY);
+    storage.removeItem(RUN_HISTORY_SELECTION_STORAGE_KEY);
+    return;
+  }
+  storage.setItem(RUN_HISTORY_STORAGE_KEY, "");
+  storage.setItem(RUN_HISTORY_SELECTION_STORAGE_KEY, "");
+}
+
+function migrateEntries(entries: unknown[]): RunHistoryEntry[] {
+  return normalizeEntries(entries.filter((entry) => isRunHistoryEntry(entry)));
+}
+
+function parseEnvelope(raw: string): unknown {
+  return JSON.parse(raw) as unknown;
+}
+
+function migrateHistoryEnvelope(parsed: unknown): RunHistoryLoadState {
+  if (Array.isArray(parsed)) {
+    return {
+      entries: migrateEntries(parsed),
+      status: "migrated",
+    };
+  }
+
+  if (!isObjectRecord(parsed) || !Array.isArray(parsed.entries) || typeof parsed.schemaVersion !== "number") {
+    return {
+      entries: [],
+      status: "cleared_corrupt",
+    };
+  }
+
+  if (parsed.schemaVersion > RUN_HISTORY_SCHEMA_VERSION) {
+    return {
+      entries: [],
+      status: "ignored_newer_schema",
+    };
+  }
+
+  if (parsed.schemaVersion < RUN_HISTORY_SCHEMA_VERSION) {
+    return {
+      entries: migrateEntries(parsed.entries),
+      status: "migrated",
+    };
+  }
+
+  return {
+    entries: migrateEntries(parsed.entries),
+    status: "ok",
+  };
+}
+
+export function loadRunHistoryState(storage: RunHistoryStorageLike): RunHistoryLoadState {
   const raw = storage.getItem(RUN_HISTORY_STORAGE_KEY);
   if (!raw) {
-    return [];
+    return {
+      entries: [],
+      status: "ok",
+    };
+  }
+
+  const rawBytes = new TextEncoder().encode(raw).length;
+  if (rawBytes > MAX_RUN_HISTORY_SERIALIZED_BYTES) {
+    clearStoredHistoryKeys(storage);
+    return {
+      entries: [],
+      status: "cleared_oversize",
+    };
   }
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isObjectRecord(parsed) || parsed.schemaVersion !== RUN_HISTORY_SCHEMA_VERSION || !Array.isArray(parsed.entries)) {
-      return [];
+    const migrated = migrateHistoryEnvelope(parseEnvelope(raw));
+    if (migrated.status === "cleared_corrupt") {
+      clearStoredHistoryKeys(storage);
+      return migrated;
     }
-    return normalizeEntries(parsed.entries.filter((entry) => isRunHistoryEntry(entry)));
+
+    if (migrated.status === "migrated") {
+      storeRunHistory(storage, migrated.entries);
+    }
+
+    return migrated;
   } catch {
-    return [];
+    clearStoredHistoryKeys(storage);
+    return {
+      entries: [],
+      status: "cleared_corrupt",
+    };
   }
+}
+
+export function loadRunHistory(storage: RunHistoryStorageLike): RunHistoryEntry[] {
+  return loadRunHistoryState(storage).entries;
 }
 
 export function storeRunHistory(storage: RunHistoryStorageLike, entries: RunHistoryEntry[]): void {
@@ -417,4 +564,28 @@ export function storeRunHistory(storage: RunHistoryStorageLike, entries: RunHist
     entries: normalizeEntries(entries),
   };
   storage.setItem(RUN_HISTORY_STORAGE_KEY, JSON.stringify(envelope));
+}
+
+export function loadRunHistorySelection(storage: RunHistoryStorageLike): string | null {
+  const raw = storage.getItem(RUN_HISTORY_SELECTION_STORAGE_KEY);
+  if (!raw || raw.trim().length === 0) {
+    return null;
+  }
+  return raw.trim();
+}
+
+export function storeRunHistorySelection(storage: RunHistoryStorageLike, runId: string | null): void {
+  if (!runId || runId.trim().length === 0) {
+    if (typeof storage.removeItem === "function") {
+      storage.removeItem(RUN_HISTORY_SELECTION_STORAGE_KEY);
+      return;
+    }
+    storage.setItem(RUN_HISTORY_SELECTION_STORAGE_KEY, "");
+    return;
+  }
+  storage.setItem(RUN_HISTORY_SELECTION_STORAGE_KEY, runId.trim());
+}
+
+export function clearRunHistoryStorage(storage: RunHistoryStorageLike): void {
+  clearStoredHistoryKeys(storage);
 }

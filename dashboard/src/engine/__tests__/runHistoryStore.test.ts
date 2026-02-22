@@ -1,15 +1,22 @@
 import {
   addOrUpdateRunHistoryEntry,
   buildReplayConfigFromBundle,
+  clearRunHistoryStorage,
   clearRunHistory,
   createRunHistoryEntryFromBundle,
   createRunHistoryEntryFromSession,
   filterRunHistoryEntries,
   loadRunHistory,
+  loadRunHistorySelection,
+  loadRunHistoryState,
+  MAX_RUN_HISTORY_SERIALIZED_BYTES,
   MAX_RUN_HISTORY_ENTRIES,
   parseHistoryBundle,
+  RUN_HISTORY_SCHEMA_VERSION,
+  RUN_HISTORY_SELECTION_STORAGE_KEY,
   RUN_HISTORY_STORAGE_KEY,
   storeRunHistory,
+  storeRunHistorySelection,
   toggleRunHistoryPinned,
   type RunHistoryStorageLike,
 } from "../runHistoryStore";
@@ -18,11 +25,14 @@ import { createRunSessionFromResult } from "../runSessions";
 import type { CommandResponse } from "../viewModel";
 
 function createStorage(initial: string | null = null): RunHistoryStorageLike {
-  let data = initial;
+  const data = new Map<string, string | null>([[RUN_HISTORY_STORAGE_KEY, initial]]);
   return {
-    getItem: () => data,
+    getItem: (key) => data.get(key) ?? null,
     setItem: (_key, value) => {
-      data = value;
+      data.set(_key, value);
+    },
+    removeItem: (key) => {
+      data.delete(key);
     },
   };
 }
@@ -238,5 +248,160 @@ describe("runHistoryStore", () => {
   it("uses expected storage key and supports clear", () => {
     expect(RUN_HISTORY_STORAGE_KEY).toBe("nlx.gui.runHistory.v1");
     expect(clearRunHistory()).toEqual([]);
+  });
+
+  it("writes versioned envelope and persists only share-safe fields", () => {
+    const session = buildSession("evt-safe", "2026-02-22T02:00:00.000Z", "diagnose");
+    const entry = createRunHistoryEntryFromSession(session, "phase21");
+    const storage = createStorage();
+
+    storeRunHistory(storage, [entry]);
+    const raw = storage.getItem(RUN_HISTORY_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    if (!raw) {
+      throw new Error("Expected persisted run history payload");
+    }
+
+    const parsed = JSON.parse(raw) as { schemaVersion: number; entries: Array<Record<string, unknown>> };
+    expect(parsed.schemaVersion).toBe(RUN_HISTORY_SCHEMA_VERSION);
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0]?.bundleJson).toBeTypeOf("string");
+    expect(JSON.stringify(parsed.entries[0])).not.toContain("\"headers\"");
+    expect(JSON.stringify(parsed.entries[0])).not.toContain("\"env\"");
+  });
+
+  it("migrates older schema payloads deterministically", () => {
+    const session = buildSession("evt-mig", "2026-02-22T02:05:00.000Z");
+    const entry = createRunHistoryEntryFromSession(session, "phase21");
+    const storage = createStorage(
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: [entry],
+      }),
+    );
+
+    const loadedState = loadRunHistoryState(storage);
+    expect(loadedState.status).toBe("migrated");
+    expect(loadedState.entries).toHaveLength(1);
+    expect(loadedState.entries[0]?.id).toBe(entry.id);
+
+    const persistedRaw = storage.getItem(RUN_HISTORY_STORAGE_KEY);
+    expect(persistedRaw).not.toBeNull();
+    if (!persistedRaw) {
+      throw new Error("Expected migrated payload persisted");
+    }
+    const persisted = JSON.parse(persistedRaw) as { schemaVersion: number };
+    expect(persisted.schemaVersion).toBe(RUN_HISTORY_SCHEMA_VERSION);
+  });
+
+  it("fails safe on corrupt payloads and clears storage", () => {
+    const storage = createStorage("{invalid-json");
+
+    const loadedState = loadRunHistoryState(storage);
+    expect(loadedState.status).toBe("cleared_corrupt");
+    expect(loadedState.entries).toEqual([]);
+    expect(storage.getItem(RUN_HISTORY_STORAGE_KEY)).toBeNull();
+  });
+
+  it("fails safe on newer schema versions without crashing", () => {
+    const session = buildSession("evt-newer", "2026-02-22T02:06:00.000Z");
+    const entry = createRunHistoryEntryFromSession(session, "phase21");
+    const storage = createStorage(
+      JSON.stringify({
+        schemaVersion: RUN_HISTORY_SCHEMA_VERSION + 1,
+        entries: [entry],
+      }),
+    );
+
+    const loadedState = loadRunHistoryState(storage);
+    expect(loadedState.status).toBe("ignored_newer_schema");
+    expect(loadedState.entries).toEqual([]);
+  });
+
+  it("clears oversized persisted payloads before parsing", () => {
+    const oversizeRaw = "x".repeat(MAX_RUN_HISTORY_SERIALIZED_BYTES + 100);
+    const storage = createStorage(oversizeRaw);
+
+    const loadedState = loadRunHistoryState(storage);
+    expect(loadedState.status).toBe("cleared_oversize");
+    expect(loadedState.entries).toEqual([]);
+    expect(storage.getItem(RUN_HISTORY_STORAGE_KEY)).toBeNull();
+  });
+
+  it("enforces serialized size budget and deterministic oldest-first eviction", () => {
+    const entries: ReturnType<typeof clearRunHistory> = [];
+    for (let index = 0; index < MAX_RUN_HISTORY_ENTRIES; index += 1) {
+      const minute = String(index).padStart(2, "0");
+      const session = buildSession(`evt-size-${index}`, `2026-02-22T03:${minute}:00.000Z`, "dryRunTask");
+      const entry = createRunHistoryEntryFromSession(session, "phase21");
+      const bundle = parseHistoryBundle(entry);
+      if (!bundle) {
+        throw new Error("Expected valid bundle");
+      }
+      const inflatedBundle: InvestigationBundle = {
+        ...bundle,
+        sessions: bundle.sessions.map((report, reportIndex) =>
+          reportIndex === 0
+            ? {
+                ...report,
+                session: {
+                  ...report.session,
+                  events: report.session.events.map((event, eventIndex) =>
+                    eventIndex === 0
+                      ? {
+                          ...event,
+                          msg: `diagnostic output ${index} ${"line ".repeat(2400)}`.trim(),
+                        }
+                      : event,
+                  ),
+                },
+              }
+            : report,
+        ),
+      };
+      inflatedBundle.bundleId = buildBundleId({
+        bundleSchemaVersion: inflatedBundle.bundleSchemaVersion,
+        bundleKind: inflatedBundle.bundleKind,
+        createdFrom: inflatedBundle.createdFrom,
+        preset: inflatedBundle.preset,
+        views: inflatedBundle.views,
+        sessions: inflatedBundle.sessions,
+        redacted: inflatedBundle.redacted,
+      });
+
+      entries.push(createRunHistoryEntryFromBundle(inflatedBundle, "session"));
+    }
+
+    const storage = createStorage();
+    storeRunHistory(storage, entries);
+    const raw = storage.getItem(RUN_HISTORY_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    if (!raw) {
+      throw new Error("Expected run history payload");
+    }
+    expect(raw.length).toBeLessThanOrEqual(MAX_RUN_HISTORY_SERIALIZED_BYTES);
+
+    const loaded = loadRunHistory(storage);
+    expect(loaded.length).toBeLessThan(entries.length);
+
+    const oldestKept = loaded[loaded.length - 1];
+    expect(oldestKept?.startedAt).not.toBe("2026-02-22T03:00:00.000Z");
+  });
+
+  it("persists and clears selected run history id deterministically", () => {
+    const storage = createStorage();
+    expect(loadRunHistorySelection(storage)).toBeNull();
+
+    storeRunHistorySelection(storage, "run-123");
+    expect(loadRunHistorySelection(storage)).toBe("run-123");
+    expect(storage.getItem(RUN_HISTORY_SELECTION_STORAGE_KEY)).toBe("run-123");
+
+    storeRunHistorySelection(storage, null);
+    expect(loadRunHistorySelection(storage)).toBeNull();
+
+    storeRunHistorySelection(storage, "run-456");
+    clearRunHistoryStorage(storage);
+    expect(loadRunHistorySelection(storage)).toBeNull();
+    expect(storage.getItem(RUN_HISTORY_STORAGE_KEY)).toBeNull();
   });
 });
