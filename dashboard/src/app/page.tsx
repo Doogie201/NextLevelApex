@@ -136,6 +136,15 @@ import {
   type RunHistoryStatusFilter,
 } from "@/engine/runHistoryStore";
 import {
+  buildRunDetailsModel,
+  buildShareSafeRunExportJson,
+  resolveRunHistorySelection,
+  RUN_DETAILS_ERROR_PREVIEW_LIMIT,
+  RUN_DETAILS_PREVIEW_LIMIT,
+  truncateRunDetails,
+  type RunDetailsSection,
+} from "@/engine/runShareSafeExport";
+import {
   buildSessionCompareReportBundle,
   buildSessionReportBundle,
 } from "@/engine/sessionReport";
@@ -304,6 +313,11 @@ export default function Home() {
   const [runHistoryStatusFilter, setRunHistoryStatusFilter] = useState<RunHistoryStatusFilter>("all");
   const [runHistorySortOrder, setRunHistorySortOrder] = useState<RunHistorySortOrder>("newest");
   const [confirmRunHistoryClear, setConfirmRunHistoryClear] = useState(false);
+  const [runDetailsExpanded, setRunDetailsExpanded] = useState<Record<RunDetailsSection, boolean>>({
+    input: false,
+    output: false,
+    error: false,
+  });
   const [runHistoryErrors, setRunHistoryErrors] = useState<BundleImportValidationError[]>([]);
   const [presets, setPresets] = useState<RunPreset[]>([]);
   const [savedViews, setSavedViews] = useState<SavedViewEntry[]>([]);
@@ -1740,6 +1754,50 @@ export default function Home() {
     return filteredRunHistoryEntries.find((entry) => entry.id === selectedRunHistoryId) ?? filteredRunHistoryEntries[0] ?? null;
   }, [filteredRunHistoryEntries, selectedRunHistoryId]);
 
+  const selectedRunDetails = useMemo(
+    () => (selectedRunHistoryEntry ? buildRunDetailsModel(selectedRunHistoryEntry) : null),
+    [selectedRunHistoryEntry],
+  );
+
+  const inputDetailsPreview = useMemo(
+    () => (selectedRunDetails ? truncateRunDetails(selectedRunDetails.inputText, RUN_DETAILS_PREVIEW_LIMIT) : null),
+    [selectedRunDetails],
+  );
+
+  const outputDetailsPreview = useMemo(
+    () => (selectedRunDetails ? truncateRunDetails(selectedRunDetails.outputText, RUN_DETAILS_PREVIEW_LIMIT) : null),
+    [selectedRunDetails],
+  );
+
+  const errorDetailsPreview = useMemo(
+    () =>
+      selectedRunDetails && selectedRunDetails.errorText.length > 0
+        ? truncateRunDetails(selectedRunDetails.errorText, RUN_DETAILS_ERROR_PREVIEW_LIMIT)
+        : null,
+    [selectedRunDetails],
+  );
+
+  const renderedInputDetailsText = useMemo(() => {
+    if (!selectedRunDetails || !inputDetailsPreview) {
+      return "";
+    }
+    return runDetailsExpanded.input ? selectedRunDetails.inputText : inputDetailsPreview.text;
+  }, [inputDetailsPreview, runDetailsExpanded.input, selectedRunDetails]);
+
+  const renderedOutputDetailsText = useMemo(() => {
+    if (!selectedRunDetails || !outputDetailsPreview) {
+      return "";
+    }
+    return runDetailsExpanded.output ? selectedRunDetails.outputText : outputDetailsPreview.text;
+  }, [outputDetailsPreview, runDetailsExpanded.output, selectedRunDetails]);
+
+  const renderedErrorDetailsText = useMemo(() => {
+    if (!selectedRunDetails || !errorDetailsPreview) {
+      return "";
+    }
+    return runDetailsExpanded.error ? selectedRunDetails.errorText : errorDetailsPreview.text;
+  }, [errorDetailsPreview, runDetailsExpanded.error, selectedRunDetails]);
+
   const selectedBundleSessions = useMemo(
     () => runSessions.filter((session) => bundleSessionIds.includes(session.id)),
     [bundleSessionIds, runSessions],
@@ -1909,12 +1967,9 @@ export default function Home() {
   }, [savedViews]);
 
   useEffect(() => {
-    if (filteredRunHistoryEntries.length === 0) {
-      setSelectedRunHistoryId(null);
-      return;
-    }
-    if (!selectedRunHistoryId || !filteredRunHistoryEntries.some((entry) => entry.id === selectedRunHistoryId)) {
-      setSelectedRunHistoryId(filteredRunHistoryEntries[0].id);
+    const resolvedSelection = resolveRunHistorySelection(filteredRunHistoryEntries, selectedRunHistoryId);
+    if (resolvedSelection !== selectedRunHistoryId) {
+      setSelectedRunHistoryId(resolvedSelection);
     }
   }, [filteredRunHistoryEntries, selectedRunHistoryId]);
 
@@ -1926,6 +1981,14 @@ export default function Home() {
       setConfirmRunHistoryClear(false);
     }
   }, [confirmRunHistoryClear, runHistoryEntries.length]);
+
+  useEffect(() => {
+    setRunDetailsExpanded({
+      input: false,
+      output: false,
+      error: false,
+    });
+  }, [selectedRunHistoryId]);
 
   useEffect(() => {
     if (runSessions.length === 0) {
@@ -2085,6 +2148,42 @@ export default function Home() {
     setFriendlyMessage("Run history clear canceled.");
   }, []);
 
+  const toggleRunDetailsExpandedSection = useCallback((section: RunDetailsSection): void => {
+    setRunDetailsExpanded((previous) => ({
+      ...previous,
+      [section]: !previous[section],
+    }));
+  }, []);
+
+  const copyRunDetailsSection = useCallback(
+    async (section: RunDetailsSection): Promise<void> => {
+      if (!selectedRunDetails) {
+        setFriendlyMessage("Select a run history entry first.");
+        return;
+      }
+
+      const payload =
+        section === "input"
+          ? selectedRunDetails.inputText
+          : section === "output"
+            ? selectedRunDetails.outputText
+            : selectedRunDetails.errorText;
+
+      if (!payload) {
+        setFriendlyMessage("No content available for this section.");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(payload);
+        setFriendlyMessage(`Copied run ${section} details.`);
+      } catch {
+        setFriendlyMessage("Clipboard write failed in this browser context.");
+      }
+    },
+    [selectedRunDetails],
+  );
+
   const pinRunHistoryAsSavedView = useCallback(
     (entryId: string): void => {
       if (typeof window === "undefined") {
@@ -2141,6 +2240,22 @@ export default function Home() {
     anchor.click();
     window.URL.revokeObjectURL(url);
   }, []);
+
+  const exportSelectedRunShareSafe = useCallback((): void => {
+    if (!selectedRunHistoryEntry) {
+      setFriendlyMessage("Select a run history entry first.");
+      return;
+    }
+
+    const json = buildShareSafeRunExportJson(selectedRunHistoryEntry);
+    if (!json) {
+      setFriendlyMessage("Run history entry failed share-safe export validation.");
+      return;
+    }
+
+    downloadTextPayload(`nlx-run-share-safe-${selectedRunHistoryEntry.id}.json`, json);
+    setFriendlyMessage("Exported share-safe run JSON.");
+  }, [downloadTextPayload, selectedRunHistoryEntry]);
 
   const exportSelectedSessionJson = useCallback((): void => {
     if (!selectedSession) {
@@ -3834,7 +3949,7 @@ export default function Home() {
                                       onClick={() => loadRunHistoryIntoEditor(entry.id)}
                                       aria-label={`Load run history ${entry.bundleLabel} into editor`}
                                     >
-                                      <ListChecks className="w-4 h-4" /> Load
+                                      <ListChecks className="w-4 h-4" /> Load Editor
                                     </button>
                                     <button
                                       className="btn-muted"
@@ -3857,6 +3972,136 @@ export default function Home() {
                               );
                             })}
                           </div>
+                        )}
+
+                        {selectedRunDetails && (
+                          <section className="empty-state-card" aria-label="Selected run details">
+                            <div className="sessions-header">
+                              <h3>Run Details</h3>
+                              <div className="sessions-header-actions">
+                                <button
+                                  className="btn-theme"
+                                  type="button"
+                                  onClick={exportSelectedRunShareSafe}
+                                  aria-label="Export selected run share-safe json"
+                                >
+                                  <Download className="w-4 h-4" /> Export Run
+                                </button>
+                              </div>
+                            </div>
+                            <dl className="inspector-grid">
+                              <div>
+                                <dt>Timestamp</dt>
+                                <dd>{formatTimestamp(selectedRunDetails.timestamp)}</dd>
+                              </div>
+                              <div>
+                                <dt>Status</dt>
+                                <dd>{selectedRunDetails.status}</dd>
+                              </div>
+                              <div>
+                                <dt>Run ID</dt>
+                                <dd>{selectedRunDetails.runId}</dd>
+                              </div>
+                              <div>
+                                <dt>Command</dt>
+                                <dd>{selectedRunDetails.commandId}</dd>
+                              </div>
+                              <div>
+                                <dt>Reason</dt>
+                                <dd>{selectedRunDetails.reasonCode}</dd>
+                              </div>
+                              <div>
+                                <dt>Bundle</dt>
+                                <dd>{selectedRunDetails.bundleId}</dd>
+                              </div>
+                            </dl>
+
+                            <div className="inspector-section-block">
+                              <div className="sessions-header">
+                                <h4>Input</h4>
+                                <div className="sessions-header-actions">
+                                  <button
+                                    className="copy-btn"
+                                    type="button"
+                                    onClick={() => void copyRunDetailsSection("input")}
+                                    aria-label="Copy run input summary"
+                                  >
+                                    <Copy className="w-4 h-4" /> Copy Input
+                                  </button>
+                                  {inputDetailsPreview?.truncated && (
+                                    <button
+                                      className="btn-muted"
+                                      type="button"
+                                      onClick={() => toggleRunDetailsExpandedSection("input")}
+                                      aria-label={runDetailsExpanded.input ? "Collapse input details" : "Expand input details"}
+                                    >
+                                      {runDetailsExpanded.input ? "Collapse" : "Expand"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <pre className="terminal-window">{renderedInputDetailsText || "(no input summary available)"}</pre>
+                            </div>
+
+                            <div className="inspector-section-block">
+                              <div className="sessions-header">
+                                <h4>Output</h4>
+                                <div className="sessions-header-actions">
+                                  <button
+                                    className="copy-btn"
+                                    type="button"
+                                    onClick={() => void copyRunDetailsSection("output")}
+                                    aria-label="Copy run output summary"
+                                  >
+                                    <Copy className="w-4 h-4" /> Copy Output
+                                  </button>
+                                  {outputDetailsPreview?.truncated && (
+                                    <button
+                                      className="btn-muted"
+                                      type="button"
+                                      onClick={() => toggleRunDetailsExpandedSection("output")}
+                                      aria-label={runDetailsExpanded.output ? "Collapse output details" : "Expand output details"}
+                                    >
+                                      {runDetailsExpanded.output ? "Collapse" : "Expand"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <pre className="terminal-window">{renderedOutputDetailsText || "(no output summary available)"}</pre>
+                            </div>
+
+                            <div className="inspector-section-block">
+                              <div className="sessions-header">
+                                <h4>Error</h4>
+                                <div className="sessions-header-actions">
+                                  <button
+                                    className="copy-btn"
+                                    type="button"
+                                    onClick={() => void copyRunDetailsSection("error")}
+                                    disabled={selectedRunDetails.errorText.length === 0}
+                                    aria-label="Copy run error details"
+                                  >
+                                    <Copy className="w-4 h-4" /> Copy Error
+                                  </button>
+                                  {errorDetailsPreview?.truncated && (
+                                    <button
+                                      className="btn-muted"
+                                      type="button"
+                                      onClick={() => toggleRunDetailsExpandedSection("error")}
+                                      aria-label={runDetailsExpanded.error ? "Collapse error details" : "Expand error details"}
+                                    >
+                                      {runDetailsExpanded.error ? "Collapse" : "Expand"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {selectedRunDetails.errorText.length > 0 ? (
+                                <pre className="terminal-window">{renderedErrorDetailsText}</pre>
+                              ) : (
+                                <p className="meta-muted">No error output captured for this run.</p>
+                              )}
+                            </div>
+                          </section>
                         )}
 
                         {runHistoryErrors.length > 0 && (
