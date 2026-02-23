@@ -77,7 +77,7 @@ yamllint        = "^1.37.1"
 poethepoet      = "^0.29.0"
 commitizen      = "^3.30.0"
 types-PyYAML = "^6.0.12.20250809"
-types-jsonschema = "^4.25.0.20250809"
+types-jsonschema = "^4.26.0.20260202"
 
 # ───────────────────────────── Ruff (lint+format) ─────────────────────────
 [tool.ruff]
