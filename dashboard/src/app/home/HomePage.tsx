@@ -227,6 +227,7 @@ import { buildBundlePreviewText } from "@/engine/bundleNormalize";
 import ConsoleHelpDialog from "./components/ConsoleHelpDialog";
 import ExportReviewDialog from "./components/ExportReviewDialog";
 import ShortcutsDialog from "./components/ShortcutsDialog";
+import TooltipStyles from "./components/TooltipStyles";
 
 type ViewId = UrlViewId;
 type SeverityFilter = UrlSeverityFilter;
@@ -3675,6 +3676,7 @@ export default function Home() {
       data-theme="run"
       data-contrast={highContrast ? "high" : "normal"}
     >
+      <TooltipStyles />
       <a href="#main" className="skip-link">
         Skip to main content
       </a>
