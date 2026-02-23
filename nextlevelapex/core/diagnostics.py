@@ -359,7 +359,7 @@ def generate_diagnostic_report(
     else:
         log.info("Ollama error analysis disabled or Ollama not available.")
 
-    sanitized_report, bloat_stats = trim_large_fields(report)
+    _sanitized_report, bloat_stats = trim_large_fields(report)
     report["bloat_sanitizer_stats"] = bloat_stats
 
     return report
