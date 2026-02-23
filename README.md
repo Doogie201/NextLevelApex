@@ -104,10 +104,35 @@ poetry run isort --check-only .
 poetry run mypy .
 ```
 
+## Git Worktree Setup
+
+Poetry creates a separate virtualenv for each project path. When using `git worktree`, each worktree needs its own `poetry install`:
+
+```bash
+git worktree add ../my-worktree main
+cd ../my-worktree
+bash scripts/dev-setup.sh   # installs Poetry deps + dashboard deps
+```
+
+Or manually:
+
+```bash
+poetry install               # Python deps + nlx entrypoint
+npm --prefix dashboard ci    # dashboard deps
+```
+
+Without this, you will see:
+
+- `Warning: 'nlx' is an entry point defined in pyproject.toml, but it's not installed as a script`
+- `ModuleNotFoundError: No module named 'typer'` (or other deps)
+
 ## Troubleshooting
 
 - `ModuleNotFoundError` for dependencies:
-  - Use `poetry run ...` or activate Poetry's environment.
+  - Run `poetry install` then use `poetry run ...` or activate Poetry's environment.
+  - In a git worktree, you must run `poetry install` in each worktree separately.
+- `Warning: 'nlx' is an entry point ... not installed as a script`:
+  - Run `poetry install` to register the entrypoint.
 - `install-sudoers` cannot verify `includedir`:
   - Run `sudo visudo` and ensure one of these exists:
     - `#includedir /private/etc/sudoers.d`
