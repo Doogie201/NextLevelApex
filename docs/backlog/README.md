@@ -27,7 +27,7 @@ See [milestones.md](milestones.md) for milestone definitions and mapping rules.
 | S15 | Performance + Accessibility Hardening | backlog | perf | M3 | — | [S15](../sprints/S15/) |
 | S16 | Operator-Grade QA Megasuite | backlog | test | M3 | — | [S16](../sprints/S16/) |
 | S17 | URL Sync Loop Hardening | done | bug | M3 | [#126](https://github.com/Doogie201/NextLevelApex/pull/126) | [S17](../sprints/S17/) |
-| S18 | Release Certification v2 | backlog | chore | M3 | — | [S18](../sprints/S18/) |
+| S18 | Release Certification v2 | in-review | chore | M3 | [#128](https://github.com/Doogie201/NextLevelApex/pull/128) | [S18](../sprints/S18/) |
 | S19 | Worktree + Poetry Guardrails v2 | backlog | chore | M3 | — | [S19](../sprints/S19/) |
 | S20 | Governance: DoD + Stop Conditions | backlog | docs | M4 | — | [S20](../sprints/S20/) |
 | S21 | Operator Execution Safety System (OESS) | backlog | security | M4 | — | [S21](../sprints/S21/) |

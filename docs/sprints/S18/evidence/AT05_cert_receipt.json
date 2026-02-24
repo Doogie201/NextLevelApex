@@ -1,0 +1,75 @@
+{
+  "sprint": "S18",
+  "name": "Release Certification v2",
+  "timestamp": "2026-02-24T14:30:19Z",
+  "branch": "sprint/S18-release-cert-v2",
+  "baseline_sha": "c21bf51cb0e54832c30c268e51b9bf0da560e116",
+  "files_touched": [
+    "dashboard/src/engine/releaseCert.ts",
+    "dashboard/src/engine/__tests__/releaseCert.test.ts",
+    "docs/sprints/S18/README.md",
+    "docs/sprints/S18/evidence/AT05_cert_receipt.json"
+  ],
+  "gates": {
+    "build": {
+      "status": "PASS",
+      "detail": "Next.js 16.1.6 (Turbopack) compiled in 1.5s, TypeScript clean"
+    },
+    "lint": {
+      "status": "PASS",
+      "detail": "eslint clean"
+    },
+    "test": {
+      "status": "PASS",
+      "detail": "40 files, 172 tests, 0 failures (Vitest 2.1.9)"
+    }
+  },
+  "acceptance_tests": {
+    "AT-S18-01": {
+      "description": "Cert fails on non-main branch",
+      "status": "PASS",
+      "method": "Unit test with injected exec returning non-main branch; pass:false with immediate stop",
+      "tests": [
+        "returns ok:false when on non-main branch",
+        "returns ok:false when tree is dirty",
+        "returns ok:false for sprint branch",
+        "returns pass:false with empty pages when branch is not main"
+      ]
+    },
+    "AT-S18-02": {
+      "description": "Cert passes on main + clean tree",
+      "status": "PASS",
+      "method": "Unit test with injected exec returning main + clean; branchCheck.ok:true",
+      "tests": [
+        "returns ok:true when on main with clean tree"
+      ]
+    },
+    "AT-S18-03": {
+      "description": "All URLs load with no overlay",
+      "status": "PASS",
+      "method": "Unit tests (7 overlay detection tests) + runtime evidence (production build + curl for 10 URLs)",
+      "runtime_results": [
+        { "label": "home-default", "path": "/", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "view-dashboard", "path": "/?view=dashboard", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "view-tasks", "path": "/?view=tasks", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "view-output", "path": "/?view=output", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "view-bundles", "path": "/?view=bundles", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "deep-link-event", "path": "/?view=output&event=evt-cert-probe", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "deep-link-session", "path": "/?view=output&session=run-cert-probe", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "deep-link-group", "path": "/?view=output&group=severity", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "severity-filter", "path": "/?view=dashboard&severity=error", "status": 200, "markers": 0, "result": "PASS" },
+        { "label": "workspace-focus", "path": "/?view=output&layout=focus-output", "status": 200, "markers": 0, "result": "PASS" }
+      ]
+    }
+  },
+  "whitelist_compliance": {
+    "allowed_paths": ["dashboard/src/**", "docs/sprints/S18/**"],
+    "violations": 0
+  },
+  "budget_compliance": {
+    "new_hooks": 0,
+    "new_effects": 0,
+    "new_deps": 0,
+    "max_function_length": 25
+  }
+}
