@@ -58,6 +58,7 @@ import {
   type UrlSeverityFilter,
   type UrlViewId,
 } from "@/engine/urlState";
+import { resolveSessionEventPair } from "@/engine/sessionEventSync";
 import {
   classifyCommandOutcome,
   formatCommandLabel,
@@ -836,25 +837,15 @@ export default function Home() {
   }, [commandHistory, selectedEventId]);
 
   useEffect(() => {
-    if (!selectedEventId) {
+    if (!selectedEventId && !selectedSessionId) {
       return;
     }
-    const matchingSession = runSessions.find((session) => session.eventId === selectedEventId);
-    if (matchingSession && matchingSession.id !== selectedSessionId) {
-      setSelectedSessionId(matchingSession.id);
+    const resolved = resolveSessionEventPair(runSessions, selectedEventId, selectedSessionId);
+    if (resolved.sessionId !== selectedSessionId) {
+      setSelectedSessionId(resolved.sessionId);
     }
-  }, [runSessions, selectedEventId, selectedSessionId]);
-
-  useEffect(() => {
-    if (!selectedSessionId) {
-      return;
-    }
-    const session = runSessions.find((item) => item.id === selectedSessionId);
-    if (!session) {
-      return;
-    }
-    if (selectedEventId !== session.eventId) {
-      setSelectedEventId(session.eventId);
+    if (resolved.eventId !== selectedEventId) {
+      setSelectedEventId(resolved.eventId);
     }
   }, [runSessions, selectedEventId, selectedSessionId]);
 
