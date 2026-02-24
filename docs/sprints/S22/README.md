@@ -4,12 +4,12 @@
 |-------|-------|
 | Sprint ID | `S22` |
 | Name | Backlog Index Layout |
-| Status | in-progress |
+| Status | done |
 | Category | docs |
 | Milestone | M1 |
 | Baseline SHA | `3b65b97720cf562ecc85875a2b8f864868244385` |
 | Branch | `sprint/S22-backlog-index-layout` |
-| PR | — |
+| PR | [#124](https://github.com/Doogie201/NextLevelApex/pull/124) |
 
 ## Objective
 
