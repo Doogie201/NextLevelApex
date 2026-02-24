@@ -52,7 +52,7 @@ def trim_large_fields(
             if bloat_guard_enabled and len(value) > max_list_items:
                 stats["fields_trimmed"] += 1
                 stats["lists_trimmed"] += 1
-                trimmed[key] = value[:max_list_items] + ["... (list trimmed)"]
+                trimmed[key] = [*value[:max_list_items], "... (list trimmed)"]
                 log.debug(f"BloatGuard: Trimmed list at '{full_path}'")
             else:
                 trimmed[key] = value

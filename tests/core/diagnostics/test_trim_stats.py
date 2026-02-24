@@ -21,7 +21,7 @@ def test_trim_stats_are_correct():
         "nested": {"deep_str": "y" * 75},  # trimmed, 25 removed
     }
 
-    trimmed, stats = trim_large_fields(data)
+    _trimmed, stats = trim_large_fields(data)
 
     assert stats["fields_trimmed"] == 4
     assert stats["string_fields_trimmed"] == 3  # long_str, logs, deep_str
