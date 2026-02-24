@@ -29,12 +29,12 @@ Quick links to each sprint's documentation folder.
 | S14 | [S14/](S14/) | backlog |
 | S15 | [S15/](S15/) | backlog |
 | S16 | [S16/](S16/) | backlog |
-| S17 | [S17/](S17/) | backlog |
+| S17 | [S17/](S17/) | done |
 | S18 | [S18/](S18/) | backlog |
 | S19 | [S19/](S19/) | backlog |
 | S20 | [S20/](S20/) | backlog |
 | S21 | [S21/](S21/) | backlog |
 | S22 | [S22/](S22/) | done |
-| S23 | [S23/](S23/) | in-progress |
+| S23 | [S23/](S23/) | done |
 
 See the [master backlog](../backlog/README.md) for objectives, categories, milestones, and PR links.

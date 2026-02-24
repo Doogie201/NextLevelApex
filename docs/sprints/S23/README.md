@@ -4,12 +4,12 @@
 |-------|-------|
 | Sprint ID | `S23` |
 | Name | Governance Gates v1 (Automation PR exception + Codecov docs-only pass) |
-| Status | in-progress |
+| Status | done |
 | Category | devops |
 | Milestone | M4 |
 | Baseline SHA | `d19e39fb59983f84b14496ecb850dac0bfb877ec` |
 | Branch | `sprint/S23-governance-gates-v1` |
-| PR | — |
+| PR | [#125](https://github.com/Doogie201/NextLevelApex/pull/125) |
 | Dependencies | S22 |
 
 ## Objective

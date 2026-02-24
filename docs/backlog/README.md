@@ -26,13 +26,13 @@ See [milestones.md](milestones.md) for milestone definitions and mapping rules.
 | S14 | Navigation IA + Microinteractions | backlog | nav | M2 | — | [S14](../sprints/S14/) |
 | S15 | Performance + Accessibility Hardening | backlog | perf | M3 | — | [S15](../sprints/S15/) |
 | S16 | Operator-Grade QA Megasuite | backlog | test | M3 | — | [S16](../sprints/S16/) |
-| S17 | URL Sync Loop Hardening | backlog | bug | M3 | — | [S17](../sprints/S17/) |
+| S17 | URL Sync Loop Hardening | done | bug | M3 | [#126](https://github.com/Doogie201/NextLevelApex/pull/126) | [S17](../sprints/S17/) |
 | S18 | Release Certification v2 | backlog | chore | M3 | — | [S18](../sprints/S18/) |
 | S19 | Worktree + Poetry Guardrails v2 | backlog | chore | M3 | — | [S19](../sprints/S19/) |
 | S20 | Governance: DoD + Stop Conditions | backlog | docs | M4 | — | [S20](../sprints/S20/) |
 | S21 | Operator Execution Safety System (OESS) | backlog | security | M4 | — | [S21](../sprints/S21/) |
 | S22 | Backlog Index Layout | done | docs | M1 | [#124](https://github.com/Doogie201/NextLevelApex/pull/124) | [S22](../sprints/S22/) |
-| S23 | Governance Gates v1 | in-progress | devops | M4 | — | [S23](../sprints/S23/) |
+| S23 | Governance Gates v1 | done | devops | M4 | [#125](https://github.com/Doogie201/NextLevelApex/pull/125) | [S23](../sprints/S23/) |
 
 ## Renumbering Note
 
