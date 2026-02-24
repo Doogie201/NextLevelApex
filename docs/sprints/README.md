@@ -30,7 +30,7 @@ Quick links to each sprint's documentation folder.
 | S15 | [S15/](S15/) | backlog |
 | S16 | [S16/](S16/) | backlog |
 | S17 | [S17/](S17/) | done |
-| S18 | [S18/](S18/) | backlog |
+| S18 | [S18/](S18/) | in-review |
 | S19 | [S19/](S19/) | backlog |
 | S20 | [S20/](S20/) | backlog |
 | S21 | [S21/](S21/) | backlog |
