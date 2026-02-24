@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 export interface CertUrlCase {
   label: string;
@@ -19,9 +20,16 @@ export interface BranchCheck {
   ok: boolean;
 }
 
+export interface StderrCheck {
+  logPath: string | null;
+  signatures: string[];
+  ok: boolean;
+}
+
 export interface CertResult {
   branchCheck: BranchCheck;
   pages: CertPageResult[];
+  stderrCheck: StderrCheck;
   pass: boolean;
 }
 
@@ -50,6 +58,22 @@ export const OVERLAY_MARKERS: string[] = [
   "Hydration failed",
 ];
 
+/** Stderr/log signatures that indicate server-side crashes in production. */
+export const STDERR_SIGNATURES: string[] = [
+  "⨯ Error",
+  "TypeError:",
+  "ReferenceError:",
+  "SyntaxError:",
+  "RangeError:",
+  "ECONNREFUSED",
+  "EADDRINUSE",
+  "unhandledRejection",
+  "uncaughtException",
+  "Hydration failed",
+  "digest:",
+  "server-side exception",
+];
+
 export type ExecFn = (cmd: string) => string;
 
 const defaultExec: ExecFn = (cmd) => execSync(cmd, { encoding: "utf-8" });
@@ -67,6 +91,27 @@ export function checkPageForOverlay(html: string): { overlayDetected: boolean; m
   return { overlayDetected: found.length > 0, markers: found };
 }
 
+/**
+ * Reads a server log file and scans for stderr error signatures.
+ * Returns ok:true only if no signatures are found (or no log path given).
+ */
+export function checkServerLog(logPath: string | null): StderrCheck {
+  if (!logPath) {
+    return { logPath: null, signatures: [], ok: true };
+  }
+  let content: string;
+  try {
+    content = readFileSync(logPath, "utf-8");
+  } catch {
+    // If the log file doesn't exist or can't be read, treat as ok
+    // (the cert should still rely on HTTP checks).
+    return { logPath, signatures: [], ok: true };
+  }
+  const lower = content.toLowerCase();
+  const found = STDERR_SIGNATURES.filter((sig) => lower.includes(sig.toLowerCase()));
+  return { logPath, signatures: found, ok: found.length === 0 };
+}
+
 export async function fetchAndCheck(baseUrl: string, urlCase: CertUrlCase): Promise<CertPageResult> {
   const url = `${baseUrl}${urlCase.path}`;
   const response = await fetch(url);
@@ -75,18 +120,36 @@ export async function fetchAndCheck(baseUrl: string, urlCase: CertUrlCase): Prom
   return { url, label: urlCase.label, status: response.status, overlayDetected, markers };
 }
 
-export async function runCert(baseUrl: string, exec?: ExecFn): Promise<CertResult> {
-  const branchCheck = checkBranch(exec);
+export interface RunCertOptions {
+  baseUrl: string;
+  exec?: ExecFn;
+  serverLogPath?: string | null;
+}
+
+export async function runCert(
+  baseUrlOrOpts: string | RunCertOptions,
+  exec?: ExecFn,
+): Promise<CertResult> {
+  const opts: RunCertOptions =
+    typeof baseUrlOrOpts === "string"
+      ? { baseUrl: baseUrlOrOpts, exec, serverLogPath: null }
+      : baseUrlOrOpts;
+  const resolvedExec = opts.exec ?? exec;
+
+  const branchCheck = checkBranch(resolvedExec);
+  const emptyStderr: StderrCheck = { logPath: null, signatures: [], ok: true };
+
   if (!branchCheck.ok) {
-    return { branchCheck, pages: [], pass: false };
+    return { branchCheck, pages: [], stderrCheck: emptyStderr, pass: false };
   }
+
   const pages: CertPageResult[] = [];
   for (const urlCase of CERT_URL_MATRIX) {
     try {
-      pages.push(await fetchAndCheck(baseUrl, urlCase));
+      pages.push(await fetchAndCheck(opts.baseUrl, urlCase));
     } catch {
       pages.push({
-        url: `${baseUrl}${urlCase.path}`,
+        url: `${opts.baseUrl}${urlCase.path}`,
         label: urlCase.label,
         status: 0,
         overlayDetected: false,
@@ -94,6 +157,10 @@ export async function runCert(baseUrl: string, exec?: ExecFn): Promise<CertResul
       });
     }
   }
+
+  const stderrCheck = checkServerLog(opts.serverLogPath ?? null);
   const allPagesOk = pages.every((p) => p.status === 200 && !p.overlayDetected);
-  return { branchCheck, pages, pass: allPagesOk };
+  const pass = allPagesOk && stderrCheck.ok;
+
+  return { branchCheck, pages, stderrCheck, pass };
 }

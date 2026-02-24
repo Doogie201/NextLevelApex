@@ -1,0 +1,14 @@
+{
+  "AT": "AT-S24-05",
+  "description": "Main-only enforcement preserved via existing checkBranch tests",
+  "existing_tests": [
+    "checkBranch > returns ok:true when on main with clean tree (AT-S18-02)",
+    "checkBranch > returns ok:false when on non-main branch (AT-S18-01)",
+    "checkBranch > returns ok:false when tree is dirty (AT-S18-01)",
+    "checkBranch > returns ok:false for sprint branch",
+    "runCert > returns pass:false with empty pages when branch is not main (AT-S18-01)"
+  ],
+  "enforcement_logic": "runCert() calls checkBranch() first; if branch !== main || !cleanTree, returns pass:false immediately with empty pages array",
+  "stderrCheck_on_branch_fail": "stderrCheck is populated as { logPath: null, signatures: [], ok: true } — no stderr scan is even attempted when branch check fails",
+  "verdict": "PASS — main-only enforcement is preserved and tested"
+}

@@ -1,0 +1,14 @@
+{
+  "AT": "AT-S24-02",
+  "description": "Harness proves HTTP 200 + clean HTML passes old overlay-only detection (false-PASS scenario)",
+  "method": "DI + fixture: checkPageForOverlay(CLEAN_HTML) with no overlay markers",
+  "fixture_html": "<html lang=\"en\"><body><div id=\"__next\">OK</div></body></html>",
+  "result": {
+    "overlayDetected": false,
+    "markers": []
+  },
+  "interpretation": "Old cert logic (status 200 + overlayDetected === false) would return pass:true. If stderr had crash signals, the old cert would miss them entirely.",
+  "test_name": "AT-S24-02: clean HTML passes old overlay-only detection",
+  "test_file": "dashboard/src/engine/__tests__/releaseCert.test.ts",
+  "verdict": "PASS"
+}

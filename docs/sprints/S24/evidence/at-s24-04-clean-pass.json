@@ -1,0 +1,12 @@
+{
+  "AT": "AT-S24-04",
+  "description": "Upgraded cert PASSES for 200 + clean HTML + clean stderr",
+  "method": "DI + fixture: checkPageForOverlay(CLEAN_HTML) + checkServerLog(CLEAN_LOG)",
+  "fixture_stderr": "✓ Ready in 200ms\n",
+  "overlay_result": { "overlayDetected": false },
+  "stderr_result": { "ok": true, "signatures": [] },
+  "new_cert_logic": "200 + !overlayDetected + stderrCheck.ok → PASS",
+  "test_name": "AT-S24-04: upgraded cert PASSES for 200 + clean HTML + clean stderr",
+  "test_file": "dashboard/src/engine/__tests__/releaseCert.test.ts",
+  "verdict": "PASS"
+}

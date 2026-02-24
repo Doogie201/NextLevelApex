@@ -36,5 +36,6 @@ Quick links to each sprint's documentation folder.
 | S21 | [S21/](S21/) | backlog |
 | S22 | [S22/](S22/) | done |
 | S23 | [S23/](S23/) | done |
+| S24 | [S24/](S24/) | in-progress |
 
 See the [master backlog](../backlog/README.md) for objectives, categories, milestones, and PR links.

@@ -33,6 +33,7 @@ See [milestones.md](milestones.md) for milestone definitions and mapping rules.
 | S21 | Operator Execution Safety System (OESS) | backlog | security | M4 | — | [S21](../sprints/S21/) |
 | S22 | Backlog Index Layout | done | docs | M1 | [#124](https://github.com/Doogie201/NextLevelApex/pull/124) | [S22](../sprints/S22/) |
 | S23 | Governance Gates v1 | done | devops | M4 | [#125](https://github.com/Doogie201/NextLevelApex/pull/125) | [S23](../sprints/S23/) |
+| S24 | S18 Cert Validation Hardening (Harness-Based) | in-progress | test | M3 | — | [S24](../sprints/S24/) |
 
 ## Renumbering Note
 

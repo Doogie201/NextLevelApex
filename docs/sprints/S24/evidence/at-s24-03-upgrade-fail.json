@@ -1,0 +1,15 @@
+{
+  "AT": "AT-S24-03",
+  "description": "Upgraded cert FAILS deterministically for 200 + clean HTML + stderr crash signals",
+  "method": "DI + fixture: checkPageForOverlay(CLEAN_HTML) + checkServerLog(CRASH_LOG)",
+  "fixture_stderr": "✓ Ready in 200ms\n⨯ Error: component threw during server render\n    at Page (.next/server/page.js:1:42) {\n  digest: '2338785109'\n}\n",
+  "overlay_result": { "overlayDetected": false },
+  "stderr_result": { "ok": false, "signatures_found": ["⨯ Error", "digest:"] },
+  "composed_verdict": {
+    "old_cert_logic": "200 + !overlayDetected → PASS (false positive)",
+    "new_cert_logic": "200 + !overlayDetected + !stderrCheck.ok → FAIL (correct)"
+  },
+  "test_name": "AT-S24-03: upgraded cert FAILS for 200 + clean HTML + stderr crash",
+  "test_file": "dashboard/src/engine/__tests__/releaseCert.test.ts",
+  "verdict": "PASS"
+}
