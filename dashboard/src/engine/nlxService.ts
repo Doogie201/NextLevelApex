@@ -6,6 +6,7 @@ import {
   validateTaskNameFormat,
 } from "./allowlist";
 import { classifyDiagnose, parseDiagnoseLine, type DiagnoseSummary, type HealthBadge } from "./diagnose";
+import { sanitizeNlxError } from "./nlxErrorSanitizer";
 import { redactOutput } from "./redaction";
 import { runCommandArgv, type CommandErrorType } from "./runner";
 import { parseTaskResults, type TaskResult } from "./taskResults";
@@ -69,6 +70,21 @@ async function listTasksInternal(signal?: AbortSignal): Promise<{ taskNames: str
 }
 
 function toResponse(commandId: string, result: Awaited<ReturnType<typeof runCommandArgv>>): NlxCommandResponse {
+  const rawStderr = redactOutput(result.stderr);
+
+  if (result.exitCode !== 0 && (result.errorType === "missing_nlx" || result.errorType === "nonzero_exit")) {
+    const sanitized = sanitizeNlxError(result.errorType, result.stderr);
+    return {
+      ok: false,
+      commandId,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      errorType: result.errorType,
+      stdout: redactOutput(result.stdout),
+      stderr: sanitized.originalSuppressed ? sanitized.message : rawStderr,
+    };
+  }
+
   return {
     ok: result.exitCode === 0,
     commandId,
@@ -76,7 +92,7 @@ function toResponse(commandId: string, result: Awaited<ReturnType<typeof runComm
     timedOut: result.timedOut,
     errorType: result.errorType,
     stdout: redactOutput(result.stdout),
-    stderr: redactOutput(result.stderr),
+    stderr: rawStderr,
   };
 }
 

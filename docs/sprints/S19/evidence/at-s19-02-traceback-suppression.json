@@ -1,0 +1,45 @@
+{
+  "AT": "AT-S19-02",
+  "description": "Traceback suppression: raw Python stack frames replaced with controlled message + canonical fix",
+  "tests": [
+    {
+      "name": "AT-S19-02: suppresses traceback and provides canonical fix for missing_nlx",
+      "assertions": [
+        "result.originalSuppressed === true",
+        "result.message contains 'nlx is not installed'",
+        "result.message contains 'git worktree' (when in worktree)",
+        "result.fixCommand === 'bash scripts/dev-setup.sh'"
+      ],
+      "result": "PASSED"
+    },
+    {
+      "name": "AT-S19-02: suppresses Python traceback in stderr for nonzero_exit",
+      "assertions": [
+        "result.originalSuppressed === true",
+        "result.message contains 'Python error'",
+        "result.message contains 'bash scripts/dev-setup.sh'",
+        "result.message does NOT contain 'Traceback'",
+        "result.message does NOT contain 'File \"/usr/lib'"
+      ],
+      "result": "PASSED"
+    },
+    {
+      "name": "passes through clean stderr without suppression",
+      "assertions": [
+        "result.originalSuppressed === false",
+        "result.message === original stderr"
+      ],
+      "result": "PASSED"
+    }
+  ],
+  "traceback_patterns": [
+    "Traceback (most recent call last)",
+    "File \"...\", line N",
+    "ModuleNotFoundError:",
+    "ImportError:",
+    "FileNotFoundError:.*poetry",
+    "No module named"
+  ],
+  "canonical_fix": "bash scripts/dev-setup.sh",
+  "verdict": "PASS"
+}

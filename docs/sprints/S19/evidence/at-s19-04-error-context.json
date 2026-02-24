@@ -1,0 +1,20 @@
+{
+  "AT": "AT-S19-04",
+  "description": "Error context attached: sanitized error includes WorktreeContext; API envelope receives controlled stderr",
+  "test": {
+    "name": "AT-S19-04: includes worktree context in sanitized result",
+    "file": "dashboard/src/engine/__tests__/nlxErrorSanitizer.test.ts",
+    "assertions": [
+      "result.context.cwd is defined",
+      "result.context.isWorktree === true",
+      "result.context.interpreterPath === '/usr/bin/python3'"
+    ],
+    "result": "PASSED"
+  },
+  "integration_wiring": {
+    "file": "dashboard/src/engine/nlxService.ts",
+    "function": "toResponse()",
+    "behavior": "When exitCode !== 0 and errorType is missing_nlx or nonzero_exit, stderr is replaced with sanitized.message if originalSuppressed is true"
+  },
+  "verdict": "PASS"
+}

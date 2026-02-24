@@ -1,0 +1,21 @@
+{
+  "AT": "AT-S19-01",
+  "description": "Worktree context detection via DI shell mock",
+  "test": {
+    "name": "AT-S19-01: detects worktree when git-common-dir differs from git-dir",
+    "file": "dashboard/src/engine/__tests__/worktreeContext.test.ts",
+    "assertions": [
+      "ctx.cwd equals injected cwd",
+      "ctx.gitTopLevel equals mocked --show-toplevel",
+      "ctx.isWorktree === true (common-dir !== git-dir)",
+      "ctx.interpreterPath equals mocked python3 path",
+      "ctx.nlxAvailable === true (command -v nlx succeeds)"
+    ],
+    "result": "PASSED"
+  },
+  "supplementary_tests": [
+    "detects non-worktree when git-common-dir equals git-dir",
+    "handles missing git gracefully (all null/false)"
+  ],
+  "verdict": "PASS"
+}
