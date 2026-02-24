@@ -1,0 +1,14 @@
+{
+  "AT": "AT-S24-01",
+  "description": "Audit app routes for crash-probe remnants",
+  "grep_patterns": [
+    "CERT_CRASH_TEST|CERT_.*TEST|force-dynamic|S24-CRASH-PROBE",
+    "throw new Error.*cert|throw new Error.*crash|throw new Error.*probe"
+  ],
+  "grep_scope": "dashboard/src/app/",
+  "grep_result": "No matches found",
+  "page_tsx_content": "import HomePage from './home/HomePage';\n\nexport default function Page() {\n  return <HomePage />;\n}\n",
+  "page_tsx_lines": 5,
+  "build_route_status": "○ (Static)",
+  "verdict": "PASS — zero crash-probe remnants"
+}

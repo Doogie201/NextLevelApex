@@ -1,0 +1,19 @@
+{
+  "gates": {
+    "test": { "result": "PASS", "files": 40, "tests": 182, "exit_code": 0 },
+    "lint": { "result": "PASS", "exit_code": 0 },
+    "build": { "result": "PASS", "route_slash": "○ (Static)", "exit_code": 0 }
+  },
+  "maintainability": {
+    "releaseCert.ts": { "before": 99, "after": 168, "net_new": 69, "budget": 120, "within": true },
+    "releaseCert.test.ts": { "before": 165, "after": 267, "net_new": 102, "budget": 120, "within": true }
+  },
+  "scope": {
+    "files_touched": [
+      "dashboard/src/engine/releaseCert.ts",
+      "dashboard/src/engine/__tests__/releaseCert.test.ts"
+    ],
+    "all_within_whitelist": true,
+    "crash_probes_in_app_routes": false
+  }
+}
