@@ -1,0 +1,23 @@
+{
+  "AT": "AT-S24-06",
+  "description": "Fail-closed log collection: checkServerLog returns ok:false when logPath is provided but file is unreadable",
+  "before": {
+    "behavior": "checkServerLog returned ok:true on read failure (silent false-PASS)",
+    "code": "catch { return { logPath, signatures: [], ok: true }; }"
+  },
+  "after": {
+    "behavior": "checkServerLog returns ok:false with LOG_READ_FAILED marker on read failure",
+    "code": "catch { return { logPath, signatures: ['LOG_READ_FAILED'], ok: false }; }"
+  },
+  "test": {
+    "name": "AT-S24-06: fails closed when log file does not exist",
+    "file": "dashboard/src/engine/__tests__/releaseCert.test.ts",
+    "assertions": [
+      "result.ok === false",
+      "result.signatures contains 'LOG_READ_FAILED'"
+    ],
+    "result": "PASSED"
+  },
+  "null_logPath_unaffected": "When logPath is null (no log monitoring requested), ok:true is returned (no change)",
+  "verdict": "PASS"
+}

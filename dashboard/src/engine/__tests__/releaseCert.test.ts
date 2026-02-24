@@ -159,9 +159,10 @@ describe("checkServerLog", () => {
     expect(result.signatures).toContain("digest:");
   });
 
-  it("returns ok:true when log file does not exist", () => {
+  it("AT-S24-06: fails closed when log file does not exist", () => {
     const result = checkServerLog("/tmp/nonexistent-s24.log");
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.signatures).toContain("LOG_READ_FAILED");
   });
 });
 

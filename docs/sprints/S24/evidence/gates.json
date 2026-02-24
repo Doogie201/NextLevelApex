@@ -5,8 +5,8 @@
     "build": { "result": "PASS", "route_slash": "○ (Static)", "exit_code": 0 }
   },
   "maintainability": {
-    "releaseCert.ts": { "before": 99, "after": 166, "net_new": 67, "budget": 120, "within": true },
-    "releaseCert.test.ts": { "before": 165, "after": 266, "net_new": 101, "budget": 120, "within": true }
+    "releaseCert.ts": { "before": 99, "after": 168, "net_new": 69, "budget": 120, "within": true },
+    "releaseCert.test.ts": { "before": 165, "after": 267, "net_new": 102, "budget": 120, "within": true }
   },
   "scope": {
     "files_touched": [

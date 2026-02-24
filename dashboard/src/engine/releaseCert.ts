@@ -94,6 +94,8 @@ export function checkPageForOverlay(html: string): { overlayDetected: boolean; m
 /**
  * Reads a server log file and scans for stderr error signatures.
  * Returns ok:true only if no signatures are found (or no log path given).
+ * Fail-closed: if logPath is provided but cannot be read, returns ok:false
+ * with a LOG_READ_FAILED marker to prevent silent false-PASS.
  */
 export function checkServerLog(logPath: string | null): StderrCheck {
   if (!logPath) {
@@ -103,9 +105,9 @@ export function checkServerLog(logPath: string | null): StderrCheck {
   try {
     content = readFileSync(logPath, "utf-8");
   } catch {
-    // If the log file doesn't exist or can't be read, treat as ok
-    // (the cert should still rely on HTTP checks).
-    return { logPath, signatures: [], ok: true };
+    // Fail closed: if caller requested log checking but log is unreadable,
+    // cert must not silently pass. Return ok:false with diagnostic marker.
+    return { logPath, signatures: ["LOG_READ_FAILED"], ok: false };
   }
   const lower = content.toLowerCase();
   const found = STDERR_SIGNATURES.filter((sig) => lower.includes(sig.toLowerCase()));

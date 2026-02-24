@@ -25,6 +25,7 @@ This sprint does NOT inject crash toggles, env-var switches, or `force-dynamic` 
 4. **Prove upgraded cert fails** — compose: 200 + no overlay + crash stderr → old cert PASS, new cert FAIL
 5. **Prove upgraded cert passes clean** — compose: 200 + no overlay + clean stderr → new cert PASS
 6. **Verify main-only enforcement** — existing `checkBranch` tests prove hard-stop on non-main
+7. **Fail-closed log collection** — if `serverLogPath` is provided but unreadable, cert must FAIL (not silently PASS)
 
 ## Acceptance Tests
 
@@ -33,10 +34,11 @@ This sprint does NOT inject crash toggles, env-var switches, or `force-dynamic` 
 - [x] **AT-S24-03** — Upgrade PASS: harness test `AT-S24-03: upgraded cert FAILS for 200 + clean HTML + stderr crash` proves composed new logic fails when stderr has crash signals even though old logic would pass.
 - [x] **AT-S24-04** — Clean PASS: harness test `AT-S24-04: upgraded cert PASSES for 200 + clean HTML + clean stderr` proves new logic passes when both HTML and stderr are clean.
 - [x] **AT-S24-05** — Main-only enforcement preserved: existing `checkBranch` tests prove `ok:false` for non-main branches and dirty trees. `runCert` returns `pass:false` with empty pages when branch is not main.
+- [x] **AT-S24-06** — Fail-closed log collection: `checkServerLog` returns `ok:false` with `LOG_READ_FAILED` marker when `logPath` is provided but file is unreadable. Prevents silent false-PASS due to missing evidence.
 
 ## Definition of Done
 
-- All 5 ATs checked
+- All 6 ATs checked
 - No crash probes / env-var toggles / force-dynamic in app routes
 - Tests: 182 passed (40 files)
 - Lint: clean
@@ -67,5 +69,5 @@ Hydration failed, digest:, server-side exception
 ## Files Touched
 | File | Before | After | Net New |
 |------|--------|-------|---------|
-| `dashboard/src/engine/releaseCert.ts` | 99 | 166 | +67 |
-| `dashboard/src/engine/__tests__/releaseCert.test.ts` | 165 | 266 | +101 |
+| `dashboard/src/engine/releaseCert.ts` | 99 | 168 | +69 |
+| `dashboard/src/engine/__tests__/releaseCert.test.ts` | 165 | 267 | +102 |
