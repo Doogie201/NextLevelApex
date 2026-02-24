@@ -4,7 +4,7 @@
 |-------|-------|
 | Sprint ID | `S18` |
 | Name | Release Certification v2 |
-| Status | in-review |
+| Status | done |
 | Category | chore |
 | Milestone | M3 |
 | Baseline SHA | `c21bf51cb0e54832c30c268e51b9bf0da560e116` |
@@ -57,7 +57,7 @@ The comprehensive cert receipt JSON is committed at [`evidence/AT05_cert_receipt
 |------|--------|--------|
 | `npm run build` | PASS | Next.js 16.1.6 compiled in 1.5s, TypeScript clean |
 | `npm run lint` | PASS | eslint clean |
-| `npm test` | PASS | 40 files, 172 tests, 0 failures |
+| `npm test` | PASS | 40 files, 173 tests, 0 failures |
 
 ## Diff Stats
 
@@ -76,4 +76,4 @@ The comprehensive cert receipt JSON is committed at [`evidence/AT05_cert_receipt
 
 - [x] All ATs pass with receipts.
 - [x] Gates pass (build/lint/test EXIT 0).
-- [ ] PR merged via squash merge.
+- [x] PR merged via squash merge.

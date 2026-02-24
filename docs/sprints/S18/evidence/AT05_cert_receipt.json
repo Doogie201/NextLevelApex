@@ -21,7 +21,7 @@
     },
     "test": {
       "status": "PASS",
-      "detail": "40 files, 172 tests, 0 failures (Vitest 2.1.9)"
+      "detail": "40 files, 173 tests, 0 failures (Vitest 2.1.9)"
     }
   },
   "acceptance_tests": {
