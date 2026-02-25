@@ -31,7 +31,7 @@ Quick links to each sprint's documentation folder.
 | S16 | [S16/](S16/) | backlog |
 | S17 | [S17/](S17/) | done |
 | S18 | [S18/](S18/) | done |
-| S19 | [S19/](S19/) | backlog |
+| S19 | [S19/](S19/) | in-progress |
 | S20 | [S20/](S20/) | backlog |
 | S21 | [S21/](S21/) | backlog |
 | S22 | [S22/](S22/) | done |

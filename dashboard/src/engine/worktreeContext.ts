@@ -1,0 +1,59 @@
+import { execSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { normalize, resolve } from "node:path";
+
+export interface WorktreeContext {
+  cwd: string;
+  gitTopLevel: string | null;
+  isWorktree: boolean;
+  interpreterPath: string | null;
+  nlxAvailable: boolean;
+}
+
+export type ShellFn = (cmd: string) => string;
+
+const defaultShell: ShellFn = (cmd) =>
+  execSync(cmd, { encoding: "utf-8", timeout: 3000 }).trim();
+
+function safeShell(shell: ShellFn, cmd: string): string | null {
+  try {
+    return shell(cmd);
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a possibly-relative git path to an absolute normalized form. */
+export function normalizeGitPath(raw: string, base: string): string {
+  const abs = resolve(base, raw);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return normalize(abs);
+  }
+}
+
+export function detectWorktreeContext(
+  shell: ShellFn = defaultShell,
+  cwd: string = process.cwd(),
+): WorktreeContext {
+  const gitTopLevel = safeShell(shell, "git rev-parse --show-toplevel");
+
+  const commonDir = safeShell(shell, "git rev-parse --git-common-dir");
+  const gitDir = safeShell(shell, "git rev-parse --git-dir");
+
+  let isWorktree = false;
+  if (commonDir !== null && gitDir !== null) {
+    const base = gitTopLevel ?? cwd;
+    const normCommon = normalizeGitPath(commonDir, base);
+    const normGit = normalizeGitPath(gitDir, base);
+    isWorktree = normCommon !== normGit;
+  }
+
+  const interpreterPath =
+    safeShell(shell, "command -v python3") ?? safeShell(shell, "command -v python");
+
+  const nlxAvailable = safeShell(shell, "command -v nlx") !== null;
+
+  return { cwd, gitTopLevel, isWorktree, interpreterPath, nlxAvailable };
+}

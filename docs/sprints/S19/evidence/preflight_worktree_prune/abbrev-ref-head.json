@@ -1,0 +1,9 @@
+{
+  "command": "bash -lc \"git rev-parse --abbrev-ref HEAD\"",
+  "output": "sprint/S19-worktree-poetry-guardrails-v2",
+  "EXIT_CODE": 0,
+  "validation": {
+    "sprint_regex": "^sprint/S19-",
+    "match": true
+  }
+}

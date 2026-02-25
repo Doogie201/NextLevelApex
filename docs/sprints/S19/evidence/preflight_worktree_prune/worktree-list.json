@@ -1,0 +1,14 @@
+{
+  "command": "bash -lc \"git worktree list --porcelain\"",
+  "output": [
+    "worktree /Users/marcussmith/Projects/NextLevelApex",
+    "HEAD 339338fc6126584ddc3f4c4b9f16cd387a4fff14",
+    "branch refs/heads/main",
+    "",
+    "worktree /Users/marcussmith/.claude-worktrees/NextLevelApex/quizzical-wilbur",
+    "HEAD b0ac36f16c0f89c4986f219f93f52ae333f38099",
+    "branch refs/heads/sprint/S19-worktree-poetry-guardrails-v2"
+  ],
+  "EXIT_CODE": 0,
+  "notes": "Two worktrees: primary (~/Projects/NextLevelApex on main, synced) and sprint worktree (S19 branch)"
+}

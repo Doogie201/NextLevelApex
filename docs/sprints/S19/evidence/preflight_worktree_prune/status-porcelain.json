@@ -1,0 +1,6 @@
+{
+  "command": "bash -lc \"git status --porcelain=v1 --branch\"",
+  "output": "## sprint/S19-worktree-poetry-guardrails-v2...origin/sprint/S19-worktree-poetry-guardrails-v2",
+  "EXIT_CODE": 0,
+  "notes": "Clean working tree, tracking remote branch, in sync"
+}

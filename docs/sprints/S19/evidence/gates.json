@@ -1,0 +1,24 @@
+{
+  "gates": {
+    "test": { "result": "PASS", "files": 42, "tests": 195, "exit_code": 0 },
+    "lint": { "result": "PASS", "exit_code": 0 },
+    "build": { "result": "PASS", "route_slash": "○ (Static)", "exit_code": 0 }
+  },
+  "maintainability": {
+    "nlxService.ts": { "before": 129, "after": 144, "net_new": 15, "budget": 120, "within": true },
+    "dev-setup.sh": { "before": 34, "after": 63, "net_new": 29, "budget": 120, "within": true },
+    "worktreeContext.ts": { "before": 0, "after": 40, "new_file": true },
+    "nlxErrorSanitizer.ts": { "before": 0, "after": 64, "new_file": true }
+  },
+  "scope": {
+    "files_touched": [
+      "dashboard/src/engine/worktreeContext.ts",
+      "dashboard/src/engine/nlxErrorSanitizer.ts",
+      "dashboard/src/engine/nlxService.ts",
+      "dashboard/src/engine/__tests__/worktreeContext.test.ts",
+      "dashboard/src/engine/__tests__/nlxErrorSanitizer.test.ts",
+      "scripts/dev-setup.sh"
+    ],
+    "all_within_whitelist": true
+  }
+}

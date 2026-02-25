@@ -1,0 +1,58 @@
+{
+  "description": "Worktree false-positive fix: path normalization prevents misclassification when git-common-dir and git-dir differ by format (relative vs absolute) but resolve to the same directory",
+  "problem": {
+    "symptom": "isWorktree reported true in a normal (non-worktree) checkout when invoked from a subdirectory",
+    "root_cause": "Raw string inequality between git-common-dir output (e.g., '.git') and git-dir output (e.g., '/home/user/project/.git') — same directory, different string representations",
+    "affected_function": "detectWorktreeContext() in dashboard/src/engine/worktreeContext.ts:32"
+  },
+  "fix": {
+    "approach": "Added normalizeGitPath() that resolves both paths to absolute form via path.resolve(base, raw), then applies fs.realpathSync with fallback to path.normalize for offline/test environments",
+    "files_changed": [
+      "dashboard/src/engine/worktreeContext.ts",
+      "dashboard/src/engine/__tests__/worktreeContext.test.ts"
+    ],
+    "new_imports": ["node:fs (realpathSync)", "node:path (normalize, resolve)"],
+    "new_deps": "none (Node built-ins only)"
+  },
+  "tests": {
+    "total_after_fix": "198 passed / 42 files",
+    "new_tests": [
+      {
+        "name": "AT-S19-01: no false worktree when relative and absolute paths resolve to the same .git",
+        "scenario": "git-common-dir returns '.git', git-dir returns '/home/user/project/.git', toplevel is '/home/user/project'",
+        "expected": "isWorktree === false",
+        "result": "PASSED"
+      },
+      {
+        "name": "normalizeGitPath: resolves relative path against base",
+        "result": "PASSED"
+      },
+      {
+        "name": "normalizeGitPath: returns absolute path unchanged",
+        "result": "PASSED"
+      }
+    ],
+    "preserved_tests": [
+      {
+        "name": "AT-S19-01: detects worktree when git-common-dir differs from git-dir (after normalization)",
+        "scenario": "git-common-dir returns '/home/user/project/.git', git-dir returns '/home/user/.worktrees/project/wt1/.git'",
+        "expected": "isWorktree === true",
+        "result": "PASSED"
+      },
+      {
+        "name": "detects non-worktree when git-common-dir equals git-dir (both relative)",
+        "result": "PASSED"
+      },
+      {
+        "name": "handles missing git gracefully",
+        "result": "PASSED"
+      }
+    ]
+  },
+  "gates": {
+    "tests": { "result": "198 passed / 42 files", "EXIT_CODE": 0 },
+    "lint": { "result": "clean", "EXIT_CODE": 0 },
+    "build": { "result": "static export success", "EXIT_CODE": 0 }
+  },
+  "verdict": "PASS"
+}

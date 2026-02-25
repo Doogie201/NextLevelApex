@@ -2,33 +2,77 @@
 
 | Field | Value |
 |-------|-------|
-| Sprint ID | `S19` |
+| Sprint ID | `S19-worktree-poetry-guardrails-v2` |
 | Name | Worktree + Poetry Guardrails v2 |
-| Status | backlog |
-| Category | chore |
+| Status | in-progress |
+| Category | devops |
 | Milestone | M3 |
-| Baseline SHA | — |
-| Branch | — |
+| Baseline SHA | `339338f` |
+| Branch | `sprint/S19-worktree-poetry-guardrails-v2` |
 | PR | — |
 
 ## Objective
 
-Extend S08 guardrails with automated detection of stale venvs, cross-worktree dependency drift, and CI enforcement.
+Make diagnose work from any git worktree by capturing invocation context (cwd/interpreter/env), replacing raw tracebacks with a controlled message + one canonical fix path, and optionally offering a safe setup button that requires explicit confirmation; ensure dev setup is idempotent and offline-friendly.
 
-## Work Plan / Scope
+## Approach
 
-TBD — to be defined at sprint start.
+1. **`worktreeContext.ts`** — DI-testable module that detects git worktree status, Python interpreter path, and nlx availability via shell commands.
+2. **`nlxErrorSanitizer.ts`** — Intercepts raw Python tracebacks and `missing_nlx` errors, replacing them with controlled messages containing exactly one canonical remediation: `bash scripts/dev-setup.sh`.
+3. **`nlxService.ts` wiring** — The `toResponse()` function routes error states through the sanitizer before returning to the API layer.
+4. **`scripts/dev-setup.sh` hardening** — Worktree detection, `--offline` flag, context logging.
+
+## Work Plan
+
+1. **Create `worktreeContext.ts`** — DI-testable context detection (cwd, gitTopLevel, isWorktree, interpreterPath, nlxAvailable)
+2. **Create `nlxErrorSanitizer.ts`** — Traceback pattern matching + controlled message generation
+3. **Wire sanitizer into `nlxService.ts`** — Replace raw stderr on `missing_nlx` and traceback-containing `nonzero_exit`
+4. **Harden `scripts/dev-setup.sh`** — Worktree detection, `--offline` flag, idempotency
+5. **Write unit tests** — DI fixtures for worktree context, traceback suppression, passthrough
 
 ## Acceptance Tests
 
-- [ ] AT-S19-01 TBD
-
-## Evidence Paths
-
-No evidence yet (backlog).
+- [x] **AT-S19-01** — Worktree context detection: `detectWorktreeContext()` returns `{cwd, gitTopLevel, isWorktree, interpreterPath, nlxAvailable}` with deterministic values via DI shell mock. Worktree detected when `git-common-dir` differs from `git-dir` **after path normalization**. No false-positive when relative and absolute paths resolve to the same `.git` directory (e.g., subdirectory invocation where `--git-common-dir` returns `.git` and `--git-dir` returns the absolute path).
+- [x] **AT-S19-02** — Traceback suppression: `sanitizeNlxError()` returns controlled message with exactly one canonical fix path (`bash scripts/dev-setup.sh`) when stderr contains Python traceback patterns or errorType is `missing_nlx`. No raw stack frames leak.
+- [x] **AT-S19-03** — Dev-setup is idempotent and offline-friendly: `scripts/dev-setup.sh` detects worktree context, supports `--offline` flag to skip network-dependent steps, and exits 0 on repeated runs.
+- [x] **AT-S19-04** — Error context attached: sanitized error includes `WorktreeContext` object with `isWorktree`, `interpreterPath`, and `nlxAvailable` fields. API envelope receives controlled stderr instead of raw traceback.
 
 ## Definition of Done
 
-- [ ] All ATs pass with receipts.
-- [ ] Gates pass (build/lint/test EXIT 0).
-- [ ] PR merged via squash merge.
+- All 4 ATs checked
+- No raw Python tracebacks in error responses
+- Tests: 198 passed (42 files)
+- Lint: clean
+- Build: clean (`/` is `○ Static`)
+- No files outside whitelist touched
+- Maintainability budgets within limits
+
+## Traceback Patterns (suppressed)
+
+```
+Traceback (most recent call last)
+File "...", line N
+ModuleNotFoundError:
+ImportError:
+FileNotFoundError:.*poetry
+No module named
+```
+
+## Evidence
+
+See `docs/sprints/S19/evidence/` for JSON receipts.
+
+### Follow-up: Worktree False-Positive Fix
+
+The original `detectWorktreeContext()` compared `git rev-parse --git-common-dir` and `--git-dir` outputs as raw strings. When invoked from a subdirectory of a normal checkout, git may return these in different formats (relative vs absolute), causing a false `isWorktree=true`. Fixed by normalizing both paths via `path.resolve()` + `fs.realpathSync()` (with `path.normalize()` fallback) before comparison. See `worktree-false-positive-fix.json` for evidence.
+
+## Files Touched
+
+| File | Before | After | Net New |
+|------|--------|-------|---------|
+| `dashboard/src/engine/worktreeContext.ts` | 0 | 59 | +59 (new) |
+| `dashboard/src/engine/nlxErrorSanitizer.ts` | 0 | 64 | +64 (new) |
+| `dashboard/src/engine/nlxService.ts` | 129 | 144 | +15 |
+| `dashboard/src/engine/__tests__/worktreeContext.test.ts` | 0 | 87 | +87 (new) |
+| `dashboard/src/engine/__tests__/nlxErrorSanitizer.test.ts` | 0 | 94 | +94 (new) |
+| `scripts/dev-setup.sh` | 34 | 63 | +29 |

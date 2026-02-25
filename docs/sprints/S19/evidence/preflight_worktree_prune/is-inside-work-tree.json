@@ -1,0 +1,5 @@
+{
+  "command": "bash -lc \"git rev-parse --is-inside-work-tree\"",
+  "output": "true",
+  "EXIT_CODE": 0
+}

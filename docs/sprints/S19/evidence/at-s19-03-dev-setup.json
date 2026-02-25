@@ -1,0 +1,30 @@
+{
+  "AT": "AT-S19-03",
+  "description": "Dev-setup script is idempotent, worktree-aware, and offline-friendly",
+  "changes": {
+    "before": {
+      "lines": 34,
+      "features": ["poetry install", "npm ci", "idempotent"]
+    },
+    "after": {
+      "lines": 63,
+      "features": [
+        "poetry install",
+        "npm ci",
+        "idempotent",
+        "worktree detection (git-common-dir vs git-dir)",
+        "--offline flag skips network-dependent steps",
+        "context logging (repo root, worktree status, offline mode)"
+      ]
+    }
+  },
+  "offline_flag": {
+    "usage": "bash scripts/dev-setup.sh --offline",
+    "behavior": "Skips poetry install and npm ci; exits 0"
+  },
+  "worktree_detection": {
+    "method": "git rev-parse --git-common-dir vs --git-dir",
+    "output": "IS_WORKTREE=true/false logged at startup"
+  },
+  "verdict": "PASS"
+}
