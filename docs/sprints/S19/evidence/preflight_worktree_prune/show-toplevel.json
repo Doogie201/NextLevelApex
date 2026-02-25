@@ -1,0 +1,5 @@
+{
+  "command": "bash -lc \"git rev-parse --show-toplevel\"",
+  "output": "/Users/marcussmith/.claude-worktrees/NextLevelApex/quizzical-wilbur",
+  "EXIT_CODE": 0
+}

@@ -1,0 +1,14 @@
+{
+  "command": "bash -lc \"git worktree list --porcelain\"",
+  "output": [
+    "worktree /Users/marcussmith/Projects/NextLevelApex",
+    "HEAD aa79c671d2f843856ecc720b0c2ae336de30cd3b",
+    "branch refs/heads/sprint/S06-hardening-operator-polish",
+    "",
+    "worktree /Users/marcussmith/.claude-worktrees/NextLevelApex/quizzical-wilbur",
+    "HEAD 295469644ba51db2bea69707f4de13c23670661a",
+    "branch refs/heads/sprint/S19-worktree-poetry-guardrails-v2"
+  ],
+  "EXIT_CODE": 0,
+  "notes": "Two worktrees: main repo (pinned to stale S06 branch) and this worktree (S19 sprint branch)"
+}
