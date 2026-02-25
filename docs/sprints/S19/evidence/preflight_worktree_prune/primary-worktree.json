@@ -1,0 +1,63 @@
+{
+  "description": "Primary worktree preflight receipts — ~/Projects/NextLevelApex",
+  "timestamp": "2026-02-25",
+  "hard_stop_check": "PRIMARY WORKTREE ON MAIN AND SYNCED — CLEARED",
+  "commands": [
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && pwd\"",
+      "output": "/Users/marcussmith/Projects/NextLevelApex",
+      "EXIT_CODE": 0
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git rev-parse --show-toplevel\"",
+      "output": "/Users/marcussmith/Projects/NextLevelApex",
+      "EXIT_CODE": 0
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git worktree list --porcelain\"",
+      "output": [
+        "worktree /Users/marcussmith/Projects/NextLevelApex",
+        "HEAD 339338fc6126584ddc3f4c4b9f16cd387a4fff14",
+        "branch refs/heads/main",
+        "",
+        "worktree /Users/marcussmith/.claude-worktrees/NextLevelApex/quizzical-wilbur",
+        "HEAD b0ac36f16c0f89c4986f219f93f52ae333f38099",
+        "branch refs/heads/sprint/S19-worktree-poetry-guardrails-v2"
+      ],
+      "EXIT_CODE": 0
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git status --porcelain=v1 --branch\"",
+      "output": "## main...origin/main",
+      "EXIT_CODE": 0,
+      "interpretation": "Clean working tree, tracking origin/main, in sync"
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git fetch --all --prune --tags\"",
+      "output": "(no output — already up to date)",
+      "EXIT_CODE": 0
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git rev-list --left-right --count HEAD...origin/main\"",
+      "output": "0\t0",
+      "EXIT_CODE": 0,
+      "interpretation": "HEAD == origin/main (IN_SYNC)"
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git rev-parse --abbrev-ref HEAD\"",
+      "output": "main",
+      "EXIT_CODE": 0
+    },
+    {
+      "command": "bash -lc \"cd ~/Projects/NextLevelApex && git log --oneline -5\"",
+      "output": [
+        "339338f chore: mark S24 done after PR #130 merge (#131)",
+        "51497b7 [S24] test : s18 cert validation hardening (harness-based) (#130)",
+        "17371f5 chore: mark S18 done after PR #128 merge (#129)",
+        "6ef500f [S18] chore : release certification v2 (#128)",
+        "c21bf51 chore: persist S17 cert evidence + document Playwright substitution (#127)"
+      ],
+      "EXIT_CODE": 0
+    }
+  ]
+}
