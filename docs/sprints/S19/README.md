@@ -32,7 +32,7 @@ Make diagnose work from any git worktree by capturing invocation context (cwd/in
 
 ## Acceptance Tests
 
-- [x] **AT-S19-01** — Worktree context detection: `detectWorktreeContext()` returns `{cwd, gitTopLevel, isWorktree, interpreterPath, nlxAvailable}` with deterministic values via DI shell mock. Worktree detected when `git-common-dir` differs from `git-dir`.
+- [x] **AT-S19-01** — Worktree context detection: `detectWorktreeContext()` returns `{cwd, gitTopLevel, isWorktree, interpreterPath, nlxAvailable}` with deterministic values via DI shell mock. Worktree detected when `git-common-dir` differs from `git-dir` **after path normalization**. No false-positive when relative and absolute paths resolve to the same `.git` directory (e.g., subdirectory invocation where `--git-common-dir` returns `.git` and `--git-dir` returns the absolute path).
 - [x] **AT-S19-02** — Traceback suppression: `sanitizeNlxError()` returns controlled message with exactly one canonical fix path (`bash scripts/dev-setup.sh`) when stderr contains Python traceback patterns or errorType is `missing_nlx`. No raw stack frames leak.
 - [x] **AT-S19-03** — Dev-setup is idempotent and offline-friendly: `scripts/dev-setup.sh` detects worktree context, supports `--offline` flag to skip network-dependent steps, and exits 0 on repeated runs.
 - [x] **AT-S19-04** — Error context attached: sanitized error includes `WorktreeContext` object with `isWorktree`, `interpreterPath`, and `nlxAvailable` fields. API envelope receives controlled stderr instead of raw traceback.
@@ -41,7 +41,7 @@ Make diagnose work from any git worktree by capturing invocation context (cwd/in
 
 - All 4 ATs checked
 - No raw Python tracebacks in error responses
-- Tests: 195 passed (42 files)
+- Tests: 198 passed (42 files)
 - Lint: clean
 - Build: clean (`/` is `○ Static`)
 - No files outside whitelist touched
@@ -62,13 +62,17 @@ No module named
 
 See `docs/sprints/S19/evidence/` for JSON receipts.
 
+### Follow-up: Worktree False-Positive Fix
+
+The original `detectWorktreeContext()` compared `git rev-parse --git-common-dir` and `--git-dir` outputs as raw strings. When invoked from a subdirectory of a normal checkout, git may return these in different formats (relative vs absolute), causing a false `isWorktree=true`. Fixed by normalizing both paths via `path.resolve()` + `fs.realpathSync()` (with `path.normalize()` fallback) before comparison. See `worktree-false-positive-fix.json` for evidence.
+
 ## Files Touched
 
 | File | Before | After | Net New |
 |------|--------|-------|---------|
-| `dashboard/src/engine/worktreeContext.ts` | 0 | 40 | +40 (new) |
+| `dashboard/src/engine/worktreeContext.ts` | 0 | 59 | +59 (new) |
 | `dashboard/src/engine/nlxErrorSanitizer.ts` | 0 | 64 | +64 (new) |
 | `dashboard/src/engine/nlxService.ts` | 129 | 144 | +15 |
-| `dashboard/src/engine/__tests__/worktreeContext.test.ts` | 0 | 52 | +52 (new) |
+| `dashboard/src/engine/__tests__/worktreeContext.test.ts` | 0 | 87 | +87 (new) |
 | `dashboard/src/engine/__tests__/nlxErrorSanitizer.test.ts` | 0 | 94 | +94 (new) |
 | `scripts/dev-setup.sh` | 34 | 63 | +29 |

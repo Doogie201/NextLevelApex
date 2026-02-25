@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { normalize, resolve } from "node:path";
 
 export interface WorktreeContext {
   cwd: string;
@@ -21,6 +23,16 @@ function safeShell(shell: ShellFn, cmd: string): string | null {
   }
 }
 
+/** Resolve a possibly-relative git path to an absolute normalized form. */
+export function normalizeGitPath(raw: string, base: string): string {
+  const abs = resolve(base, raw);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return normalize(abs);
+  }
+}
+
 export function detectWorktreeContext(
   shell: ShellFn = defaultShell,
   cwd: string = process.cwd(),
@@ -29,7 +41,14 @@ export function detectWorktreeContext(
 
   const commonDir = safeShell(shell, "git rev-parse --git-common-dir");
   const gitDir = safeShell(shell, "git rev-parse --git-dir");
-  const isWorktree = commonDir !== null && gitDir !== null && commonDir !== gitDir;
+
+  let isWorktree = false;
+  if (commonDir !== null && gitDir !== null) {
+    const base = gitTopLevel ?? cwd;
+    const normCommon = normalizeGitPath(commonDir, base);
+    const normGit = normalizeGitPath(gitDir, base);
+    isWorktree = normCommon !== normGit;
+  }
 
   const interpreterPath =
     safeShell(shell, "command -v python3") ?? safeShell(shell, "command -v python");
