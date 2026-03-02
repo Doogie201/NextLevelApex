@@ -62,14 +62,14 @@ repos:
         language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/PyCQA/isort
-    rev: 8.0.0
+    rev: 8.0.1
     hooks:
       - id: isort
         args: ["--profile", "black"]
         language_version: python3.11 # <-- was python3.13
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.2 # keep in sync with your lockfile/ruff version
+    rev: v0.15.4 # keep in sync with your lockfile/ruff version
     hooks:
       # If you want the formatter, uncomment:
       # - id: ruff-format
