@@ -117,7 +117,13 @@ export async function runAllowlistedNlxCommand(
     response.taskNames = parseTaskNamesFromListTasks(response.stdout);
   }
 
-  if (spec.commandId === "diagnose" && response.ok) {
+  if (spec.commandId === "diagnose") {
+    const shouldCoerceDiagnoseHealth =
+      !response.ok &&
+      response.errorType === "nonzero_exit" &&
+      response.stderr.trim().length === 0 &&
+      response.stdout.trim().length > 0;
+
     try {
       const firstLine = response.stdout.split(/\r?\n/).find((line) => line.trim().length > 0) ?? "";
       const summary = parseDiagnoseLine(firstLine);
@@ -125,12 +131,18 @@ export async function runAllowlistedNlxCommand(
         summary,
         badge: classifyDiagnose(summary),
       };
+      if (shouldCoerceDiagnoseHealth) {
+        response.ok = true;
+        response.errorType = "none";
+      }
     } catch {
-      response.ok = false;
-      response.errorType = "spawn_error";
-      response.stderr = response.stderr
-        ? `${response.stderr}\nDiagnose output parsing failed.`
-        : "Diagnose output parsing failed.";
+      if (response.ok) {
+        response.ok = false;
+        response.errorType = "spawn_error";
+        response.stderr = response.stderr
+          ? `${response.stderr}\nDiagnose output parsing failed.`
+          : "Diagnose output parsing failed.";
+      }
     }
   }
 

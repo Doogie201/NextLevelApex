@@ -51,7 +51,7 @@ describe("sanitizeNlxError", () => {
     expect(result.originalSuppressed).toBe(true);
     expect(result.message).toContain("nlx is not installed");
     expect(result.message).toContain("git worktree");
-    expect(result.fixCommand).toBe("bash scripts/dev-setup.sh");
+    expect(result.fixCommand).toBe("bash scripts/dev-setup.sh --repair-env");
     expect(result.context.isWorktree).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("sanitizeNlxError", () => {
 
     expect(result.originalSuppressed).toBe(true);
     expect(result.message).toContain("Python error");
-    expect(result.message).toContain("bash scripts/dev-setup.sh");
+    expect(result.message).toContain("bash scripts/dev-setup.sh --repair-env");
     expect(result.message).not.toContain("Traceback");
     expect(result.message).not.toContain("File \"/usr/lib");
   });
@@ -89,6 +89,6 @@ describe("sanitizeNlxError", () => {
     const result = sanitizeNlxError("missing_nlx", "", NON_WORKTREE_SHELL);
 
     expect(result.message).not.toContain("worktree");
-    expect(result.message).toContain("bash scripts/dev-setup.sh");
+    expect(result.message).toContain("bash scripts/dev-setup.sh --repair-env");
   });
 });

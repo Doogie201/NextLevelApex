@@ -10,7 +10,7 @@ export const TRACEBACK_PATTERNS: RegExp[] = [
   /No module named/,
 ];
 
-const CANONICAL_FIX = "bash scripts/dev-setup.sh";
+const CANONICAL_FIX = "bash scripts/dev-setup.sh --repair-env";
 
 export function containsTraceback(stderr: string): boolean {
   return TRACEBACK_PATTERNS.some((pattern) => pattern.test(stderr));
