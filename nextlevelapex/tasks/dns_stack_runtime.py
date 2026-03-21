@@ -1102,9 +1102,11 @@ def bootstrap_cloudflared_binary(
     }
     asset_name = cloudflared_release_asset_name()
     if asset_name is None or evidence["release_url"] is None:
-        evidence["error"] = (
-            f"Unsupported platform for cloudflared bootstrap: system={platform.system()} arch={platform.machine()}"
+        unsupported_platform = (
+            "Unsupported platform for cloudflared bootstrap: "
+            f"system={platform.system()} arch={platform.machine()}"
         )
+        evidence["error"] = unsupported_platform
         return evidence
 
     cache_dir = settings.cloudflared_bootstrap_cache_dir / settings.cloudflared_required_version
