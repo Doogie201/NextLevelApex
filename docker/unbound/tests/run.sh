@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
-# End-to-end + stress test for cloudflared → unbound → Pi-hole
-# Run from *host* shell:  ./tests/run.sh
+# LEGACY / NON-CANONICAL
+# End-to-end + stress test for the retired cloudflared -> unbound -> Pi-hole flow.
+# Run from *host* shell only if you are explicitly inspecting the legacy reference
+# stack under docker/unbound/. This is not the supported single-device DNS path.
 set -euo pipefail
 cd "$(dirname "$0")/.."          # jump to project root
 
@@ -12,6 +14,9 @@ fail() {  printf "%b✘ %s%b\n" "$red"   "$1" "$nc" ; exit 1 ;}
 note() {  printf "%b➜ %s%b\n" "$yellow" "$1" "$nc" ; }
 
 need() { command -v "$1" &>/dev/null || fail "$1 is required but not in PATH"; }
+
+note "LEGACY / NON-CANONICAL: this script exercises the retired docker/unbound reference stack."
+note "Canonical local-device path: poetry run nlx --task \"DNS Stack Setup\" --no-reports"
 
 ### ─────────────────────── 0. Pre-flight (Colima running?) ─────────────
 colima status &>/dev/null || fail "Colima is not running"
