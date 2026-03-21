@@ -49,7 +49,6 @@ ALLOWED_MODULES = [
     "brew",
     "cloudflared",
     "dev_tools",
-    "dns_helpers",
     "dns_sanity",
     "dns_stack",
     "dummy_healing_task",
@@ -222,16 +221,12 @@ def discover_files_for_hashing() -> List[Path]:
     Dynamically resolved from APP_ROOT to avoid hardcoded paths.
     """
     docker_dir = APP_ROOT.parent / "docker"
-    unbound_dir = docker_dir / "unbound"
+    assets_dir = APP_ROOT.parent / "assets"
+    schema_dir = APP_ROOT / "schema"
     files = [
         docker_dir / "orchestrate.sh",
-        unbound_dir / "dockerfiles" / "cloudflared-dig.Dockerfile",
-        unbound_dir / "state" / "root.hints",
-        unbound_dir / "state" / "root.key",
-        unbound_dir / "state" / "unbound.conf",
-        unbound_dir / "docker-compose.yml",
-        unbound_dir / "Dockerfile",
-        # Add other config/manifest files as desired
+        assets_dir / "launch_agents" / "com.local.doh.plist.j2",
+        schema_dir / "config.v1.schema.json",
     ]
     # Filter only existing files to avoid errors
     existing_files = [f for f in files if f.exists()]
@@ -600,6 +595,8 @@ def list_tasks(
     List all discovered tasks with their status and last update.
     """
     state = load_state(STATE_PATH)
+    discovered = discover_tasks()
+    ensure_task_state(state, list(discovered.keys()))
     tasks = state.get("task_status", {})
     typer.echo(f"{'Task':22} | {'Status':8} | {'Last Update':20}")
     typer.echo("-" * 56)
@@ -607,7 +604,7 @@ def list_tasks(
         status = info.get("status", "UNKNOWN")
         if filter and status.lower() != filter.lower():
             continue
-        last_update = info.get("last_update", "--")
+        last_update = info.get("last_update") or "--"
         typer.echo(f"{name:22} | {status:8} | {last_update:20}")
 
 
@@ -720,12 +717,16 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
     """
     state = load_state(STATE_PATH)
     discovered = discover_tasks()
+    ensure_task_state(state, list(discovered.keys()))
+    config = load_config()
     fixes_applied = 0
     failures_remaining = 0
 
     failed_tasks = [
         t for t, info in state.get("task_status", {}).items() if info.get("status") == "FAIL"
     ]
+    if not failed_tasks:
+        failed_tasks = [t for t in state.get("failed_sections", []) if t in discovered]
 
     if not failed_tasks:
         typer.secho("All tasks healthy. No remediation needed.", fg=typer.colors.GREEN)
@@ -740,8 +741,10 @@ def auto_fix(dry_run: bool = typer.Option(False, help="Show fixes but do not exe
         context = {
             "mode": "diagnose",
             "state": state,
+            "config": config,
             "now": datetime.now().isoformat(),
             "autofix": True,
+            "dry_run": dry_run,
         }
 
         try:

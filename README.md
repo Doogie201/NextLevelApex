@@ -18,6 +18,43 @@ NextLevelApex is a security-focused macOS setup orchestrator for running repeata
 - API wrapper: `nextlevelapex/api/main.py` (FastAPI)
 - Canonical web GUI (read-only v1): `dashboard/` (Next.js)
 
+## Canonical Single-Device DNS Stack
+
+The authoritative local-device DNS path for this Mac is:
+
+```text
+This Mac -> 192.168.64.2 -> Pi-hole in Docker on Colima -> host.docker.internal#5053 -> host cloudflared on 127.0.0.1:5053 -> Cloudflare DoH
+```
+
+The canonical orchestrator entrypoint for that stack is the `DNS Stack Setup` task.
+
+```bash
+poetry run nlx --task "DNS Stack Setup" --no-reports
+```
+
+Supporting assumptions encoded in the repo:
+
+- `192.168.64.2` is the canonical Colima reachable resolver IP.
+- Pi-hole runs from a pinned image reference.
+- cloudflared runs as a host LaunchAgent, not as a container.
+- Pi-hole must use `host.docker.internal#5053` as its sole upstream.
+- Legacy Unbound-based files under `docker/unbound/` and `tests/stack-sanity.sh` are quarantined reference-only artifacts, not supported control paths for this Mac.
+
+### Fresh-Machine cloudflared Bootstrap
+
+The canonical `DNS Stack Setup` task now handles exact-version `cloudflared` bootstrap deliberately:
+
+- If the preferred binary at `/opt/homebrew/bin/cloudflared` already matches the required version, the task reuses it.
+- If that binary is absent or version-mismatched, the task bootstraps the exact GitHub release asset for this Mac, caches the archive under `~/.cache/nextlevelapex/cloudflared/<version>/`, and installs a stable exact-version binary link at `~/.local/share/nextlevelapex/bin/cloudflared`.
+- The LaunchAgent is rendered against the exact binary path selected by the orchestrator, not whatever happens to be first in `PATH`.
+- If the required release cannot be obtained or verified exactly, the task fails closed and reports the exact release URL and observed version drift in task evidence.
+
+Recovery guidance:
+
+- Re-run `poetry run nlx --task "DNS Stack Setup" --no-reports` after network/package issues are fixed.
+- If GitHub release download is blocked, place the exact required release where the task expects it or install that exact version at `/opt/homebrew/bin/cloudflared`.
+- Do not use `docker/orchestrate.sh`, `docker/unbound/`, or `tests/stack-sanity.sh` to recover the canonical single-device stack. Those paths are legacy reference material only.
+
 ## Supported Platforms
 
 - Primary runtime target: macOS (Darwin)

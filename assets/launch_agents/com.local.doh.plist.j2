@@ -7,10 +7,11 @@
     <array>
         <string>{{CLOUDFLARED_BIN}}</string>
         <string>proxy-dns</string>
-        <string>--address</string><string>127.0.0.1</string>
-        <string>--port</string><string>5053</string>
-        <string>--upstream</string><string>https://1.1.1.1/dns-query</string>
-        <string>--upstream</string><string>https://1.0.0.1/dns-query</string>
+        <string>--address</string><string>{{LISTEN_ADDRESS}}</string>
+        <string>--port</string><string>{{LISTEN_PORT}}</string>
+{% for upstream in UPSTREAMS %}
+        <string>--upstream</string><string>{{upstream}}</string>
+{% endfor %}
     </array>
 
     <key>RunAtLoad</key><true/>

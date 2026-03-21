@@ -11,7 +11,7 @@ def _msg_contains(result, severity: Severity, needle: str) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _default_drift_inputs(monkeypatch):
+def _default_inputs(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_host_cloudflared_listener_healthy", lambda: True)
     monkeypatch.setattr(dns_sanity, "_get_pihole_upstreams", lambda: {"host.docker.internal#5053"})
     monkeypatch.setattr(dns_sanity, "_get_configured_dns_resolvers", lambda: {"192.168.64.2"})
@@ -28,32 +28,38 @@ def test_dns_sanity_colima_active_pihole_no_host_conflict(monkeypatch):
         return set(), False
 
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", fake_ps_names)
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: name == "pihole")
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
+
     result = dns_sanity.dns_sanity_check({})
 
     assert result.success is True
-    assert not _msg_contains(result, Severity.ERROR, "running on host instead of Colima")
+    assert _msg_contains(result, Severity.INFO, "Pi-hole is running")
     assert _msg_contains(result, Severity.DEBUG, "Host Docker context 'default' unavailable")
 
 
-def test_dns_sanity_flags_real_host_conflict(monkeypatch):
+def test_dns_sanity_flags_legacy_container_conflict(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
 
     def fake_ps_names(context=None):
         if context is None:
-            return set(), True
+            return {"pihole", "cloudflared"}, True
         if context == "default":
-            return {"pihole"}, True
+            return set(), True
         return set(), False
 
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", fake_ps_names)
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: False)
-    monkeypatch.setattr(dns_sanity, "_host_cloudflared_listener_healthy", lambda: False)
+    monkeypatch.setattr(
+        dns_sanity,
+        "_container_running",
+        lambda name, context=None: name in {"pihole", "cloudflared"},
+    )
 
     result = dns_sanity.dns_sanity_check({})
 
     assert result.success is False
-    assert _msg_contains(result, Severity.ERROR, "Conflict: pihole container is running on host")
+    assert _msg_contains(result, Severity.ERROR, "legacy cloudflared container is present")
 
 
 def test_dns_sanity_accepts_host_cloudflared_listener(monkeypatch):
@@ -67,22 +73,22 @@ def test_dns_sanity_accepts_host_cloudflared_listener(monkeypatch):
         return set(), False
 
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", fake_ps_names)
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: name == "pihole")
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
+
     result = dns_sanity.dns_sanity_check({})
 
     assert result.success is True
-    assert _msg_contains(
-        result, Severity.INFO, "cloudflared host listener is reachable on 127.0.0.1:5053"
-    )
-    assert not _msg_contains(
-        result, Severity.WARNING, "cloudflared not found running in any container"
-    )
+    assert _msg_contains(result, Severity.INFO, "cloudflared host listener is reachable")
 
 
 def test_dns_sanity_fails_on_plaintext_pihole_upstreams(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: name == "pihole")
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
     monkeypatch.setattr(
         dns_sanity,
         "_get_pihole_upstreams",
@@ -96,10 +102,26 @@ def test_dns_sanity_fails_on_plaintext_pihole_upstreams(monkeypatch):
     assert _msg_contains(result, Severity.ERROR, "8.8.8.8")
 
 
+def test_dns_sanity_fails_when_upstream_drifted_from_host_doh(monkeypatch):
+    monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
+    monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
+    monkeypatch.setattr(dns_sanity, "_get_pihole_upstreams", lambda: {"172.19.0.2#5053"})
+
+    result = dns_sanity.dns_sanity_check({})
+
+    assert result.success is False
+    assert _msg_contains(result, Severity.ERROR, "Pi-hole upstream drift")
+
+
 def test_dns_sanity_fails_when_doh_listener_is_unhealthy(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: name == "pihole")
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
     monkeypatch.setattr(dns_sanity, "_host_cloudflared_listener_healthy", lambda: False)
 
     result = dns_sanity.dns_sanity_check({})
@@ -111,10 +133,12 @@ def test_dns_sanity_fails_when_doh_listener_is_unhealthy(monkeypatch):
 def test_dns_sanity_fails_when_expected_resolver_is_missing(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
     monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
-    monkeypatch.setattr(dns_sanity, "is_container_running", lambda name: name == "pihole")
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
     monkeypatch.setattr(dns_sanity, "_get_configured_dns_resolvers", lambda: {"172.17.0.1"})
 
     result = dns_sanity.dns_sanity_check({})
 
     assert result.success is False
-    assert _msg_contains(result, Severity.ERROR, "Resolver drift: expected 192.168.64.2")
+    assert _msg_contains(result, Severity.ERROR, "Resolver drift: expected only 192.168.64.2")

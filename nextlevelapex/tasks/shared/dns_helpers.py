@@ -1,7 +1,10 @@
-"""Compatibility shim: old import path -> new implementation.
+"""Compatibility shim for non-authoritative DNS helper imports.
 
 Keeps `from nextlevelapex.tasks.shared.dns_helpers import ...` working by re-exporting
 from `nextlevelapex.tasks.dns_helpers`.
+
+This shim is not part of the canonical single-device DNS control plane.
+Authoritative runtime truth lives in `nextlevelapex.tasks.dns_stack_runtime`.
 """
 
 from __future__ import annotations
