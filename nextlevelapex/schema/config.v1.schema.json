@@ -170,6 +170,7 @@
                       "bootstrap_bin_dir": {"type": "string", "default": "~/.local/share/nextlevelapex/bin", "description":"Deterministic install directory for bootstrapped exact-version cloudflared binaries."},
                       "bootstrap_cache_dir": {"type": "string", "default": "~/.cache/nextlevelapex/cloudflared", "description":"Deterministic cache directory for downloaded exact-version cloudflared release archives."},
                       "release_base_url": {"type": "string", "default": "https://github.com/cloudflare/cloudflared/releases/download", "description":"Base URL used for exact-version cloudflared release acquisition."},
+                      "release_metadata_url": {"type": "string", "default": "https://api.github.com/repos/cloudflare/cloudflared/releases/tags", "description":"Authoritative release-metadata API used to verify exact cloudflared archive SHA256 values before bootstrap install."},
                       "listen_address": {"type": "string", "default": "127.0.0.1", "description":"Address for the host cloudflared DNS proxy listener."},
                       "listen_port": {"type": "integer", "default": 5053, "minimum": 1, "maximum": 65535, "description":"Port for the host cloudflared DNS proxy listener."},
                       "required_version": {"type": "string", "default": "2025.5.0", "description":"Exact cloudflared version required by the canonical single-device DNS path."},

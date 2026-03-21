@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -40,13 +41,25 @@ CLOUDFLARED_PREFERRED_BIN = Path("/opt/homebrew/bin/cloudflared")
 CLOUDFLARED_BOOTSTRAP_BIN_DIR = Path.home() / ".local" / "share" / "nextlevelapex" / "bin"
 CLOUDFLARED_BOOTSTRAP_CACHE_DIR = Path.home() / ".cache" / "nextlevelapex" / "cloudflared"
 CLOUDFLARED_RELEASE_BASE_URL = "https://github.com/cloudflare/cloudflared/releases/download"
+CLOUDFLARED_RELEASE_METADATA_URL = (
+    "https://api.github.com/repos/cloudflare/cloudflared/releases/tags"
+)
 LEGACY_CONTAINERS = ("cloudflared", "unbound")
 PASSWORD_PATH = Path.home() / ".config" / "nextlevelapex" / "pihole_admin_password"
 LAUNCH_AGENT_LABEL = "com.local.doh"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+LAUNCH_AGENT_BACKUP_PATH = (
+    Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist.bak"
+)
 LAUNCH_AGENT_LOG = Path.home() / "Library" / "Logs" / "com.local.doh.log"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 LAUNCH_AGENT_TEMPLATE = PROJECT_ROOT / "assets" / "launch_agents" / "com.local.doh.plist.j2"
+CHROMIUM_BROWSER_SUPPORT_DIRS = (
+    ("Google Chrome", ("Library", "Application Support", "Google", "Chrome")),
+    ("Microsoft Edge", ("Library", "Application Support", "Microsoft Edge")),
+    ("Brave Browser", ("Library", "Application Support", "BraveSoftware", "Brave-Browser")),
+)
+FIREFOX_PROFILE_DIR = ("Library", "Application Support", "Firefox", "Profiles")
 
 
 @dataclass(frozen=True)
@@ -87,6 +100,7 @@ class DNSSettings:
     cloudflared_bootstrap_bin_dir: Path
     cloudflared_bootstrap_cache_dir: Path
     cloudflared_release_base_url: str
+    cloudflared_release_metadata_url: str
 
 
 @dataclass
@@ -146,6 +160,9 @@ def load_dns_settings(config: dict[str, Any]) -> tuple[DNSSettings, list[tuple[S
         cloudflared_release_base_url=str(
             cloudflared_cfg.get("release_base_url", CLOUDFLARED_RELEASE_BASE_URL)
         ).rstrip("/"),
+        cloudflared_release_metadata_url=str(
+            cloudflared_cfg.get("release_metadata_url", CLOUDFLARED_RELEASE_METADATA_URL)
+        ).rstrip("/"),
     )
     return settings, messages
 
@@ -170,19 +187,50 @@ def orchestrate_dns_stack(config: dict[str, Any], dry_run: bool = False) -> Step
 
     colima_plan = inspect_colima_runtime(settings)
     pihole_plan = inspect_pihole_container(settings)
+    resolver_health = (
+        canonical_resolver_health(settings)
+        if EXPECTED_RESOLVER_IP in preflight.get("configured_resolvers", [])
+        else {"success": True, "skipped": "canonical resolver not configured preflight"}
+    )
+    evidence["preflight_resolver_health"] = resolver_health
     disruptive = needs_temporary_dns_release(
         preflight.get("configured_resolvers", []),
         colima_plan.get("restart_required", False),
         pihole_plan.get("recreate_required", False),
+        resolver_outage_detected=not resolver_health.get("success", True),
     )
 
     if disruptive and preflight.get("active_service"):
+        if not resolver_health.get("success", True):
+            messages.append(
+                (
+                    Severity.WARNING,
+                    f"Canonical resolver {settings.resolver_ip} is unhealthy; temporarily releasing manual DNS to recover name resolution before repair.",
+                )
+            )
         release = set_network_service_dns(preflight["active_service"], [], dry_run=dry_run)
         messages.extend(release.messages)
         changed |= release.changed
         evidence["temporary_dns_release"] = release.evidence
         if not release.success:
             return StepResult(False, changed, messages, evidence)
+        if not dry_run:
+            release_validation = validate_temporary_dns_recovery()
+            evidence["temporary_dns_release_validation"] = release_validation
+            if not release_validation["success"]:
+                messages.append(
+                    (
+                        Severity.ERROR,
+                        "Temporary DNS release did not restore general name resolution for repair.",
+                    )
+                )
+                return StepResult(False, changed, messages, evidence)
+            messages.append(
+                (
+                    Severity.INFO,
+                    "Temporary DNS release restored general name resolution for repair.",
+                )
+            )
 
     cloudflared = ensure_cloudflared_service(settings, dry_run=dry_run)
     messages.extend(cloudflared.messages)
@@ -342,7 +390,9 @@ def ensure_cloudflared_binary(
         "bootstrap_cache_dir": str(settings.cloudflared_bootstrap_cache_dir),
     }
     release_url = cloudflared_release_url(settings)
+    release_metadata_url = cloudflared_release_metadata_api_url(settings)
     evidence["bootstrap_release_url"] = release_url
+    evidence["bootstrap_release_metadata_url"] = release_metadata_url
 
     versioned_target = (
         settings.cloudflared_bootstrap_bin_dir
@@ -768,6 +818,8 @@ def validate_dns_stack(settings: DNSSettings, require_default_resolver: bool) ->
         "default_server": _run(["dig", "example.com"], timeout=15),
         "connectivity": _run(["curl", "-sI", "https://example.com"], timeout=20),
         "containers": _run(["docker", "ps", "--format", "{{.Names}}"], timeout=10),
+        "noncanonical_artifacts": audit_noncanonical_dns_artifacts(),
+        "browser_dns_posture": audit_browser_dns_posture(),
     }
     messages: list[tuple[Severity, str]] = []
 
@@ -814,15 +866,20 @@ def validate_dns_stack(settings: DNSSettings, require_default_resolver: bool) ->
         messages.append((Severity.ERROR, "macOS default resolver is not using 192.168.64.2."))
     if not connectivity_ok:
         messages.append((Severity.ERROR, "General internet connectivity check failed."))
+    append_noncanonical_dns_artifact_messages(messages, evidence["noncanonical_artifacts"])
+    append_browser_dns_posture_messages(messages, evidence["browser_dns_posture"])
 
-    if not messages:
+    if not any(level is Severity.ERROR for level, _ in messages):
         messages.append((Severity.INFO, "Canonical single-device DNS stack validation passed."))
 
     return StepResult(
         success=not any(level is Severity.ERROR for level, _ in messages),
         changed=False,
         messages=messages,
-        evidence={key: _serialize_command(value) for key, value in evidence.items()},
+        evidence={
+            key: _serialize_command(value) if isinstance(value, CommandOutcome) else value
+            for key, value in evidence.items()
+        },
     )
 
 
@@ -846,6 +903,8 @@ def capture_runtime_snapshot() -> dict[str, Any]:
         "default_server": default_server.stdout,
         "connectivity": connectivity.stdout,
         "listeners": listeners.stdout,
+        "noncanonical_artifacts": audit_noncanonical_dns_artifacts(),
+        "browser_dns_posture": audit_browser_dns_posture(),
     }
 
 
@@ -899,9 +958,10 @@ def needs_temporary_dns_release(
     configured_resolvers: list[str],
     colima_restart_required: bool,
     pihole_recreate_required: bool,
+    resolver_outage_detected: bool = False,
 ) -> bool:
     return EXPECTED_RESOLVER_IP in configured_resolvers and (
-        colima_restart_required or pihole_recreate_required
+        colima_restart_required or pihole_recreate_required or resolver_outage_detected
     )
 
 
@@ -1100,6 +1160,12 @@ def cloudflared_release_url(settings: DNSSettings) -> str | None:
     )
 
 
+def cloudflared_release_metadata_api_url(settings: DNSSettings) -> str:
+    return (
+        f"{settings.cloudflared_release_metadata_url}/" f"{settings.cloudflared_required_version}"
+    )
+
+
 def ensure_bootstrap_symlink(link_path: Path, target_path: Path, dry_run: bool = False) -> bool:
     desired_target = target_path.name
     if link_path.is_symlink() and str(link_path.readlink()) == desired_target:
@@ -1140,18 +1206,18 @@ def bootstrap_cloudflared_binary(
     evidence["archive_path"] = str(archive_path)
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        if not archive_path.exists():
-            request = Request(
-                str(evidence["release_url"]),
-                headers={"User-Agent": "NextLevelApex/1.0"},
+        verification = ensure_verified_cloudflared_archive(
+            settings,
+            cache_dir,
+            archive_path,
+            asset_name,
+        )
+        evidence["verification"] = verification
+        if not verification.get("success"):
+            evidence["error"] = verification.get(
+                "error", "cloudflared archive verification failed."
             )
-            with (
-                urlopen(request, timeout=60) as response,
-                tempfile.NamedTemporaryFile(dir=cache_dir, delete=False) as tmp,
-            ):
-                shutil.copyfileobj(response, tmp)
-                temp_archive = Path(tmp.name)
-            temp_archive.replace(archive_path)
+            return evidence
 
         versioned_target.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_path, "r:gz") as archive:
@@ -1195,6 +1261,186 @@ def bootstrap_cloudflared_binary(
 
     evidence["success"] = True
     return evidence
+
+
+def ensure_verified_cloudflared_archive(
+    settings: DNSSettings,
+    cache_dir: Path,
+    archive_path: Path,
+    asset_name: str,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "success": False,
+        "asset_name": asset_name,
+        "archive_path": str(archive_path),
+    }
+    checksum = resolve_cloudflared_expected_sha256(settings, asset_name, cache_dir)
+    evidence["checksum"] = checksum
+    if not checksum.get("success"):
+        evidence["error"] = checksum.get("error", "Failed to resolve cloudflared archive checksum.")
+        return evidence
+
+    expected_sha256 = checksum["expected_sha256"]
+    evidence["expected_sha256"] = expected_sha256
+
+    if archive_path.exists():
+        cached_sha256 = sha256_file(archive_path)
+        evidence["cached_archive_sha256"] = cached_sha256
+        if cached_sha256 == expected_sha256:
+            evidence["used_cached_archive"] = True
+            evidence["success"] = True
+            return evidence
+        archive_path.unlink(missing_ok=True)
+        evidence["cache_mismatch"] = True
+
+    request = Request(
+        str(cloudflared_release_url(settings)),
+        headers={"User-Agent": "NextLevelApex/1.0"},
+    )
+    try:
+        with (
+            urlopen(request, timeout=60) as response,
+            tempfile.NamedTemporaryFile(dir=cache_dir, delete=False) as tmp,
+        ):
+            shutil.copyfileobj(response, tmp)
+            temp_archive = Path(tmp.name)
+        temp_archive.replace(archive_path)
+        downloaded_sha256 = sha256_file(archive_path)
+        evidence["downloaded_archive_sha256"] = downloaded_sha256
+        if downloaded_sha256 != expected_sha256:
+            archive_path.unlink(missing_ok=True)
+            evidence["error"] = (
+                f"cloudflared archive checksum mismatch: expected {expected_sha256}, "
+                f"observed {downloaded_sha256}."
+            )
+            return evidence
+    except (HTTPError, URLError, OSError) as exc:
+        evidence["error"] = f"{type(exc).__name__}: {exc}"
+        return evidence
+
+    evidence["success"] = True
+    return evidence
+
+
+def resolve_cloudflared_expected_sha256(
+    settings: DNSSettings,
+    asset_name: str,
+    cache_dir: Path,
+) -> dict[str, Any]:
+    metadata = load_cloudflared_release_metadata(settings, cache_dir)
+    evidence: dict[str, Any] = {
+        "success": False,
+        "asset_name": asset_name,
+        "metadata": {key: value for key, value in metadata.items() if key != "payload"},
+    }
+    if not metadata.get("success"):
+        evidence["error"] = metadata.get("error", "cloudflared release metadata unavailable.")
+        return evidence
+
+    payload = metadata.get("payload") or {}
+    asset = next(
+        (
+            candidate
+            for candidate in payload.get("assets", [])
+            if candidate.get("name") == asset_name
+        ),
+        None,
+    )
+    if asset is None:
+        evidence["error"] = f"Release metadata did not include asset {asset_name}."
+        return evidence
+
+    digest = asset.get("digest")
+    if isinstance(digest, str) and digest.startswith("sha256:"):
+        evidence["expected_sha256"] = digest.split(":", 1)[1].lower()
+        evidence["source"] = "asset.digest"
+        evidence["success"] = True
+        return evidence
+
+    checksums = parse_cloudflared_release_checksums(str(payload.get("body", "")))
+    expected_sha256 = checksums.get(asset_name)
+    if expected_sha256 is None:
+        evidence["error"] = f"Release metadata did not contain a SHA256 checksum for {asset_name}."
+        return evidence
+
+    evidence["expected_sha256"] = expected_sha256
+    evidence["source"] = "release.body"
+    evidence["success"] = True
+    return evidence
+
+
+def load_cloudflared_release_metadata(
+    settings: DNSSettings,
+    cache_dir: Path,
+) -> dict[str, Any]:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = cache_dir / "release-metadata.json"
+    evidence: dict[str, Any] = {
+        "success": False,
+        "release_api_url": cloudflared_release_metadata_api_url(settings),
+        "metadata_path": str(metadata_path),
+    }
+
+    if metadata_path.exists():
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            evidence["cache_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            if payload.get("tag_name") == settings.cloudflared_required_version:
+                evidence["source"] = "cache"
+                evidence["success"] = True
+                evidence["payload"] = payload
+                return evidence
+
+    request = Request(
+        evidence["release_api_url"],
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "NextLevelApex/1.0",
+        },
+    )
+    try:
+        with (
+            urlopen(request, timeout=30) as response,
+            tempfile.NamedTemporaryFile(dir=cache_dir, delete=False) as tmp,
+        ):
+            payload = json.load(response)
+            tmp.write(json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"))
+            temp_metadata = Path(tmp.name)
+        temp_metadata.replace(metadata_path)
+    except (HTTPError, URLError, OSError, json.JSONDecodeError) as exc:
+        evidence["error"] = f"{type(exc).__name__}: {exc}"
+        return evidence
+
+    if payload.get("tag_name") != settings.cloudflared_required_version:
+        evidence["error"] = (
+            f"Release metadata tag mismatch: expected {settings.cloudflared_required_version}, "
+            f"observed {payload.get('tag_name') or 'unknown'}."
+        )
+        return evidence
+
+    evidence["source"] = "network"
+    evidence["success"] = True
+    evidence["payload"] = payload
+    return evidence
+
+
+def parse_cloudflared_release_checksums(body: str) -> dict[str, str]:
+    checksums: dict[str, str] = {}
+    for line in body.splitlines():
+        match = re.match(r"^([A-Za-z0-9._-]+):\s*([0-9a-fA-F]{64})$", line.strip())
+        if match:
+            checksums[match.group(1)] = match.group(2).lower()
+    return checksums
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def launch_agent_running() -> bool:
@@ -1303,6 +1549,294 @@ def remove_legacy_containers(
                 (Severity.INFO, f"Removed legacy container {name} from Docker context {context}.")
             )
     return StepResult(True, changed, messages, evidence)
+
+
+def canonical_resolver_health(settings: DNSSettings) -> dict[str, Any]:
+    udp = _run(["dig", f"@{settings.resolver_ip}", "example.com", "+short"], timeout=15)
+    tcp = _run(["dig", "+tcp", f"@{settings.resolver_ip}", "example.com", "+short"], timeout=15)
+    return {
+        "success": udp.success
+        and bool(udp.stdout.strip())
+        and tcp.success
+        and bool(tcp.stdout.strip()),
+        "udp": _serialize_command(udp),
+        "tcp": _serialize_command(tcp),
+    }
+
+
+def validate_temporary_dns_recovery() -> dict[str, Any]:
+    default_query = _run(["dig", "example.com", "+short"], timeout=15)
+    default_server = _run(["dig", "example.com"], timeout=15)
+    connectivity = _run(["curl", "-sI", "https://example.com"], timeout=20)
+    return {
+        "success": default_query.success
+        and bool(default_query.stdout.strip())
+        and connectivity.success
+        and "HTTP/" in connectivity.stdout,
+        "default_query": _serialize_command(default_query),
+        "default_server": _serialize_command(default_server),
+        "connectivity": _serialize_command(connectivity),
+    }
+
+
+def audit_noncanonical_dns_artifacts(home: Path | None = None) -> dict[str, Any]:
+    backup_path = (
+        LAUNCH_AGENT_BACKUP_PATH
+        if home is None
+        else home / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist.bak"
+    )
+    unbound_binary = shutil.which("unbound")
+    unbound_formula_installed = is_brew_formula_installed("unbound")
+    return {
+        "success": not bool(unbound_binary or unbound_formula_installed or backup_path.exists()),
+        "unbound": {
+            "binary_path": unbound_binary,
+            "formula_installed": unbound_formula_installed,
+        },
+        "launchagent_backup": {
+            "path": str(backup_path),
+            "exists": backup_path.exists(),
+        },
+    }
+
+
+def append_noncanonical_dns_artifact_messages(
+    messages: list[tuple[Severity, str]],
+    audit: dict[str, Any],
+) -> bool:
+    success = True
+    unbound = audit.get("unbound", {})
+    if unbound.get("binary_path") or unbound.get("formula_installed"):
+        success = False
+        detail = unbound.get("binary_path") or "Homebrew formula"
+        messages.append(
+            (
+                Severity.ERROR,
+                f"Non-canonical drift: local Unbound remains installed ({detail}) even though the authoritative single-device DNS path does not use Unbound.",
+            )
+        )
+
+    backup = audit.get("launchagent_backup", {})
+    if backup.get("exists"):
+        success = False
+        messages.append(
+            (
+                Severity.ERROR,
+                f"Non-authoritative drift: stale cloudflared LaunchAgent backup artifact remains at {backup.get('path')}.",
+            )
+        )
+
+    if success:
+        messages.append(
+            (
+                Severity.INFO,
+                "No non-canonical local Unbound or backup LaunchAgent artifacts were detected.",
+            )
+        )
+    return success
+
+
+def audit_browser_dns_posture(home: Path | None = None) -> dict[str, Any]:
+    base_home = home or Path.home()
+    targets: list[dict[str, Any]] = []
+    explicit_dns_overrides: list[dict[str, Any]] = []
+    parse_errors: list[dict[str, Any]] = []
+    audited_browsers: list[str] = []
+
+    for browser, parts in CHROMIUM_BROWSER_SUPPORT_DIRS:
+        target = inspect_chromium_browser_dns_posture(browser, base_home.joinpath(*parts))
+        targets.append(target)
+        if target["audited"]:
+            audited_browsers.append(browser)
+        explicit_dns_overrides.extend(target["explicit_dns_overrides"])
+        parse_errors.extend(target["parse_errors"])
+
+    firefox = inspect_firefox_browser_dns_posture(base_home.joinpath(*FIREFOX_PROFILE_DIR))
+    targets.append(firefox)
+    if firefox["audited"]:
+        audited_browsers.append("Firefox")
+    explicit_dns_overrides.extend(firefox["explicit_dns_overrides"])
+    parse_errors.extend(firefox["parse_errors"])
+
+    return {
+        "success": not explicit_dns_overrides and not parse_errors,
+        "audited_browsers": audited_browsers,
+        "targets": targets,
+        "explicit_dns_overrides": explicit_dns_overrides,
+        "parse_errors": parse_errors,
+    }
+
+
+def inspect_chromium_browser_dns_posture(browser: str, root: Path) -> dict[str, Any]:
+    target: dict[str, Any] = {
+        "browser": browser,
+        "kind": "chromium",
+        "root": str(root),
+        "audited": False,
+        "profiles": [],
+        "explicit_dns_overrides": [],
+        "parse_errors": [],
+    }
+    if not root.exists():
+        return target
+
+    for profile_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        preference_files = [
+            profile_dir / "Preferences",
+            profile_dir / "Secure Preferences",
+        ]
+        for pref_path in preference_files:
+            if not pref_path.exists():
+                continue
+            target["audited"] = True
+            profile_evidence: dict[str, Any] = {
+                "profile": profile_dir.name,
+                "file": str(pref_path),
+            }
+            try:
+                payload = json.loads(pref_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                profile_evidence["error"] = f"{type(exc).__name__}: {exc}"
+                target["parse_errors"].append(profile_evidence)
+                target["profiles"].append(profile_evidence)
+                continue
+
+            findings: dict[str, Any] = {}
+            dns_over_https = payload.get("dns_over_https")
+            if dns_over_https not in (None, {}, ""):
+                findings["dns_over_https"] = dns_over_https
+            built_in_dns_client = payload.get("built_in_dns_client")
+            if built_in_dns_client not in (None, {}, ""):
+                findings["built_in_dns_client"] = built_in_dns_client
+
+            if findings:
+                override = {
+                    "browser": browser,
+                    "profile": profile_dir.name,
+                    "file": str(pref_path),
+                    "findings": findings,
+                }
+                profile_evidence["explicit_dns_override"] = True
+                profile_evidence["findings"] = findings
+                target["explicit_dns_overrides"].append(override)
+            else:
+                profile_evidence["explicit_dns_override"] = False
+
+            target["profiles"].append(profile_evidence)
+
+    return target
+
+
+def inspect_firefox_browser_dns_posture(root: Path) -> dict[str, Any]:
+    target: dict[str, Any] = {
+        "browser": "Firefox",
+        "kind": "firefox",
+        "root": str(root),
+        "audited": False,
+        "profiles": [],
+        "explicit_dns_overrides": [],
+        "parse_errors": [],
+    }
+    if not root.exists():
+        return target
+
+    for profile_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        preference_files = [profile_dir / "prefs.js", profile_dir / "user.js"]
+        for pref_path in preference_files:
+            if not pref_path.exists():
+                continue
+            target["audited"] = True
+            profile_evidence: dict[str, Any] = {
+                "profile": profile_dir.name,
+                "file": str(pref_path),
+            }
+            try:
+                contents = pref_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError as exc:
+                profile_evidence["error"] = f"{type(exc).__name__}: {exc}"
+                target["parse_errors"].append(profile_evidence)
+                target["profiles"].append(profile_evidence)
+                continue
+
+            findings: dict[str, str] = {}
+            for line in contents.splitlines():
+                match = re.match(r'^user_pref\("([^"]+)",\s*(.+)\);$', line.strip())
+                if not match:
+                    continue
+                key, value = match.groups()
+                if key.startswith("network.trr."):
+                    findings[key] = value
+
+            if findings:
+                override = {
+                    "browser": "Firefox",
+                    "profile": profile_dir.name,
+                    "file": str(pref_path),
+                    "findings": findings,
+                }
+                profile_evidence["explicit_dns_override"] = True
+                profile_evidence["findings"] = findings
+                target["explicit_dns_overrides"].append(override)
+            else:
+                profile_evidence["explicit_dns_override"] = False
+
+            target["profiles"].append(profile_evidence)
+
+    return target
+
+
+def append_browser_dns_posture_messages(
+    messages: list[tuple[Severity, str]],
+    audit: dict[str, Any],
+) -> bool:
+    success = True
+    if audit.get("parse_errors"):
+        success = False
+        locations = ", ".join(
+            f"{item.get('browser')}:{item.get('file')}" for item in audit["parse_errors"]
+        )
+        messages.append(
+            (
+                Severity.ERROR,
+                f"Browser/app DNS posture audit could not parse one or more local preference files: {locations}.",
+            )
+        )
+
+    if audit.get("explicit_dns_overrides"):
+        success = False
+        details = "; ".join(
+            (
+                f"{item.get('browser')} {item.get('profile')} "
+                f"({Path(item.get('file', '')).name}) -> {', '.join(sorted(item.get('findings', {}).keys()))}"
+            )
+            for item in audit["explicit_dns_overrides"]
+        )
+        messages.append(
+            (
+                Severity.ERROR,
+                f"Browser/app DNS posture drift: explicit DNS override settings were found in local browser profiles: {details}.",
+            )
+        )
+
+    if success:
+        audited = audit.get("audited_browsers", [])
+        if audited:
+            messages.append(
+                (
+                    Severity.INFO,
+                    "Browser/app DNS posture audit found no explicit DNS override settings in: "
+                    + ", ".join(audited)
+                    + ".",
+                )
+            )
+        else:
+            messages.append(
+                (
+                    Severity.INFO,
+                    "Browser/app DNS posture audit found no supported local browser profile stores to inspect.",
+                )
+            )
+    return success
 
 
 def resolve_pihole_password(settings: DNSSettings) -> tuple[str, bool]:
