@@ -75,6 +75,10 @@ cd NextLevelApex
 poetry install
 ```
 
+Plain `poetry install` is the canonical install contract for this repo. The `nlx` CLI
+and its Typer runtime are part of the default dependency set, so no optional CLI extra
+is required or supported for standard operator and CI workflows.
+
 ## Quickstart
 
 List commands:
@@ -168,6 +172,8 @@ Without this, you will see:
 - `ModuleNotFoundError` for dependencies:
   - Run `poetry install` then use `poetry run ...` or activate Poetry's environment.
   - In a git worktree, you must run `poetry install` in each worktree separately.
+  - If plain `poetry install` does not make `poetry run nlx --help` work, treat that as a
+    packaging or lockfile contract bug, not as a missing optional extra.
 - `Warning: 'nlx' is an entry point ... not installed as a script`:
   - Run `poetry install` to register the entrypoint.
 - `install-sudoers` cannot verify `includedir`:

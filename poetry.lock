@@ -1629,10 +1629,7 @@ pyyaml = "*"
 [package.extras]
 dev = ["doc8", "flake8", "flake8-import-order", "rstcheck[sphinx]", "sphinx"]
 
-[extras]
-cli = ["typer"]
-
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "757789c2df856720cd31bdea2bd9b8dcd450602630c49c46a122e01ef73ef2ee"
+content-hash = "d909d72d45fad8a61e1e336229dfaae8263e20c7d93eb9716e689418957824fa"

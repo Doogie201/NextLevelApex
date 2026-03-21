@@ -1,4 +1,6 @@
 import ast
+import re
+import tomllib
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -48,3 +50,37 @@ def test_no_shell_true_in_source_code():
                 )
 
     assert not violations, f"Found restricted 'shell=True' invocations in: {violations}"
+
+
+def test_cli_runtime_dependencies_are_part_of_default_install_contract():
+    project_root = Path(__file__).parent.parent.parent
+    pyproject = tomllib.loads((project_root / "pyproject.toml").read_text())
+
+    poetry = pyproject["tool"]["poetry"]
+    dependencies = poetry["dependencies"]
+    extras = poetry.get("extras", {})
+    extra_values = {dep_name for values in extras.values() for dep_name in values}
+
+    assert poetry["scripts"]["nlx"] == "nextlevelapex.main2:app"
+    assert "typer" in dependencies
+    assert "typer" not in extra_values
+
+
+def test_poetry_lock_keeps_cli_runtime_unconditional():
+    project_root = Path(__file__).parent.parent.parent
+    poetry_lock = (project_root / "poetry.lock").read_text()
+
+    def package_block(name: str) -> str:
+        match = re.search(
+            rf'\[\[package\]\]\nname = "{name}"\n.*?(?=\n\[\[package\]\]\n|\Z)',
+            poetry_lock,
+            re.S,
+        )
+        assert match, f"package {name} not found in poetry.lock"
+        return match.group(0)
+
+    typer_block = package_block("typer")
+    shellingham_block = package_block("shellingham")
+
+    assert 'markers = "extra == \\"cli\\""' not in typer_block
+    assert 'markers = "extra == \\"cli\\""' not in shellingham_block
