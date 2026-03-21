@@ -41,6 +41,7 @@ include  = [
 python      = "^3.11"
 # Typer/Click combo pinned to avoid the help-rendering regression you hit
 click       = "<8.2.0"
+# `nlx` is a first-class repo runtime, so Typer must stay in the default install set.
 typer       = "~0.12.5"
 rich        = "^14"
 jsonschema  = "^4.23.0"
@@ -50,9 +51,6 @@ fastapi = "^0.129.0"
 uvicorn = "^0.41.0"
 pydantic = "^2.12.5"
 websockets = "^16.0"
-
-[tool.poetry.extras]
-cli = ["typer"]
 
 [tool.poetry.scripts]
 nlx = "nextlevelapex.main2:app"
