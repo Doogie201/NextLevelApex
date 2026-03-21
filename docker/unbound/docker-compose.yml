@@ -1,3 +1,8 @@
+# LEGACY / NON-CANONICAL
+# This compose file is retained only as reference material for the retired
+# cloudflared -> unbound -> Pi-hole flow.
+# Do not use it for the authoritative single-device DNS stack on this Mac.
+# Use: poetry run nlx --task "DNS Stack Setup" --no-reports
 ---
 
 networks:
@@ -20,6 +25,7 @@ services:
       --upstream https://1.0.0.1/dns-query
     # ⚠️  Scope the port to localhost so nothing else can steal it
     ports:
+      - "127.0.0.1:5053:5053/tcp"
       - "127.0.0.1:5053:5053/udp"
     restart: always  # strongest policy
     healthcheck:
@@ -50,10 +56,6 @@ services:
       dns_stack:
         ipv4_address: 172.19.0.3  # Assign static IP to unbound
     restart: unless-stopped
-    volumes:
-      - ~/Projects/NextLevelApex/docker/unbound/state/unbound.conf:/etc/unbound/unbound.conf:ro
-      - ~/Projects/NextLevelApex/docker/unbound/state/root.hints:/etc/unbound/root.hints:ro
-      - ~/Projects/NextLevelApex/docker/unbound/state/root.key:/etc/unbound/root.key:ro
 
   pihole:
     image: pihole/pihole:latest

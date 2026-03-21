@@ -1,10 +1,15 @@
+# LEGACY / NON-CANONICAL
+# Reference-only helper image for the retired docker/unbound path.
+# Use the Python DNS Stack Setup task for the supported single-device flow.
+
 # Stage 1 – pick a minimal Alpine userland
 FROM alpine:3.19
 
-# Install dig/nslookup AND grab the latest cloudflared static binary
+# Install dig/nslookup AND grab a proxy-dns-compatible cloudflared binary.
+ARG CLOUDFLARED_VERSION=2025.5.0
 RUN set -e \
  && apk add --no-cache bind-tools curl ca-certificates \
- && curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 \
+ && curl -L "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-arm64" \
       -o /usr/local/bin/cloudflared \
  && chmod +x /usr/local/bin/cloudflared
 

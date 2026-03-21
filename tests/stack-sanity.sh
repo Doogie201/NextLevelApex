@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
+# LEGACY / NON-CANONICAL
+# This script validates the retired Pi-hole -> Unbound test path and is not the
+# supported single-device DNS verification path for this Mac.
 set -euo pipefail
 
 echo ""
+echo "[LEGACY / NON-CANONICAL] This script validates the retired Unbound-based reference path."
+echo "[LEGACY / NON-CANONICAL] Canonical local-device path: poetry run nlx --task \"DNS Stack Setup\" --no-reports"
 echo "🔍 Verifying DNS flow → macOS → Pi-hole → Unbound → Cloudflared"
 echo "──────────────────────────────────────────────────────────────"
 

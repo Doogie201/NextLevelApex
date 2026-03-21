@@ -121,6 +121,8 @@ def test_not_running_shows_hint(monkeypatch):
     res = dns.cloudflared_status_check()
     assert res.success is False
     assert any(m[0] == Severity.HINT for m in res.messages)
+    assert any("DNS Stack Setup" in m[1] for m in res.messages if m[0] == Severity.HINT)
+    assert all("compose up -d" not in m[1] for m in res.messages)
 
 
 def test_context_mismatch_warns(monkeypatch, healthy_inspect_json):

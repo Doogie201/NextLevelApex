@@ -136,12 +136,13 @@
         },
          "additionalProperties": false
       },
-       "networking": {
+      "networking": {
           "type": "object",
           "description": "Advanced Networking: DNS, Pi-hole, DoH.",
           "properties": {
               "_comment": {"type": "string"},
               "enable": {"type": "boolean", "default": true},
+              "resolver_ip": {"type": "string", "default": "192.168.64.2", "description": "Canonical single-device resolver IP exposed by Colima."},
               "set_system_dns": {"type": "boolean", "default": true},
               "pihole": {
                   "type": "object",
@@ -149,6 +150,9 @@
                       "enable": {"type": "boolean", "default": true},
                       "web_password_env_var": {"type": "string", "default": "NLX_PIHOLE_PASSWORD", "description": "Name of ENV VAR to read Pi-hole web password from."},
                       "default_web_password": {"type": "string", "default": "CHANGE_THIS_PASSWORD_NOW", "description": "Fallback password if ENV VAR not set. NOT RECOMMENDED for storage here."},
+                      "image": {"type": "string", "default": "pihole/pihole@sha256:ee348529cea9601df86ad94d62a39cad26117e1eac9e82d8876aa0ec7fe1ba27", "description": "Pinned Pi-hole image reference for the canonical single-device DNS stack."},
+                      "upstream": {"type": "string", "default": "host.docker.internal#5053", "description": "Canonical Pi-hole upstream for the host cloudflared listener."},
+                      "web_port": {"type": "integer", "default": 8080, "minimum": 1, "maximum": 65535, "description": "Host web port for the Pi-hole admin UI."},
                       "custom_adlists": {"type": "array", "items": {"type": "string", "format": "uri"}, "default": [], "description": "URLs of additional adlist sources."},
                       "custom_whitelist": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Domains to whitelist."},
                       "custom_blacklist": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Domains to blacklist."},
@@ -156,12 +160,27 @@
                   },
                   "additionalProperties": false
               },
-              "doh_method": {"type": "string", "enum": ["pihole_builtin", "host_cloudflared", "none"], "default": "pihole_builtin", "description": "Method for upstream DoH resolution."},
+              "doh_method": {"type": "string", "enum": ["pihole_builtin", "host_cloudflared", "none"], "default": "host_cloudflared", "description": "Method for upstream DoH resolution."},
               "cloudflared_host_agent": {
                   "type": "object",
                   "description": "Settings for cloudflared agent if run on host.",
                    "properties": {
-                      "enable": {"type": "boolean", "default": false, "description":"Set automatically based on doh_method, usually no need to set manually."}
+                      "enable": {"type": "boolean", "default": true, "description":"Canonical single-device DNS stack uses the host cloudflared LaunchAgent."},
+                      "binary_path": {"type": "string", "default": "/opt/homebrew/bin/cloudflared", "description":"Preferred exact-version cloudflared binary to reuse if already installed."},
+                      "bootstrap_bin_dir": {"type": "string", "default": "~/.local/share/nextlevelapex/bin", "description":"Deterministic install directory for bootstrapped exact-version cloudflared binaries."},
+                      "bootstrap_cache_dir": {"type": "string", "default": "~/.cache/nextlevelapex/cloudflared", "description":"Deterministic cache directory for downloaded exact-version cloudflared release archives."},
+                      "release_base_url": {"type": "string", "default": "https://github.com/cloudflare/cloudflared/releases/download", "description":"Base URL used for exact-version cloudflared release acquisition."},
+                      "listen_address": {"type": "string", "default": "127.0.0.1", "description":"Address for the host cloudflared DNS proxy listener."},
+                      "listen_port": {"type": "integer", "default": 5053, "minimum": 1, "maximum": 65535, "description":"Port for the host cloudflared DNS proxy listener."},
+                      "required_version": {"type": "string", "default": "2025.5.0", "description":"Exact cloudflared version required by the canonical single-device DNS path."},
+                      "upstreams": {
+                          "type": "array",
+                          "description": "Ordered DoH upstreams for the host cloudflared agent.",
+                          "items": {"type": "string", "format": "uri"},
+                          "default": ["https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"],
+                          "minItems": 1,
+                          "uniqueItems": true
+                      }
                    },
                    "additionalProperties": false
               }
