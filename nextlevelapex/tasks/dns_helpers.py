@@ -1,8 +1,14 @@
 # nextlevelapex/tasks/dns_helpers.py
 #!/usr/bin/env python3
 """
-DNS Helpers — Cloudflared & Pi-hole (Diagnostics Only)
-Read-only diagnostics with:
+NON-AUTHORITATIVE DNS compatibility helpers.
+
+This module is read-only diagnostics and backward-compatibility glue only.
+It is not the source of truth for the canonical single-device DNS stack.
+Authoritative orchestration and health validation live in
+`nextlevelapex.tasks.dns_stack_runtime`.
+
+Read-only diagnostics here include:
 - Hardened subprocess (timeouts)
 - Engine selection: docker → podman fallback
 - Context awareness (docker context show; podman has none)
@@ -210,7 +216,8 @@ def _container_status_check(display: str, container: str) -> TaskResult:
         msgs.append(
             (
                 Severity.HINT,
-                f"Start via your dns_stack task or `{eng} compose up -d` in the DNS project.",
+                "Canonical start path is `poetry run nlx --task \"DNS Stack Setup\" --no-reports`."
+                " Legacy compose-based DNS flows are reference-only.",
             )
         )
         success = False
@@ -280,7 +287,7 @@ def dns_sanity_check() -> TaskResult:
 
 
 def is_container_running(container_name: str) -> bool:
-    """Compat helper (used by other tasks)."""
+    """Compatibility-only helper; not authoritative for DNS orchestration decisions."""
     eng, _ = _engine_info()
     return bool(eng and _is_running(eng, container_name))
 

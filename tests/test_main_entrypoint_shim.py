@@ -132,3 +132,76 @@ def test_main2_dry_run_only_known_task_dispatches_without_attrerror(monkeypatch)
     assert result.exit_code == 0, result.output
     assert "AttributeError" not in result.output
     assert len(calls) == 1
+
+
+def test_list_tasks_initializes_discovered_task_state(monkeypatch):
+    import nextlevelapex.main2 as main2
+
+    state = {
+        "version": "2.0",
+        "last_run_status": "UNKNOWN",
+        "completed_sections": [],
+        "failed_sections": [],
+        "task_status": {},
+        "file_hashes": {},
+        "health_history": {},
+        "service_versions": {},
+        "last_report_path": None,
+    }
+
+    monkeypatch.setattr(main2, "load_state", lambda _path: state)
+    monkeypatch.setattr(main2, "discover_tasks", lambda: {"Task A": object()})
+
+    runner = CliRunner()
+    result = runner.invoke(main2.app, ["list-tasks"])
+
+    assert result.exit_code == 0, result.output
+    assert "Task A" in result.output
+    assert "PENDING" in result.output
+    assert "--" in result.output
+    assert state["task_status"]["Task A"]["status"] == "PENDING"
+    assert state["health_history"]["Task A"] == []
+
+
+def test_auto_fix_uses_failed_sections_fallback_and_passes_runtime_context(monkeypatch):
+    import nextlevelapex.main2 as main2
+
+    captured: list[dict] = []
+    state = {
+        "version": "2.0",
+        "last_run_status": "UNKNOWN",
+        "completed_sections": [],
+        "failed_sections": ["Task A"],
+        "task_status": {},
+        "file_hashes": {},
+        "health_history": {},
+        "service_versions": {},
+        "last_report_path": None,
+    }
+    config = {"networking": {"resolver_ip": "192.168.64.2"}}
+
+    monkeypatch.setattr(main2, "load_state", lambda _path: state)
+    monkeypatch.setattr(main2, "discover_tasks", lambda: {"Task A": object()})
+    monkeypatch.setattr(main2, "load_config", lambda: config)
+    monkeypatch.setattr(
+        main2,
+        "run_task",
+        lambda task_name, task_callable, context: captured.append(
+            {
+                "task_name": task_name,
+                "task_callable": task_callable,
+                "context": context,
+            }
+        )
+        or {"remediation_plan": None},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main2.app, ["auto-fix", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert captured[0]["task_name"] == "Task A"
+    assert captured[0]["context"]["config"] == config
+    assert captured[0]["context"]["dry_run"] is True
+    assert state["task_status"]["Task A"]["status"] == "PENDING"
+    assert "No remediation plan available for Task A." in result.output
