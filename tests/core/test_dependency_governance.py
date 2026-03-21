@@ -69,6 +69,9 @@ def test_cli_runtime_dependencies_are_part_of_default_install_contract():
 def test_poetry_lock_keeps_cli_runtime_unconditional():
     project_root = Path(__file__).parent.parent.parent
     poetry_lock = (project_root / "poetry.lock").read_text()
+    poetry_lock_data = tomllib.loads(poetry_lock)
+    lock_extras = poetry_lock_data.get("extras", {})
+    extra_values = {dep_name for values in lock_extras.values() for dep_name in values}
 
     def package_block(name: str) -> str:
         match = re.search(
@@ -82,5 +85,8 @@ def test_poetry_lock_keeps_cli_runtime_unconditional():
     typer_block = package_block("typer")
     shellingham_block = package_block("shellingham")
 
+    assert "cli" not in lock_extras
+    assert "typer" not in extra_values
+    assert "shellingham" not in extra_values
     assert 'markers = "extra == \\"cli\\""' not in typer_block
     assert 'markers = "extra == \\"cli\\""' not in shellingham_block
