@@ -280,20 +280,15 @@ def ensure_cloudflared_service(settings: DNSSettings, dry_run: bool = False) -> 
             stop_service = _run(["brew", "services", "stop", "cloudflared"], timeout=60)
             evidence["brew_service_stop"] = _serialize_command(stop_service)
 
-    legacy_container = inspect_container("cloudflared")
-    if legacy_container is not None:
-        if dry_run:
-            messages.append((Severity.INFO, "Would remove the legacy cloudflared container."))
-        else:
-            remove = _run(["docker", "rm", "-f", "cloudflared"], timeout=60)
-            evidence["legacy_cloudflared_remove"] = _serialize_command(remove)
-            if not remove.success:
-                messages.append(
-                    (Severity.ERROR, "Failed to remove the legacy cloudflared container.")
-                )
-                return StepResult(False, changed, messages, evidence)
-            changed = True
-            messages.append((Severity.INFO, "Removed the legacy cloudflared container."))
+    legacy_cleanup = remove_legacy_containers(
+        dry_run=dry_run,
+        container_names=("cloudflared",),
+    )
+    messages.extend(legacy_cleanup.messages)
+    changed |= legacy_cleanup.changed
+    evidence["legacy_cloudflared_cleanup"] = legacy_cleanup.evidence
+    if not legacy_cleanup.success:
+        return StepResult(False, changed, messages, evidence)
 
     if not LAUNCH_AGENT_TEMPLATE.exists():
         messages.append((Severity.ERROR, f"Missing LaunchAgent template: {LAUNCH_AGENT_TEMPLATE}"))
@@ -530,7 +525,18 @@ def ensure_colima_runtime(
         return StepResult(True, changed, messages, evidence)
 
     dev_cfg = config.get("developer_tools", {}).get("docker_runtime", {}).get("colima", {})
+    start_on_run = bool(dev_cfg.get("start_on_run", True))
+    evidence["start_on_run"] = start_on_run
     start_cmd = build_colima_start_command(dev_cfg)
+    evidence["start_command"] = start_cmd
+    if not start_on_run:
+        messages.append(
+            (
+                Severity.ERROR,
+                "Colima runtime drift requires a restart/start, but developer_tools.docker_runtime.colima.start_on_run=false blocks that mutation.",
+            )
+        )
+        return StepResult(False, changed, messages, evidence)
     if dry_run:
         messages.append((Severity.INFO, f"Would run {' '.join(start_cmd)}."))
         return StepResult(True, True, messages, evidence)
@@ -598,12 +604,8 @@ def ensure_pihole_container(settings: DNSSettings, dry_run: bool = False) -> Ste
     evidence: dict[str, Any] = {}
     changed = False
 
-    password, password_created = resolve_pihole_password(settings)
     evidence["password_path"] = str(PASSWORD_PATH)
-    evidence["password_created"] = password_created
-    if password_created:
-        changed = True
-        messages.append((Severity.INFO, f"Stored Pi-hole admin password at {PASSWORD_PATH}."))
+    evidence["password_created"] = False
 
     inspect = inspect_pihole_container(settings)
     evidence["before_inspect"] = inspect
@@ -615,6 +617,13 @@ def ensure_pihole_container(settings: DNSSettings, dry_run: bool = False) -> Ste
             )
             changed = True
         else:
+            password, password_created = resolve_pihole_password(settings)
+            evidence["password_created"] = password_created
+            if password_created:
+                changed = True
+                messages.append(
+                    (Severity.INFO, f"Stored Pi-hole admin password at {PASSWORD_PATH}.")
+                )
             pull = _run(["docker", "pull", settings.pihole_image], timeout=600)
             evidence["pull"] = _serialize_command(pull)
             if not pull.success:
@@ -970,10 +979,27 @@ def docker_context() -> str | None:
     return result.stdout.strip() if result.success and result.stdout.strip() else None
 
 
+def docker_command(args: list[str], context: str | None = None) -> list[str]:
+    cmd = ["docker"]
+    if context:
+        cmd.extend(["--context", context])
+    cmd.extend(args)
+    return cmd
+
+
+def legacy_container_contexts() -> list[str]:
+    contexts: list[str] = []
+    for candidate in (docker_context(), "colima", "default"):
+        if candidate and candidate not in contexts:
+            contexts.append(candidate)
+    return contexts
+
+
 def docker_ps_names(all_containers: bool) -> list[str]:
-    cmd = ["docker", "ps", "--format", "{{.Names}}"]
+    cmd = docker_command(["ps"])
     if all_containers:
-        cmd.insert(2, "-a")
+        cmd.append("-a")
+    cmd.extend(["--format", "{{.Names}}"])
     result = _run(cmd, timeout=10)
     if not result.success:
         return []
@@ -1230,25 +1256,52 @@ def wait_for_cloudflared_health(settings: DNSSettings, timeout_seconds: int = 10
     return False
 
 
-def remove_legacy_containers(dry_run: bool = False) -> StepResult:
+def remove_legacy_containers(
+    dry_run: bool = False,
+    container_names: tuple[str, ...] = LEGACY_CONTAINERS,
+) -> StepResult:
     messages: list[tuple[Severity, str]] = []
-    evidence: dict[str, Any] = {}
+    evidence: dict[str, Any] = {"contexts": []}
     changed = False
-    names = set(docker_ps_names(all_containers=True))
-    for name in LEGACY_CONTAINERS:
-        if name not in names:
+    for context in legacy_container_contexts():
+        list_cmd = docker_command(["ps", "-a", "--format", "{{.Names}}"], context=context)
+        listing = _run(list_cmd, timeout=10)
+        context_evidence: dict[str, Any] = {
+            "context": context,
+            "list": _serialize_command(listing),
+        }
+        evidence["contexts"].append(context_evidence)
+        if not listing.success:
             continue
-        if dry_run:
-            messages.append((Severity.INFO, f"Would remove legacy container {name}."))
+
+        names = {line.strip() for line in listing.stdout.splitlines() if line.strip()}
+        context_evidence["visible_containers"] = sorted(names)
+        for name in container_names:
+            if name not in names:
+                continue
+            if dry_run:
+                messages.append(
+                    (
+                        Severity.INFO,
+                        f"Would remove legacy container {name} from Docker context {context}.",
+                    )
+                )
+                changed = True
+                continue
+            remove = _run(docker_command(["rm", "-f", name], context=context), timeout=60)
+            context_evidence[name] = _serialize_command(remove)
+            if not remove.success:
+                messages.append(
+                    (
+                        Severity.ERROR,
+                        f"Failed to remove legacy container {name} from Docker context {context}.",
+                    )
+                )
+                return StepResult(False, changed, messages, evidence)
             changed = True
-            continue
-        remove = _run(["docker", "rm", "-f", name], timeout=60)
-        evidence[name] = _serialize_command(remove)
-        if not remove.success:
-            messages.append((Severity.ERROR, f"Failed to remove legacy container {name}."))
-            return StepResult(False, changed, messages, evidence)
-        changed = True
-        messages.append((Severity.INFO, f"Removed legacy container {name}."))
+            messages.append(
+                (Severity.INFO, f"Removed legacy container {name} from Docker context {context}.")
+            )
     return StepResult(True, changed, messages, evidence)
 
 
@@ -1334,7 +1387,7 @@ def validate_pihole_endpoints(settings: DNSSettings) -> dict[str, Any]:
 
 
 def inspect_container(name: str) -> dict[str, Any] | None:
-    result = _run(["docker", "inspect", name], timeout=20)
+    result = _run(docker_command(["inspect", name]), timeout=20)
     if not result.success or not result.stdout:
         return None
     try:

@@ -208,3 +208,79 @@ def test_orchestrate_dns_stack_releases_dns_before_disruptive_changes(monkeypatc
     assert result.success is True
     assert calls[0] == ("Wi-Fi", ())
     assert calls[-1] == ("Wi-Fi", ("192.168.64.2",))
+
+
+def test_remove_legacy_containers_checks_default_context_when_active_is_colima(monkeypatch):
+    removals: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int) -> runtime.CommandOutcome:
+        if cmd[:5] == ["docker", "--context", "colima", "ps", "-a"]:
+            return runtime.CommandOutcome(cmd, 0, "pihole\n", "")
+        if cmd[:5] == ["docker", "--context", "default", "ps", "-a"]:
+            return runtime.CommandOutcome(cmd, 0, "cloudflared\n", "")
+        if cmd[:4] == ["docker", "--context", "default", "rm"]:
+            removals.append(cmd)
+            return runtime.CommandOutcome(cmd, 0, "cloudflared", "")
+        return runtime.CommandOutcome(cmd, 1, "", "unexpected command")
+
+    monkeypatch.setattr(runtime, "docker_context", lambda: "colima")
+    monkeypatch.setattr(runtime, "_run", fake_run)
+
+    result = runtime.remove_legacy_containers()
+
+    assert result.success is True
+    assert removals == [["docker", "--context", "default", "rm", "-f", "cloudflared"]]
+    assert any(
+        text == "Removed legacy container cloudflared from Docker context default."
+        for _, text in result.messages
+    )
+
+
+def test_ensure_colima_runtime_honors_start_on_run_false(monkeypatch):
+    settings = _settings()
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int) -> runtime.CommandOutcome:
+        commands.append(cmd)
+        return runtime.CommandOutcome(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        runtime, "colima_status", lambda: {"running": True, "ip_address": "1.2.3.4"}
+    )
+    monkeypatch.setattr(runtime, "_run", fake_run)
+
+    result = runtime.ensure_colima_runtime(
+        {
+            "developer_tools": {
+                "docker_runtime": {
+                    "provider": "colima",
+                    "colima": {"start_on_run": False},
+                }
+            }
+        },
+        settings,
+    )
+
+    assert result.success is False
+    assert result.changed is False
+    assert commands == []
+    assert any("start_on_run=false blocks that mutation" in text for _, text in result.messages)
+
+
+def test_ensure_pihole_container_dry_run_does_not_persist_password(monkeypatch, tmp_path):
+    settings = _settings()
+    password_path = tmp_path / "pihole_admin_password"
+
+    monkeypatch.setattr(runtime, "PASSWORD_PATH", password_path)
+    monkeypatch.setattr(
+        runtime,
+        "inspect_pihole_container",
+        lambda settings: {"present": False, "recreate_required": True},
+    )
+
+    result = runtime.ensure_pihole_container(settings, dry_run=True)
+
+    assert result.success is True
+    assert result.changed is True
+    assert password_path.exists() is False
+    assert result.evidence["password_created"] is False
