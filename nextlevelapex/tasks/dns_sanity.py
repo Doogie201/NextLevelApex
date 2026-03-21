@@ -13,6 +13,10 @@ from nextlevelapex.tasks.dns_stack_runtime import (
     LEGACY_CONTAINERS,
     PIHOLE_CONTAINER,
     PIHOLE_UPSTREAM,
+    append_browser_dns_posture_messages,
+    append_noncanonical_dns_artifact_messages,
+    audit_browser_dns_posture,
+    audit_noncanonical_dns_artifacts,
 )
 
 log = LoggerProxy(__name__)
@@ -135,6 +139,14 @@ def dns_sanity_check(context: TaskContext) -> TaskResult:
         )
     else:
         messages.append((Severity.INFO, f"Resolver configuration matches {EXPECTED_RESOLVER_IP}."))
+
+    noncanonical_artifacts = audit_noncanonical_dns_artifacts()
+    if not append_noncanonical_dns_artifact_messages(messages, noncanonical_artifacts):
+        success = False
+
+    browser_dns_posture = audit_browser_dns_posture()
+    if not append_browser_dns_posture_messages(messages, browser_dns_posture):
+        success = False
 
     return TaskResult("DNS Stack Sanity Check", success, False, messages)
 

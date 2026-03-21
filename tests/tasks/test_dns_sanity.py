@@ -15,6 +15,25 @@ def _default_inputs(monkeypatch):
     monkeypatch.setattr(dns_sanity, "_host_cloudflared_listener_healthy", lambda: True)
     monkeypatch.setattr(dns_sanity, "_get_pihole_upstreams", lambda: {"host.docker.internal#5053"})
     monkeypatch.setattr(dns_sanity, "_get_configured_dns_resolvers", lambda: {"192.168.64.2"})
+    monkeypatch.setattr(
+        dns_sanity,
+        "audit_noncanonical_dns_artifacts",
+        lambda: {
+            "success": True,
+            "unbound": {"binary_path": None, "formula_installed": False},
+            "launchagent_backup": {"path": "/tmp/com.local.doh.plist.bak", "exists": False},
+        },
+    )
+    monkeypatch.setattr(
+        dns_sanity,
+        "audit_browser_dns_posture",
+        lambda: {
+            "success": True,
+            "audited_browsers": ["Google Chrome"],
+            "explicit_dns_overrides": [],
+            "parse_errors": [],
+        },
+    )
 
 
 def test_dns_sanity_colima_active_pihole_no_host_conflict(monkeypatch):
@@ -142,3 +161,59 @@ def test_dns_sanity_fails_when_expected_resolver_is_missing(monkeypatch):
 
     assert result.success is False
     assert _msg_contains(result, Severity.ERROR, "Resolver drift: expected only 192.168.64.2")
+
+
+def test_dns_sanity_fails_when_noncanonical_artifacts_exist(monkeypatch):
+    monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
+    monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
+    monkeypatch.setattr(
+        dns_sanity,
+        "audit_noncanonical_dns_artifacts",
+        lambda: {
+            "success": False,
+            "unbound": {"binary_path": "/opt/homebrew/sbin/unbound", "formula_installed": True},
+            "launchagent_backup": {
+                "path": "/Users/test/Library/LaunchAgents/com.local.doh.plist.bak",
+                "exists": True,
+            },
+        },
+    )
+
+    result = dns_sanity.dns_sanity_check({})
+
+    assert result.success is False
+    assert _msg_contains(result, Severity.ERROR, "local Unbound remains installed")
+    assert _msg_contains(result, Severity.ERROR, "stale cloudflared LaunchAgent backup artifact")
+
+
+def test_dns_sanity_fails_when_browser_dns_override_detected(monkeypatch):
+    monkeypatch.setattr(dns_sanity, "_get_docker_context", lambda: "colima")
+    monkeypatch.setattr(dns_sanity, "_docker_ps_names", lambda context=None: ({"pihole"}, True))
+    monkeypatch.setattr(
+        dns_sanity, "_container_running", lambda name, context=None: name == "pihole"
+    )
+    monkeypatch.setattr(
+        dns_sanity,
+        "audit_browser_dns_posture",
+        lambda: {
+            "success": False,
+            "audited_browsers": ["Google Chrome"],
+            "explicit_dns_overrides": [
+                {
+                    "browser": "Google Chrome",
+                    "profile": "Default",
+                    "file": "/tmp/Preferences",
+                    "findings": {"dns_over_https": {"mode": "secure"}},
+                }
+            ],
+            "parse_errors": [],
+        },
+    )
+
+    result = dns_sanity.dns_sanity_check({})
+
+    assert result.success is False
+    assert _msg_contains(result, Severity.ERROR, "Browser/app DNS posture drift")
