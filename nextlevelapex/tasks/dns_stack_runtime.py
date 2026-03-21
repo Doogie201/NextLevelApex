@@ -44,6 +44,10 @@ CLOUDFLARED_RELEASE_BASE_URL = "https://github.com/cloudflare/cloudflared/releas
 CLOUDFLARED_RELEASE_METADATA_URL = (
     "https://api.github.com/repos/cloudflare/cloudflared/releases/tags"
 )
+CLOUDFLARED_RELEASE_SHA256_OVERRIDES = {
+    "cloudflared-darwin-amd64.tgz": "da4d6f302f94f4e7477889e6f344b08cb0f5d48eff400739481e8a46595a6785",
+    "cloudflared-darwin-arm64.tgz": "a56c9f84809b56af8ea11528a6306f3fdf9f2829256c4198df4244800e8c17b7",
+}
 LEGACY_CONTAINERS = ("cloudflared", "unbound")
 PASSWORD_PATH = Path.home() / ".config" / "nextlevelapex" / "pihole_admin_password"
 LAUNCH_AGENT_LABEL = "com.local.doh"
@@ -101,6 +105,7 @@ class DNSSettings:
     cloudflared_bootstrap_cache_dir: Path
     cloudflared_release_base_url: str
     cloudflared_release_metadata_url: str
+    cloudflared_release_sha256_overrides: dict[str, str]
 
 
 @dataclass
@@ -163,6 +168,12 @@ def load_dns_settings(config: dict[str, Any]) -> tuple[DNSSettings, list[tuple[S
         cloudflared_release_metadata_url=str(
             cloudflared_cfg.get("release_metadata_url", CLOUDFLARED_RELEASE_METADATA_URL)
         ).rstrip("/"),
+        cloudflared_release_sha256_overrides={
+            str(asset): str(checksum).lower()
+            for asset, checksum in cloudflared_cfg.get(
+                "release_sha256_overrides", CLOUDFLARED_RELEASE_SHA256_OVERRIDES
+            ).items()
+        },
     )
     return settings, messages
 
@@ -1327,45 +1338,53 @@ def resolve_cloudflared_expected_sha256(
     asset_name: str,
     cache_dir: Path,
 ) -> dict[str, Any]:
+    override_checksum = settings.cloudflared_release_sha256_overrides.get(asset_name)
     metadata = load_cloudflared_release_metadata(settings, cache_dir)
     evidence: dict[str, Any] = {
         "success": False,
         "asset_name": asset_name,
         "metadata": {key: value for key, value in metadata.items() if key != "payload"},
+        "release_sha256_override_present": override_checksum is not None,
     }
-    if not metadata.get("success"):
-        evidence["error"] = metadata.get("error", "cloudflared release metadata unavailable.")
-        return evidence
+    metadata_error = metadata.get("error", "cloudflared release metadata unavailable.")
+    if metadata.get("success"):
+        payload = metadata.get("payload") or {}
+        asset = next(
+            (
+                candidate
+                for candidate in payload.get("assets", [])
+                if candidate.get("name") == asset_name
+            ),
+            None,
+        )
+        if asset is None:
+            metadata_error = f"Release metadata did not include asset {asset_name}."
+        else:
+            digest = asset.get("digest")
+            if isinstance(digest, str) and digest.startswith("sha256:"):
+                evidence["expected_sha256"] = digest.split(":", 1)[1].lower()
+                evidence["source"] = "asset.digest"
+                evidence["success"] = True
+                return evidence
 
-    payload = metadata.get("payload") or {}
-    asset = next(
-        (
-            candidate
-            for candidate in payload.get("assets", [])
-            if candidate.get("name") == asset_name
-        ),
-        None,
-    )
-    if asset is None:
-        evidence["error"] = f"Release metadata did not include asset {asset_name}."
-        return evidence
+            checksums = parse_cloudflared_release_checksums(str(payload.get("body", "")))
+            expected_sha256 = checksums.get(asset_name)
+            if expected_sha256 is not None:
+                evidence["expected_sha256"] = expected_sha256
+                evidence["source"] = "release.body"
+                evidence["success"] = True
+                return evidence
 
-    digest = asset.get("digest")
-    if isinstance(digest, str) and digest.startswith("sha256:"):
-        evidence["expected_sha256"] = digest.split(":", 1)[1].lower()
-        evidence["source"] = "asset.digest"
+            metadata_error = f"Release metadata did not contain a SHA256 checksum for {asset_name}."
+
+    if override_checksum and re.fullmatch(r"[0-9a-f]{64}", override_checksum):
+        evidence["expected_sha256"] = override_checksum
+        evidence["source"] = "config.release_sha256_overrides"
         evidence["success"] = True
+        evidence["metadata_fallback_reason"] = metadata_error
         return evidence
 
-    checksums = parse_cloudflared_release_checksums(str(payload.get("body", "")))
-    expected_sha256 = checksums.get(asset_name)
-    if expected_sha256 is None:
-        evidence["error"] = f"Release metadata did not contain a SHA256 checksum for {asset_name}."
-        return evidence
-
-    evidence["expected_sha256"] = expected_sha256
-    evidence["source"] = "release.body"
-    evidence["success"] = True
+    evidence["error"] = metadata_error
     return evidence
 
 
@@ -1680,6 +1699,34 @@ def inspect_chromium_browser_dns_posture(browser: str, root: Path) -> dict[str, 
     if not root.exists():
         return target
 
+    local_state_path = root / "Local State"
+    if local_state_path.exists():
+        target["audited"] = True
+        local_state_evidence: dict[str, Any] = {
+            "profile": "Local State",
+            "file": str(local_state_path),
+        }
+        try:
+            payload = json.loads(local_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            local_state_evidence["error"] = f"{type(exc).__name__}: {exc}"
+            target["parse_errors"].append(local_state_evidence)
+        else:
+            findings = extract_chromium_dns_findings(payload)
+            if findings:
+                override = {
+                    "browser": browser,
+                    "profile": "Local State",
+                    "file": str(local_state_path),
+                    "findings": findings,
+                }
+                local_state_evidence["explicit_dns_override"] = True
+                local_state_evidence["findings"] = findings
+                target["explicit_dns_overrides"].append(override)
+            else:
+                local_state_evidence["explicit_dns_override"] = False
+        target["profiles"].append(local_state_evidence)
+
     for profile_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         preference_files = [
             profile_dir / "Preferences",
@@ -1701,13 +1748,7 @@ def inspect_chromium_browser_dns_posture(browser: str, root: Path) -> dict[str, 
                 target["profiles"].append(profile_evidence)
                 continue
 
-            findings: dict[str, Any] = {}
-            dns_over_https = payload.get("dns_over_https")
-            if dns_over_https not in (None, {}, ""):
-                findings["dns_over_https"] = dns_over_https
-            built_in_dns_client = payload.get("built_in_dns_client")
-            if built_in_dns_client not in (None, {}, ""):
-                findings["built_in_dns_client"] = built_in_dns_client
+            findings = extract_chromium_dns_findings(payload)
 
             if findings:
                 override = {
@@ -1725,6 +1766,20 @@ def inspect_chromium_browser_dns_posture(browser: str, root: Path) -> dict[str, 
             target["profiles"].append(profile_evidence)
 
     return target
+
+
+def extract_chromium_dns_findings(payload: dict[str, Any]) -> dict[str, Any]:
+    findings: dict[str, Any] = {}
+    dns_over_https = payload.get("dns_over_https")
+    if dns_over_https not in (None, {}, ""):
+        findings["dns_over_https"] = dns_over_https
+    async_dns = payload.get("async_dns")
+    if async_dns not in (None, {}, ""):
+        findings["async_dns"] = async_dns
+    built_in_dns_client = payload.get("built_in_dns_client")
+    if built_in_dns_client not in (None, {}, ""):
+        findings["built_in_dns_client"] = built_in_dns_client
+    return findings
 
 
 def inspect_firefox_browser_dns_posture(root: Path) -> dict[str, Any]:

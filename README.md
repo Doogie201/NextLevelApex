@@ -48,7 +48,7 @@ The canonical `DNS Stack Setup` task now handles exact-version `cloudflared` boo
 
 - If the preferred binary at `/opt/homebrew/bin/cloudflared` already matches the required version, the task reuses it.
 - If that binary is absent or version-mismatched, the task bootstraps the exact GitHub release asset for this Mac, caches the archive under `~/.cache/nextlevelapex/cloudflared/<version>/`, and installs a stable exact-version binary link at `~/.local/share/nextlevelapex/bin/cloudflared`.
-- Bootstrapped archives are verified against the official Cloudflare GitHub release metadata SHA256 for the exact asset before extraction; checksum mismatch or missing checksum fails closed.
+- Bootstrapped archives are verified against the official Cloudflare GitHub release metadata SHA256 for the exact asset before extraction; if that metadata is temporarily unreachable, the task falls back to the repo-pinned SHA256 for the exact required asset so a pre-seeded archive can still be verified offline. Checksum mismatch or missing checksum still fails closed.
 - The LaunchAgent is rendered against the exact binary path selected by the orchestrator, not whatever happens to be first in `PATH`.
 - If the required release cannot be obtained or verified exactly, the task fails closed and reports the exact release URL and observed version drift in task evidence.
 
@@ -56,13 +56,13 @@ Recovery guidance:
 
 - If `192.168.64.2` is down when you run `DNS Stack Setup`, the task temporarily clears manual macOS DNS back to DHCP/defaults, repairs the canonical stack, then restores `192.168.64.2` only after direct validation passes.
 - Re-run `poetry run nlx --task "DNS Stack Setup" --no-reports` after network/package issues are fixed.
-- If GitHub release download is blocked, place the exact required release where the task expects it or install that exact version at `/opt/homebrew/bin/cloudflared`.
+- If GitHub release download is blocked, place the exact required release where the task expects it or install that exact version at `/opt/homebrew/bin/cloudflared`. A pre-seeded archive for the required asset can still be verified offline against the repo-pinned SHA256 for that exact release.
 - Do not use `docker/orchestrate.sh`, `docker/unbound/`, or `tests/stack-sanity.sh` to recover the canonical single-device stack. Those paths are legacy reference material only.
 
 `DNS Stack Sanity Check` also audits:
 
 - non-canonical host artifacts such as a lingering local Unbound install or backup LaunchAgent file
-- explicit local browser DNS-over-HTTPS / TRR override settings in Chrome, Edge, and Firefox profile stores when those stores exist on this Mac
+- explicit local browser DNS-over-HTTPS / TRR override settings in Chrome, Edge, and Firefox stores when those stores exist on this Mac, including Chromium browser-level `Local State`
 
 ## Supported Platforms
 

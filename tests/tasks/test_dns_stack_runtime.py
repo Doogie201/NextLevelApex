@@ -186,6 +186,33 @@ def test_resolve_cloudflared_expected_sha256_parses_release_body_checksums(monke
     )
 
 
+def test_resolve_cloudflared_expected_sha256_falls_back_to_repo_pin_when_metadata_is_unavailable(
+    monkeypatch, tmp_path
+):
+    settings = _settings()
+    monkeypatch.setattr(
+        runtime,
+        "load_cloudflared_release_metadata",
+        lambda settings, cache_dir: {
+            "success": False,
+            "error": "URLError: metadata offline",
+        },
+    )
+
+    result = runtime.resolve_cloudflared_expected_sha256(
+        settings,
+        "cloudflared-darwin-arm64.tgz",
+        tmp_path,
+    )
+
+    assert result["success"] is True
+    assert result["source"] == "config.release_sha256_overrides"
+    assert result["expected_sha256"] == (
+        "a56c9f84809b56af8ea11528a6306f3fdf9f2829256c4198df4244800e8c17b7"
+    )
+    assert result["metadata_fallback_reason"] == "URLError: metadata offline"
+
+
 def test_bootstrap_cloudflared_binary_verifies_archive_checksum(monkeypatch, tmp_path):
     archive_bytes = _cloudflared_archive()
     expected_sha256 = hashlib.sha256(archive_bytes).hexdigest()
@@ -236,6 +263,59 @@ def test_bootstrap_cloudflared_binary_verifies_archive_checksum(monkeypatch, tmp
     assert result["success"] is True
     assert result["verification"]["success"] is True
     assert result["verification"]["downloaded_archive_sha256"] == expected_sha256
+
+
+def test_bootstrap_cloudflared_binary_verifies_preseeded_archive_without_metadata(
+    monkeypatch, tmp_path
+):
+    archive_bytes = _cloudflared_archive()
+    expected_sha256 = hashlib.sha256(archive_bytes).hexdigest()
+    settings = _settings(
+        {
+            "networking": {
+                "cloudflared_host_agent": {
+                    "binary_path": str(tmp_path / "missing-cloudflared"),
+                    "bootstrap_bin_dir": str(tmp_path / "bin"),
+                    "bootstrap_cache_dir": str(tmp_path / "cache"),
+                    "release_sha256_overrides": {
+                        "cloudflared-darwin-arm64.tgz": expected_sha256,
+                    },
+                }
+            }
+        }
+    )
+
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(runtime.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        runtime,
+        "load_cloudflared_release_metadata",
+        lambda settings, cache_dir: {
+            "success": False,
+            "error": "URLError: metadata offline",
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "cloudflared_version",
+        lambda binary=None: settings.cloudflared_required_version if binary is not None else None,
+    )
+
+    cache_dir = settings.cloudflared_bootstrap_cache_dir / settings.cloudflared_required_version
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = cache_dir / "cloudflared-darwin-arm64.tgz"
+    archive_path.write_bytes(archive_bytes)
+
+    result = runtime.bootstrap_cloudflared_binary(
+        settings,
+        settings.cloudflared_bootstrap_bin_dir / "cloudflared-2025.5.0",
+        settings.cloudflared_bootstrap_bin_dir / "cloudflared",
+    )
+
+    assert result["success"] is True
+    assert result["verification"]["success"] is True
+    assert result["verification"]["used_cached_archive"] is True
+    assert result["verification"]["checksum"]["source"] == "config.release_sha256_overrides"
 
 
 def test_bootstrap_cloudflared_binary_fails_on_checksum_mismatch(monkeypatch, tmp_path):
@@ -554,6 +634,22 @@ def test_audit_browser_dns_posture_detects_chromium_override(tmp_path):
     assert audit["success"] is False
     assert audit["explicit_dns_overrides"][0]["browser"] == "Google Chrome"
     assert "dns_over_https" in audit["explicit_dns_overrides"][0]["findings"]
+
+
+def test_audit_browser_dns_posture_detects_chromium_local_state_override(tmp_path):
+    local_state = tmp_path / "Library" / "Application Support" / "Google" / "Chrome" / "Local State"
+    local_state.parent.mkdir(parents=True, exist_ok=True)
+    local_state.write_text(
+        '{"dns_over_https": {"mode": "secure"}, "async_dns": {"enabled": true}}',
+        encoding="utf-8",
+    )
+
+    audit = runtime.audit_browser_dns_posture(home=tmp_path)
+
+    assert audit["success"] is False
+    assert audit["explicit_dns_overrides"][0]["profile"] == "Local State"
+    assert "dns_over_https" in audit["explicit_dns_overrides"][0]["findings"]
+    assert "async_dns" in audit["explicit_dns_overrides"][0]["findings"]
 
 
 def test_audit_browser_dns_posture_detects_firefox_trr_override(tmp_path):
